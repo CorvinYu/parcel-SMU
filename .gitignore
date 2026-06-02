@@ -16,3 +16,7 @@ local.properties
 key.properties
 .kotlin
 .vscode
+.gradle-home/
+.local-gradle/
+*.bak
+*.jks

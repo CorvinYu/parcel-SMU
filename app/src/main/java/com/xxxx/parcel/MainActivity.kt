@@ -30,24 +30,28 @@ import androidx.core.net.toUri
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xxxx.parcel.ui.AboutScreen
 import com.xxxx.parcel.ui.AddCustomSmsScreen
 import com.xxxx.parcel.ui.AddRuleScreen
 import com.xxxx.parcel.ui.AddressGroupScreen
+import com.xxxx.parcel.ui.AppBackgroundScreen
 import com.xxxx.parcel.ui.FailSmsScreen
 import com.xxxx.parcel.ui.HomeScreen
 import com.xxxx.parcel.ui.RulesScreen
 import com.xxxx.parcel.ui.SuccessSmsScreen
 import com.xxxx.parcel.ui.UseNotificationScreen
 import com.xxxx.parcel.ui.theme.ParcelTheme
+import com.xxxx.parcel.util.AppBackgroundScope
 import com.xxxx.parcel.util.PermissionUtil
 import com.xxxx.parcel.util.PermissionUtil.showMiuiPermissionExplanationDialog
 import com.xxxx.parcel.util.SmsParser
 import com.xxxx.parcel.util.SmsProcessor
 import com.xxxx.parcel.util.SmsUtil
 import com.xxxx.parcel.util.getAllSaveData
+import com.xxxx.parcel.util.getAppBackgroundScope
 import com.xxxx.parcel.util.getMainSwitch
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import com.xxxx.parcel.widget.ParcelWidget
@@ -78,6 +82,7 @@ import androidx.compose.ui.unit.sp
 class MainActivity : ComponentActivity() {
     private val hasPermissionState = mutableStateOf(false)
     internal val isSeniorModeState = mutableStateOf(false)
+    internal val appBackgroundVersionState = mutableStateOf(0)
     private lateinit var smsContentObserver: ContentObserver
     private lateinit var appDetailsLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
     private lateinit var permissionLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
@@ -131,7 +136,8 @@ class MainActivity : ComponentActivity() {
                 guideToSettings = { guideToSettings() },
                 readAndParseSms = { readAndParseSms() },
                 updateAllWidget = { updateAllWidget() },
-                isSeniorMode = isSeniorModeState.value
+                isSeniorMode = isSeniorModeState.value,
+                backgroundVersion = appBackgroundVersionState.value
             )
         }
     }
@@ -327,6 +333,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    fun notifyAppBackgroundChanged() {
+        appBackgroundVersionState.value++
+    }
+
 }
 
 private fun getSeniorMode(context: Context): Boolean {
@@ -356,10 +366,23 @@ fun App(
         guideToSettings: () -> Unit,
         readAndParseSms: () -> Unit,
         updateAllWidget: () -> Unit,
-        isSeniorMode: Boolean
+        isSeniorMode: Boolean,
+        backgroundVersion: Int = 0,
     ) {
-        ParcelTheme(isSeniorMode = isSeniorMode) {
         val navController = rememberNavController()
+        val currentBackStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = currentBackStackEntry?.destination?.route ?: "home"
+        val backgroundScope = remember(backgroundVersion) { getAppBackgroundScope(context) }
+        val applyCustomBackground = when (backgroundScope) {
+            AppBackgroundScope.ALL -> true
+            AppBackgroundScope.HOME_ONLY -> currentRoute == "home"
+        }
+
+        ParcelTheme(
+            isSeniorMode = isSeniorMode,
+            backgroundVersion = backgroundVersion,
+            applyCustomBackground = applyCustomBackground
+        ) {
 
         // 首次启动弹窗：询问是否开启老人模式
         var showSeniorPrompt by remember {
@@ -484,6 +507,15 @@ fun App(
                 }
                 composable("about") {
                     AboutScreen(navController)
+                }
+                composable("app_background") {
+                    AppBackgroundScreen(
+                        context = context,
+                        navController = navController,
+                        onSettingsChanged = {
+                            (context as? MainActivity)?.notifyAppBackgroundChanged()
+                        }
+                    )
                 }
                 composable("use_notification") {
                     UseNotificationScreen(navController)

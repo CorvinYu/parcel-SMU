@@ -49,8 +49,9 @@ fun getAppVersionName(context: Context): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(navController: NavController) {
-    val context=LocalContext.current
-    val url= "https://github.com/shareven/parcel"
+    val context = LocalContext.current
+    val upstreamUrl = "https://github.com/shareven/parcel"
+    val forkUrl = "https://github.com/CorvinYu/parcel-SPU"
 
 
     Scaffold(
@@ -80,18 +81,33 @@ fun AboutScreen(navController: NavController) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "开源地址",
+                text = "当前版本地址",
                 style = MaterialTheme.typography.headlineLarge,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
             TextButton (
                 onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+                    val intent = Intent(Intent.ACTION_VIEW, forkUrl.toUri())
                     context.startActivity(intent)
                 }
             ){
-                Text(url, color = Color(0XFF6200EE) )
+                Text(forkUrl, color = Color(0XFF6200EE) )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "原项目地址",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            TextButton(
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, upstreamUrl.toUri())
+                    context.startActivity(intent)
+                }
+            ) {
+                Text(upstreamUrl, color = Color(0XFF6200EE))
             }
             Spacer(modifier = Modifier.height(16.dp))
             Text(getAppVersionName(context),
@@ -100,7 +116,7 @@ fun AboutScreen(navController: NavController) {
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "这是一个免费、开源、无广告、不联网，追求简洁的app，不收集任何个人信息。\n\n本app会自动解析收到的短信，并从中提取出地址和取件码信息，可以展示到桌面卡片上（支持暗色模式）。\n\n您可以添加自定义规则来改进解析效果。\n\n您可以长按取件码添加备注，分享。\n\n还支持监听第三方app通知，自动保存取件码消息，帮微信朋友取快递更方便了。\n\n打开监听通知权限，还能实现后台进程保活，实时更新桌面卡片。\n\n桌面卡片添加：一般是藏在全部卡片-最底部的插件或者安卓小组件里面\n\n欢迎下载和使用！有问题或建议请提issue！",
+                text = "这是一个基于原开源项目二次维护的海大版分支，用于针对上海海事大学快递站场景做持续优化。\n\n当前版本已同步原项目最新功能（长按取件码添加备注、分享，时间过滤，格口显示开关等），并加入页面背景自定义功能，同时保留原项目免费、开源、无广告、不联网的设计方向，不收集任何个人信息。\n\n本 app 会自动解析收到的短信，并从中提取出地址和取件码信息，可以展示到桌面卡片上（支持暗色模式）。您也可以添加自定义规则来改进解析效果。\n\n您可以长按取件码添加备注，分享。\n\n还支持监听第三方 app 通知，自动保存取件码消息，方便在特定校园快递场景下集中查看。打开监听通知权限，还能实现后台进程保活，实时更新桌面卡片。\n\n桌面卡片添加：一般在系统全部卡片、插件或安卓小组件列表中。\n\n原项目作者与原项目仓库信息请以上方链接为准；当前版本不是原作者官方发布版本。",
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(bottom = 16.dp)
             )

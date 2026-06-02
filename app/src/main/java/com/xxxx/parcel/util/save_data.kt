@@ -2,6 +2,10 @@ package com.xxxx.parcel.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
 import android.util.Log
 import com.xxxx.parcel.model.SmsModel
 import com.xxxx.parcel.viewmodel.ParcelViewModel
@@ -10,6 +14,8 @@ import com.xxxx.parcel.util.isSameDay
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
+import java.io.File
+import java.io.FileOutputStream
 
 fun loadCustomRulesToParser(context: Context, parser: SmsParser) {
     getCustomList(context, "address").forEach { if (it.isNotBlank()) parser.addCustomAddressPattern(it) }
@@ -192,6 +198,155 @@ fun getTimeSort(context: Context): Boolean {
     }
 }
 
+private const val BACKGROUND_IMAGE_FILE_NAME = "app_background_image"
+private const val BACKGROUND_IMAGE_PATH_KEY = "app_background_image_path"
+private const val BACKGROUND_OVERLAY_ALPHA_KEY = "app_background_overlay_alpha"
+private const val BACKGROUND_PRESET_KEY = "app_background_preset"
+private const val BACKGROUND_BLUR_RADIUS_KEY = "app_background_blur_radius"
+private const val BACKGROUND_SCALE_MODE_KEY = "app_background_scale_mode"
+private const val BACKGROUND_SCOPE_KEY = "app_background_scope"
+
+enum class AppBackgroundPreset(val value: String, val label: String) {
+    DEFAULT("default", "默认渐变"),
+    SUNSET("sunset", "暖日余晖"),
+    MINT("mint", "薄荷纸感"),
+    NIGHT("night", "夜空霓虹");
+
+    companion object {
+        fun fromValue(value: String?): AppBackgroundPreset {
+            return entries.firstOrNull { it.value == value } ?: DEFAULT
+        }
+    }
+}
+
+enum class AppBackgroundScaleMode(val value: String, val label: String) {
+    CROP("crop", "铺满裁切"),
+    FIT("fit", "完整显示"),
+    FILL("fill", "拉伸铺满");
+
+    companion object {
+        fun fromValue(value: String?): AppBackgroundScaleMode {
+            return entries.firstOrNull { it.value == value } ?: CROP
+        }
+    }
+}
+
+enum class AppBackgroundScope(val value: String, val label: String) {
+    ALL("all", "全局页面"),
+    HOME_ONLY("home_only", "仅首页");
+
+    companion object {
+        fun fromValue(value: String?): AppBackgroundScope {
+            return entries.firstOrNull { it.value == value } ?: ALL
+        }
+    }
+}
+
+data class AppBackgroundSettings(
+    val imagePath: String?,
+    val preset: AppBackgroundPreset,
+    val overlayAlpha: Float,
+    val blurRadius: Float,
+    val scaleMode: AppBackgroundScaleMode,
+    val scope: AppBackgroundScope,
+)
+
+private fun getParcelPrefs(context: Context): SharedPreferences {
+    return context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+}
+
+fun getAppBackgroundImagePath(context: Context): String? {
+    val path = getParcelPrefs(context).getString(BACKGROUND_IMAGE_PATH_KEY, null)
+    return path?.takeIf { it.isNotBlank() && File(it).exists() }
+}
+
+fun getAppBackgroundPreset(context: Context): AppBackgroundPreset {
+    return AppBackgroundPreset.fromValue(
+        getParcelPrefs(context).getString(BACKGROUND_PRESET_KEY, AppBackgroundPreset.DEFAULT.value)
+    )
+}
+
+fun getAppBackgroundOverlayAlpha(context: Context): Float {
+    return getParcelPrefs(context).getFloat(BACKGROUND_OVERLAY_ALPHA_KEY, 0.38f)
+}
+
+fun getAppBackgroundBlurRadius(context: Context): Float {
+    return getParcelPrefs(context).getFloat(BACKGROUND_BLUR_RADIUS_KEY, 0f).coerceIn(0f, 24f)
+}
+
+fun getAppBackgroundScaleMode(context: Context): AppBackgroundScaleMode {
+    return AppBackgroundScaleMode.fromValue(
+        getParcelPrefs(context).getString(BACKGROUND_SCALE_MODE_KEY, AppBackgroundScaleMode.CROP.value)
+    )
+}
+
+fun getAppBackgroundScope(context: Context): AppBackgroundScope {
+    return AppBackgroundScope.fromValue(
+        getParcelPrefs(context).getString(BACKGROUND_SCOPE_KEY, AppBackgroundScope.ALL.value)
+    )
+}
+
+fun getAppBackgroundSettings(context: Context): AppBackgroundSettings {
+    return AppBackgroundSettings(
+        imagePath = getAppBackgroundImagePath(context),
+        preset = getAppBackgroundPreset(context),
+        overlayAlpha = getAppBackgroundOverlayAlpha(context),
+        blurRadius = getAppBackgroundBlurRadius(context),
+        scaleMode = getAppBackgroundScaleMode(context),
+        scope = getAppBackgroundScope(context),
+    )
+}
+
+fun saveAppBackgroundPreset(context: Context, preset: AppBackgroundPreset) {
+    getParcelPrefs(context).edit().putString(BACKGROUND_PRESET_KEY, preset.value).apply()
+}
+
+fun saveAppBackgroundOverlayAlpha(context: Context, alpha: Float) {
+    getParcelPrefs(context).edit().putFloat(BACKGROUND_OVERLAY_ALPHA_KEY, alpha.coerceIn(0f, 0.85f)).apply()
+}
+
+fun saveAppBackgroundBlurRadius(context: Context, radius: Float) {
+    getParcelPrefs(context).edit().putFloat(BACKGROUND_BLUR_RADIUS_KEY, radius.coerceIn(0f, 24f)).apply()
+}
+
+fun saveAppBackgroundScaleMode(context: Context, scaleMode: AppBackgroundScaleMode) {
+    getParcelPrefs(context).edit().putString(BACKGROUND_SCALE_MODE_KEY, scaleMode.value).apply()
+}
+
+fun saveAppBackgroundScope(context: Context, scope: AppBackgroundScope) {
+    getParcelPrefs(context).edit().putString(BACKGROUND_SCOPE_KEY, scope.value).apply()
+}
+
+fun clearAppBackgroundImage(context: Context) {
+    val prefs = getParcelPrefs(context)
+    prefs.getString(BACKGROUND_IMAGE_PATH_KEY, null)?.let { path ->
+        runCatching { File(path).delete() }
+    }
+    prefs.edit().remove(BACKGROUND_IMAGE_PATH_KEY).apply()
+}
+
+fun saveAppBackgroundImage(context: Context, uri: Uri): Boolean {
+    return try {
+        val target = File(context.filesDir, "$BACKGROUND_IMAGE_FILE_NAME.jpg")
+        val reqWidth = 1600
+        val reqHeight = 2800
+        val bitmap = decodeBackgroundBitmapFromUri(context, uri, reqWidth, reqHeight) ?: return false
+        val scaledBitmap = scaleBitmapIfNeeded(bitmap, reqWidth, reqHeight)
+
+        clearAppBackgroundImage(context)
+        FileOutputStream(target).use { output ->
+            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 88, output)
+        }
+        if (scaledBitmap !== bitmap) {
+            bitmap.recycle()
+        }
+        getParcelPrefs(context).edit().putString(BACKGROUND_IMAGE_PATH_KEY, target.absolutePath).apply()
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
+
 fun saveHorizontalLayout(context: Context, horizontal: Boolean) {
     try {
         val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
@@ -208,6 +363,83 @@ fun getHorizontalLayout(context: Context): Boolean {
         false
     }
 }
+
+private fun decodeBackgroundBitmapFromUri(
+    context: Context,
+    uri: Uri,
+    reqWidth: Int,
+    reqHeight: Int
+): Bitmap? {
+    return runCatching {
+        val source = ImageDecoder.createSource(context.contentResolver, uri)
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            val sampleSize = calculateSampleSize(
+                width = info.size.width,
+                height = info.size.height,
+                reqWidth = reqWidth,
+                reqHeight = reqHeight
+            )
+            decoder.setTargetSampleSize(sampleSize)
+        }
+    }.getOrElse {
+        decodeBackgroundBitmapWithBitmapFactory(context, uri, reqWidth, reqHeight)
+    }
+}
+
+private fun decodeBackgroundBitmapWithBitmapFactory(
+    context: Context,
+    uri: Uri,
+    reqWidth: Int,
+    reqHeight: Int
+): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    } ?: return null
+
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = calculateSampleSize(
+            width = bounds.outWidth,
+            height = bounds.outHeight,
+            reqWidth = reqWidth,
+            reqHeight = reqHeight
+        )
+    }
+    return context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, options)
+    }
+}
+
+private fun calculateSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        var halfHeight = height / 2
+        var halfWidth = width / 2
+
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+            halfHeight /= 2
+            halfWidth /= 2
+        }
+    }
+
+    return inSampleSize.coerceAtLeast(1)
+}
+
+private fun scaleBitmapIfNeeded(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
+    if (bitmap.width <= maxWidth && bitmap.height <= maxHeight) {
+        return bitmap
+    }
+
+    val widthRatio = maxWidth.toFloat() / bitmap.width.toFloat()
+    val heightRatio = maxHeight.toFloat() / bitmap.height.toFloat()
+    val scale = minOf(widthRatio, heightRatio)
+    val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+    val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(bitmap, width, height, true)
+}
+
 
 fun clearCustomPattern(
     context: Context,
