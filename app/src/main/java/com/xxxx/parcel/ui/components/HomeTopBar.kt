@@ -2,11 +2,16 @@ package com.xxxx.parcel.ui.components
 
 import android.content.Context
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
@@ -14,12 +19,15 @@ import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -109,21 +117,29 @@ fun HomeTopBar(
             }
 
             Spacer(Modifier.width(8.dp))
-            // 顶栏菜单：规则列表 / 监听第三方app通知 / 关于
+            // 顶栏菜单：项目较多，改用**可滚动的底部面板** —— 小屏 / 老人模式下也不会超出屏幕底部
             var showMenu by remember { mutableStateOf(false) }
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "菜单",
-                        modifier = Modifier.size(if (isSeniorMode) 48.dp else 24.dp)
-                    )
-                }
-                DropdownMenu(
-                    modifier = if (isSeniorMode) Modifier.fillMaxWidth() else Modifier,
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }) {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "菜单",
+                    modifier = Modifier.size(if (isSeniorMode) 48.dp else 24.dp)
+                )
+            }
+            if (showMenu) {
+                ModalBottomSheet(
+                    onDismissRequest = { showMenu = false },
+                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 620.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = 28.dp),
+                    ) {
 
+                    SheetSectionTitle("显示与排序")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -196,6 +212,7 @@ fun HomeTopBar(
                             onToggleShowCodeTime()
                         }
                     )
+                    SheetSectionTitle("取件与规则")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -244,6 +261,7 @@ fun HomeTopBar(
                             navController.navigate("logs")
                         }
                     )
+                    SheetSectionTitle("海大版功能")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -280,6 +298,7 @@ fun HomeTopBar(
                             navController.navigate("pickup_route")
                         }
                     )
+                    SheetSectionTitle("更多")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -340,9 +359,24 @@ fun HomeTopBar(
                             navController.navigate("about")
                         }
                     )
+                    }
                 }
             }
 
         }
     )
+}
+
+/** 底部面板里的分组标题。 */
+@Composable
+private fun SheetSectionTitle(text: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider()
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
+        )
+    }
 }

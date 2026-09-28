@@ -2,6 +2,8 @@ package com.xxxx.parcel.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,8 +21,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
+import com.xxxx.parcel.ui.components.BarcodeBottomCard
 import com.xxxx.parcel.ui.components.BarcodePresentationDialog
 import com.xxxx.parcel.ui.components.BarcodeStrip
 import com.xxxx.parcel.ui.components.HomeTopBar
@@ -33,6 +37,8 @@ import com.xxxx.parcel.util.getShowCodeTime
 import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
+import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
+import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveHorizontalLayout
 import com.xxxx.parcel.util.saveIndex
@@ -64,6 +70,9 @@ fun HomeScreen(
     var isTimeSort by remember { mutableStateOf(getTimeSort(context)) }
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
+    var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
+    // 条码铺作背景时，文字直接压在条码上会难读 —— 给文字容器加半透明垫子
+    val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
     var showBarcodePresentation by remember { mutableStateOf(false) }
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
@@ -73,7 +82,16 @@ fun HomeScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            Column {
+            Column(
+                modifier = if (barcodeBackgroundOn) {
+                    Modifier.background(
+                        if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.74f)
+                        else Color.White.copy(alpha = 0.90f)
+                    )
+                } else {
+                    Modifier
+                }
+            ) {
             HomeTopBar(
                 context = context,
                 navController = navController,
@@ -162,6 +180,17 @@ fun HomeScreen(
                         Text("获取短信权限")
                     }
                 }
+
+            if (barcodeBottomEnabled) {
+                Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    BarcodeBottomCard(
+                        context = context,
+                        isSeniorMode = isSeniorMode,
+                        onPresent = { showBarcodePresentation = true },
+                        onOpenSettings = { navController.navigate("barcode") }
+                    )
+                }
+            }
         }
         if (showBottomSheet) TimeFilterSheet(
             isSeniorMode = isSeniorMode,

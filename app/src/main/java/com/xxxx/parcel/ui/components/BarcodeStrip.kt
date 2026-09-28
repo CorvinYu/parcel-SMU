@@ -10,14 +10,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -96,7 +95,9 @@ fun BarcodeImage(
     }
 }
 
-/** 首页顶部常驻条码条：不用翻页就能出示。 */
+/**
+ * 首页顶部常驻条码条：**铺满整行**，点一下就全屏出示（不再单独放按钮，避免挤掉条码宽度）。
+ */
 @Composable
 fun BarcodeStrip(
     context: Context,
@@ -112,41 +113,75 @@ fun BarcodeStrip(
     Surface(
         color = Color.White,
         shadowElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { if (payload.isNullOrBlank()) onOpenSettings() else onPresent() },
     ) {
         if (payload.isNullOrBlank()) {
-            Row(
+            Text(
+                text = "尚未设置快递中心条码 · 点这里去设置",
+                style = textStyle,
+                color = Color(0xFF444444),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "尚未设置快递中心条码",
-                    style = textStyle,
-                    color = Color(0xFF444444),
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onOpenSettings) { Text("去设置", style = textStyle) }
-            }
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            )
         } else {
-            Row(
+            BarcodeImage(
+                payload = payload,
+                symbology = symbology,
+                heightDp = if (isSeniorMode) 104 else 72,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BarcodeImage(
-                    payload = payload,
-                    symbology = symbology,
-                    heightDp = if (isSeniorMode) 104 else 68,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = onPresent) {
-                    Text(if (isSeniorMode) "出示\n条码" else "出示", textAlign = TextAlign.Center)
-                }
-            }
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 底部浮窗形态：条码浮在列表下方。
+ *
+ * 列表短时它正好占住底部原本的空白；列表长时会被列表遮住一部分，此时点一下即可全屏出示。
+ */
+@Composable
+fun BarcodeBottomCard(
+    context: Context,
+    isSeniorMode: Boolean,
+    onPresent: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val payload = getBarcodePayload(context)
+    val symbology = getBarcodeSymbology(context)
+    val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
+    else MaterialTheme.typography.bodyLarge
+
+    Surface(
+        color = Color.White,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { if (payload.isNullOrBlank()) onOpenSettings() else onPresent() },
+    ) {
+        if (payload.isNullOrBlank()) {
+            Text(
+                text = "尚未设置快递中心条码 · 点这里去设置",
+                style = textStyle,
+                color = Color(0xFF444444),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            )
+        } else {
+            BarcodeImage(
+                payload = payload,
+                symbology = symbology,
+                heightDp = if (isSeniorMode) 112 else 80,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+            )
         }
     }
 }

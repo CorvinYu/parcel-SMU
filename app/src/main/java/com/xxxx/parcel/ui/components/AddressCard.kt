@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -38,6 +41,7 @@ import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.formatPickupCode
+import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.removeCompletedId
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import java.text.SimpleDateFormat
@@ -65,6 +69,7 @@ fun AddressCard(
     onLongPressCode: (SmsData) -> Unit = {},
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
+    val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
     // 时间排序：取件码按短信时间倒序；默认排序：有柜号的靠前、柜号升序、再按取件码
     val displaySmsDataList = if (isTimeSort) {
         parcelData.smsDataList.sortedByDescending { it.sms.timestamp }
@@ -149,6 +154,16 @@ fun AddressCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        // 条码铺作背景时，卡片默认是全透明的，文字会直接压在条码上难以辨认；
+                        // 此时给卡片一张半透明垫子。未开条码背景时保持原样。
+                        containerColor = if (barcodeBackgroundOn) {
+                            if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.72f)
+                            else Color.White.copy(alpha = 0.88f)
+                        } else {
+                            Color.Transparent
+                        }
+                    ),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         displaySmsDataList.forEach { smsData ->

@@ -52,8 +52,10 @@ import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
 import com.xxxx.parcel.util.getBarcodeUpdatedAt
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
+import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBackgroundEnabled
+import com.xxxx.parcel.util.saveBarcodeBottomEnabled
 import com.xxxx.parcel.util.saveBarcodePayload
 import com.xxxx.parcel.util.saveBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeSymbology
@@ -76,6 +78,7 @@ fun BarcodeScreen(
     var payload by remember { mutableStateOf(getBarcodePayload(context).orEmpty()) }
     var symbology by remember { mutableStateOf(getBarcodeSymbology(context)) }
     var stripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
+    var bottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
     var backgroundEnabled by remember { mutableStateOf(isBarcodeBackgroundEnabled(context)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -285,6 +288,28 @@ fun BarcodeScreen(
                     onCheckedChange = {
                         stripEnabled = it
                         saveBarcodeStripEnabled(context, it)
+                        onSettingsChanged()
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("底部浮窗", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "条码浮在列表下方：列表短时正好占住底部空白；列表长时会被遮住一部分，点一下即可全屏。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = bottomEnabled,
+                    onCheckedChange = {
+                        bottomEnabled = it
+                        saveBarcodeBottomEnabled(context, it)
                         onSettingsChanged()
                     }
                 )
