@@ -2,6 +2,9 @@ package com.xxxx.parcel.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -180,9 +183,15 @@ fun HomeScreen(
                 }
             }
             val minBarcodeHeight = if (isSeniorMode) 136.dp else 100.dp
-            val fillHeightDp = contentHeightDp
+            val targetFillHeight = contentHeightDp
                 ?.let { (maxHeight - it).coerceAtLeast(minBarcodeHeight) }
                 ?: minBarcodeHeight
+            // 隐藏/取出取件码时列表高度会突变，条码高度用动画跟上，避免「啪」地跳一下
+            val animatedFillHeight by animateDpAsState(
+                targetValue = targetFillHeight,
+                animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+                label = "barcodeFillHeight"
+            )
 
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.weight(1f)) {
@@ -217,7 +226,7 @@ fun HomeScreen(
                         isSeniorMode = isSeniorMode,
                         onPresent = { showBarcodePresentation = true },
                         onOpenSettings = { navController.navigate("barcode") },
-                        fillHeightDp = fillHeightDp.value.toInt()
+                        fillHeightDp = animatedFillHeight.value.toInt()
                     )
                 }
             }

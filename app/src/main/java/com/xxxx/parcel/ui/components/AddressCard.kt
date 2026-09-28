@@ -72,6 +72,8 @@ fun AddressCard(
     isTimeSort: Boolean = false,
     codeNotes: Map<String, String> = emptyMap(),
     onLongPressCode: (SmsData) -> Unit = {},
+    /** 列表已按「快递柜」分组时，卡片标题就不用再重复「· 自助取件」了 */
+    showLockerTag: Boolean = true,
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
@@ -120,7 +122,7 @@ fun AddressCard(
 
                 Text(
                     text = "${parcelData.address}（${parcelData.num}）" +
-                        if (isLockerCard) " · 自助取件" else "",
+                        if (isLockerCard && showLockerTag) " · 自助取件" else "",
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,

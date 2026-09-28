@@ -43,6 +43,8 @@ import androidx.navigation.NavController
 import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
+import com.xxxx.parcel.util.PickupPlace
+import com.xxxx.parcel.util.classifyPickupPlace
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
@@ -210,6 +212,20 @@ fun ParcelList(
         )
     } else filteredParcelsData
 
+    // 默认分类：快递柜（自助取件，取件码为纯数字）与快递站（人工货架，含顺丰 S、大件 Y）分成两组
+    val lockerParcels = orderedParcelsData.filter { it.isLockerGroup() }
+    val stationParcels = orderedParcelsData.filterNot { it.isLockerGroup() }
+    val parcelListEntries = buildList {
+        if (lockerParcels.isNotEmpty()) {
+            add(ParcelListEntry.Header("快递柜 · 自助取件"))
+            lockerParcels.forEach { add(ParcelListEntry.Card(it, showLockerTag = false)) }
+        }
+        if (stationParcels.isNotEmpty()) {
+            add(ParcelListEntry.Header("快递站 · 人工货架"))
+            stationParcels.forEach { add(ParcelListEntry.Card(it, showLockerTag = true)) }
+        }
+    }
+
     if (isHorizontalLayout && filteredParcelsData.isNotEmpty()) {
         HorizontalList(
             context = context,
@@ -248,27 +264,62 @@ fun ParcelList(
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            items(orderedParcelsData) { result ->
-                val isExpanded = expandedStates.value[result.address] ?: true
-                AddressCard(
-                    context = context,
-                    viewModel = viewModel,
-                    navController = navController,
-                    updateAllWidget = updateAllWidget,
-                    showCompleted = showCompleted,
-                    showCodeTime = showCodeTime,
-                    showCompartment = showCompartment,
-                    parcelData = result,
-                    expandedStates = expandedStates,
-                    isExpanded = isExpanded,
-                    preferLockerAddress = preferLockerAddress,
-                    isSeniorMode = isSeniorMode,
-                    isTimeSort = isTimeSort,
-                    codeNotes = codeNotes,
-                    onLongPressCode = { noteTarget = it },
-                )
+            items(parcelListEntries, key = { it.key }) { entry ->
+                when (entry) {
+                    is ParcelListEntry.Header -> ParcelGroupHeader(entry.title)
+                    is ParcelListEntry.Card -> {
+                        val result = entry.parcel
+                        val isExpanded = expandedStates.value[result.address] ?: true
+                        AddressCard(
+                            context = context,
+                            viewModel = viewModel,
+                            navController = navController,
+                            updateAllWidget = updateAllWidget,
+                            showCompleted = showCompleted,
+                            showCodeTime = showCodeTime,
+                            showCompartment = showCompartment,
+                            parcelData = result,
+                            expandedStates = expandedStates,
+                            isExpanded = isExpanded,
+                            preferLockerAddress = preferLockerAddress,
+                            isSeniorMode = isSeniorMode,
+                            isTimeSort = isTimeSort,
+                            codeNotes = codeNotes,
+                            onLongPressCode = { noteTarget = it },
+                            showLockerTag = entry.showLockerTag,
+                        )
+                    }
+                }
             }
         }
+}
+
+/** 列表条目：分组标题 或 地址卡片 */
+private sealed interface ParcelListEntry {
+    val key: String
+
+    data class Header(val title: String) : ParcelListEntry {
+        override val key: String get() = "header:$title"
+    }
+
+    data class Card(val parcel: ParcelData, val showLockerTag: Boolean) : ParcelListEntry {
+        override val key: String get() = "card:${parcel.address}"
+    }
+}
+
+private fun ParcelData.isLockerGroup(): Boolean =
+    smsDataList.any { classifyPickupPlace(it.code) == PickupPlace.LOCKER }
+
+@Composable
+private fun ParcelGroupHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, top = 14.dp, bottom = 2.dp),
+    )
 }
 
 @Composable
