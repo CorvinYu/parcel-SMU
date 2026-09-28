@@ -102,7 +102,7 @@ fun AddressCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(vertical = 4.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -166,7 +166,8 @@ fun AddressCard(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
-                Spacer(modifier = Modifier.height(8.dp))
+                // 隐藏了地址头时就不再需要上面那条空隙，避免叠出一层多余留白
+                Spacer(modifier = Modifier.height(if (hideHeader) 2.dp else 4.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -180,11 +181,11 @@ fun AddressCard(
                         }
                     ),
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         displaySmsDataList.forEach { smsData ->
                             if (!(((!isExpanded) && smsData.isCompleted) || ((!showCompleted) && smsData.isCompleted))) {
 
-                                Box(modifier = Modifier.padding(vertical = 6.dp)) {
+                                Box(modifier = Modifier.padding(vertical = 2.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,

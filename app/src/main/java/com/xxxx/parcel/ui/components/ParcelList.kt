@@ -2,6 +2,7 @@ package com.xxxx.parcel.ui.components
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -172,6 +174,7 @@ fun ParcelList(
     listState: LazyListState = rememberLazyListState(),
 ) {
     val parcelsData by viewModel.parcelsData.collectAsState()
+    val failedMessages by viewModel.failedMessages.collectAsState()
     val filteredParcelsData = if (showCompleted) parcelsData else parcelsData.filter { parcel ->
         parcel.smsDataList.any { !it.isCompleted }
     }
@@ -275,8 +278,30 @@ fun ParcelList(
             selected = categoryIndex,
             onSelect = { pickedCategory = it },
         )
-        Box(modifier = Modifier.weight(1f)) {
-            if (visibleParcels.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                // 横向滑动切换分类（纵向滚动仍交给列表，两者不冲突）
+                .pointerInput(categoryIndex) {
+                    var dragTotal = 0f
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            val lastIndex = PickupCategory.entries.size - 1
+                            when {
+                                dragTotal <= -100f && categoryIndex < lastIndex ->
+                                    pickedCategory = categoryIndex + 1
+
+                                dragTotal >= 100f && categoryIndex > 0 ->
+                                    pickedCategory = categoryIndex - 1
+                            }
+                            dragTotal = 0f
+                        },
+                        onHorizontalDrag = { _, amount -> dragTotal += amount },
+                    )
+                }
+        ) {
+            val showOffCampusHint = categoryIndex == 2 && failedMessages.isNotEmpty()
+            if (visibleParcels.isEmpty() && !showOffCampusHint) {
                 EmptyParcelView(navController = navController, isSeniorMode = isSeniorMode)
             } else {
                 LazyColumn(
@@ -309,6 +334,19 @@ fun ParcelList(
                             showLockerTag = entry.showLockerTag,
                             hideHeader = entry.hideHeader,
                         )
+                    }
+                    if (showOffCampusHint) {
+                        item(key = "off_campus_hint") {
+                            Text(
+                                text = "另有 ${failedMessages.size} 条短信没能解析出取件码 ——" +
+                                    "校外的取件码格式可能不一样，可到「解析失败」里对照原文。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp),
+                            )
+                        }
                     }
                 }
             }

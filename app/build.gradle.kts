@@ -27,8 +27,8 @@ android {
         applicationId = "com.xxxx.parcel"
         minSdk = 29
         targetSdk = 35
-        versionCode = 73
-        versionName = "1.0.68-haida.5"
+        versionCode = 74
+        versionName = "1.0.68-haida.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
