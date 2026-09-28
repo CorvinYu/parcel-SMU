@@ -21,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
+import com.xxxx.parcel.ui.components.BarcodePresentationDialog
+import com.xxxx.parcel.ui.components.BarcodeStrip
 import com.xxxx.parcel.ui.components.HomeTopBar
 import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.TimeFilterSheet
@@ -31,6 +33,7 @@ import com.xxxx.parcel.util.getShowCodeTime
 import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
+import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveHorizontalLayout
 import com.xxxx.parcel.util.saveIndex
 import com.xxxx.parcel.util.savePreferLockerAddress
@@ -60,6 +63,8 @@ fun HomeScreen(
     var isHorizontalLayout by remember { mutableStateOf(getHorizontalLayout(context)) }
     var isTimeSort by remember { mutableStateOf(getTimeSort(context)) }
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
+    var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
+    var showBarcodePresentation by remember { mutableStateOf(false) }
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -68,6 +73,7 @@ fun HomeScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
+            Column {
             HomeTopBar(
                 context = context,
                 navController = navController,
@@ -118,6 +124,15 @@ fun HomeScreen(
                 },
                 onSeniorModeChanged = onSeniorModeChanged,
             )
+                if (barcodeStripEnabled) {
+                    BarcodeStrip(
+                        context = context,
+                        isSeniorMode = isSeniorMode,
+                        onPresent = { showBarcodePresentation = true },
+                        onOpenSettings = { navController.navigate("barcode") }
+                    )
+                }
+            }
         }
     ) { innerPadding ->
         Box(
@@ -157,6 +172,13 @@ fun HomeScreen(
                 (context as MainActivity).readAndParseSms()
             },
             onDismiss = { showBottomSheet = false }
+        )
+    }
+
+    if (showBarcodePresentation) {
+        BarcodePresentationDialog(
+            context = context,
+            onDismiss = { showBarcodePresentation = false }
         )
     }
 

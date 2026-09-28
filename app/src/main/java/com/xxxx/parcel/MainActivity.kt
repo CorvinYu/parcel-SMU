@@ -38,6 +38,7 @@ import com.xxxx.parcel.ui.AddCustomSmsScreen
 import com.xxxx.parcel.ui.AddRuleScreen
 import com.xxxx.parcel.ui.AddressGroupScreen
 import com.xxxx.parcel.ui.AppBackgroundScreen
+import com.xxxx.parcel.ui.BarcodeScreen
 import com.xxxx.parcel.ui.FailSmsScreen
 import com.xxxx.parcel.ui.HomeScreen
 import com.xxxx.parcel.ui.RulesScreen
@@ -83,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private val hasPermissionState = mutableStateOf(false)
     internal val isSeniorModeState = mutableStateOf(false)
     internal val appBackgroundVersionState = mutableStateOf(0)
+    internal val barcodeVersionState = mutableStateOf(0)
     private lateinit var smsContentObserver: ContentObserver
     private lateinit var appDetailsLauncher: androidx.activity.result.ActivityResultLauncher<Intent>
     private lateinit var permissionLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
@@ -137,7 +139,8 @@ class MainActivity : ComponentActivity() {
                 readAndParseSms = { readAndParseSms() },
                 updateAllWidget = { updateAllWidget() },
                 isSeniorMode = isSeniorModeState.value,
-                backgroundVersion = appBackgroundVersionState.value
+                backgroundVersion = appBackgroundVersionState.value,
+                barcodeVersion = barcodeVersionState.value
             )
         }
     }
@@ -337,6 +340,10 @@ class MainActivity : ComponentActivity() {
         appBackgroundVersionState.value++
     }
 
+    fun notifyBarcodeChanged() {
+        barcodeVersionState.value++
+    }
+
 }
 
 private fun getSeniorMode(context: Context): Boolean {
@@ -368,6 +375,7 @@ fun App(
         updateAllWidget: () -> Unit,
         isSeniorMode: Boolean,
         backgroundVersion: Int = 0,
+        barcodeVersion: Int = 0,
     ) {
         val navController = rememberNavController()
         val currentBackStackEntry by navController.currentBackStackEntryAsState()
@@ -381,6 +389,7 @@ fun App(
         ParcelTheme(
             isSeniorMode = isSeniorMode,
             backgroundVersion = backgroundVersion,
+            barcodeVersion = barcodeVersion,
             applyCustomBackground = applyCustomBackground
         ) {
 
@@ -519,6 +528,15 @@ fun App(
                 }
                 composable("use_notification") {
                     UseNotificationScreen(navController)
+                }
+                composable("barcode") {
+                    BarcodeScreen(
+                        context = context,
+                        navController = navController,
+                        onSettingsChanged = {
+                            (context as? MainActivity)?.notifyBarcodeChanged()
+                        }
+                    )
                 }
                 composable("logs") {
                     LogScreen(navController)

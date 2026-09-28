@@ -109,4 +109,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.10.1") // 添加 Core KTX
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // 海大版：微信快递中心条码的离线识别与重绘
+    implementation(libs.zxing.core)
 }

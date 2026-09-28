@@ -259,6 +259,18 @@ fun HomeTopBar(
                     DropdownMenuItem(
                         text = {
                             Text(
+                                "快递中心条码",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("barcode")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
                                 "监听第三方app通知",
                                 style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
                             )
