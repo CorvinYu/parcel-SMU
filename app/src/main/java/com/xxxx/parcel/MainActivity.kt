@@ -394,52 +394,8 @@ fun App(
             applyCustomBackground = applyCustomBackground
         ) {
 
-        // 首次启动弹窗：询问是否开启老人模式
-        var showSeniorPrompt by remember {
-            val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
-            val shown = prefs.getBoolean("senior_prompt_shown", false)
-            mutableStateOf(!shown)
-        }
-
-        if (showSeniorPrompt) {
-            AlertDialog(
-                onDismissRequest = {
-                    showSeniorPrompt = false
-                    val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
-                    prefs.edit { putBoolean("senior_prompt_shown", true) }
-                    saveSeniorMode(context, false)
-                    updateAllWidget()
-                },
-                title = {
-                    Text("开启老人模式？", fontSize = 32.sp)
-                },
-                text = {
-                    Text("字更大，老人优先", fontSize = 26.sp)
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showSeniorPrompt = false
-                        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
-                        prefs.edit { putBoolean("senior_prompt_shown", true) }
-                        saveSeniorMode(context, true)
-                        updateAllWidget()
-                    }) {
-                        Text("开启", fontSize = 26.sp)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        showSeniorPrompt = false
-                        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
-                        prefs.edit { putBoolean("senior_prompt_shown", true) }
-                        saveSeniorMode(context, false)
-                        updateAllWidget()
-                    }) {
-                        Text("不用", fontSize = 26.sp)
-                    }
-                }
-            )
-        }
+        // 首次启动的「是否开启老人模式」弹窗已按用户要求移除。
+        // 后续改为面向海大学生的引导弹窗（取件码引导 + 使用教程），见 NOTES.md 待办。
 
         Box(
             modifier = Modifier

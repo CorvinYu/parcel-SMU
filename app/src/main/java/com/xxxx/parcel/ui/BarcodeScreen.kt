@@ -53,9 +53,11 @@ import com.xxxx.parcel.util.getBarcodeSymbology
 import com.xxxx.parcel.util.getBarcodeUpdatedAt
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
+import com.xxxx.parcel.util.isBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomEnabled
+import com.xxxx.parcel.util.saveBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.saveBarcodePayload
 import com.xxxx.parcel.util.saveBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeSymbology
@@ -79,6 +81,7 @@ fun BarcodeScreen(
     var symbology by remember { mutableStateOf(getBarcodeSymbology(context)) }
     var stripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var bottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
+    var bottomFillEnabled by remember { mutableStateOf(isBarcodeBottomFillEnabled(context)) }
     var backgroundEnabled by remember { mutableStateOf(isBarcodeBackgroundEnabled(context)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -288,6 +291,28 @@ fun BarcodeScreen(
                     onCheckedChange = {
                         stripEnabled = it
                         saveBarcodeStripEnabled(context, it)
+                        onSettingsChanged()
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("底部填充（自动让位）", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "把首页下方没有取件码的整块空白都给条码；取件码一多就自动缩到最小高度让位。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = bottomFillEnabled,
+                    onCheckedChange = {
+                        bottomFillEnabled = it
+                        saveBarcodeBottomFillEnabled(context, it)
                         onSettingsChanged()
                     }
                 )

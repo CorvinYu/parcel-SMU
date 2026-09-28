@@ -149,9 +149,13 @@ fun BarcodeStrip(
 }
 
 /**
- * 底部浮窗形态：条码浮在列表下方。
+ * 底部条码卡片，两种形态：
  *
- * 列表短时它正好占住底部原本的空白；列表长时会被列表遮住一部分，此时点一下即可全屏出示。
+ * - **浮窗**（不传 [fillHeightDp]）：固定高度的一条，浮在列表下方；
+ * - **填充**（传 [fillHeightDp]）：整块占据这个高度 —— 由首页按「列表没占满时剩下的空白」算出来，
+ *   取件码一多就自动缩到最小高度让位给列表。
+ *
+ * 两种都点一下即全屏出示。
  */
 @Composable
 fun BarcodeBottomCard(
@@ -159,6 +163,7 @@ fun BarcodeBottomCard(
     isSeniorMode: Boolean,
     onPresent: () -> Unit,
     onOpenSettings: () -> Unit,
+    fillHeightDp: Int? = null,
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
@@ -167,15 +172,20 @@ fun BarcodeBottomCard(
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
 
+    val innerHeightDp = fillHeightDp
+        ?.let { (it - 12).coerceAtLeast(80) }
+        ?: if (isSeniorMode) 112 else 80
+
     Surface(
         color = Color.White,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { if (payload.isNullOrBlank()) onOpenSettings() else onPresent() },
+            .then(if (fillHeightDp != null) Modifier.height(fillHeightDp.dp) else Modifier)
+            .clickable { if (!hasBarcode) onOpenSettings() else onPresent() },
     ) {
-        if (payload.isNullOrBlank()) {
+        if (!hasBarcode) {
             Text(
                 text = "尚未设置快递中心条码 · 点这里去设置",
                 style = textStyle,
@@ -188,7 +198,7 @@ fun BarcodeBottomCard(
             BarcodeImage(
                 payload = payload,
                 symbology = symbology,
-                heightDp = if (isSeniorMode) 112 else 80,
+                heightDp = innerHeightDp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 6.dp, vertical = 6.dp),

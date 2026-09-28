@@ -190,6 +190,18 @@ fun isLockerCode(raw: String): Boolean {
     return text.isNotEmpty() && text.all { it.isDigit() }
 }
 
+/**
+ * 取件地点类型。
+ *
+ * 依据用户 2026-10-01 提供的真实样例归纳：
+ * - **快递站**：取件码含字母 —— `D8-6`（人工货架）、`S3-2-2628`（顺丰）、`Y5-7-1`（大件）
+ * - **快递柜**：取件码是纯数字 —— `54018314`、`69824579`（自助取件，另有柜号如「03号快递柜」）
+ */
+enum class PickupPlace { STATION, LOCKER }
+
+fun classifyPickupPlace(code: String): PickupPlace =
+    if (isLockerCode(code)) PickupPlace.LOCKER else PickupPlace.STATION
+
 /** 超过这个件数就不用 O(2^n·n^2) 的精确 DP，退化为最近邻 + 2-opt。 */
 const val MAX_EXACT_ITEMS = 13
 

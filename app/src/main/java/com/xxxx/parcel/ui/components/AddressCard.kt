@@ -3,9 +3,11 @@ package com.xxxx.parcel.ui.components
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -39,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
+import com.xxxx.parcel.util.PickupPlace
 import com.xxxx.parcel.util.addCompletedIds
+import com.xxxx.parcel.util.classifyPickupPlace
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.removeCompletedId
@@ -70,6 +75,10 @@ fun AddressCard(
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
+    // 默认分类：纯数字取件码 ⇒ 快递柜（自助取件）；含字母 ⇒ 快递站（人工货架，含顺丰 S、大件 Y）
+    val isLockerCard = remember(parcelData) {
+        parcelData.smsDataList.any { classifyPickupPlace(it.code) == PickupPlace.LOCKER }
+    }
     // 时间排序：取件码按短信时间倒序；默认排序：有柜号的靠前、柜号升序、再按取件码
     val displaySmsDataList = if (isTimeSort) {
         parcelData.smsDataList.sortedByDescending { it.sms.timestamp }
@@ -110,7 +119,8 @@ fun AddressCard(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Text(
-                    text = "${parcelData.address}（${parcelData.num}）",
+                    text = "${parcelData.address}（${parcelData.num}）" +
+                        if (isLockerCard) " · 自助取件" else "",
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -175,6 +185,31 @@ fun AddressCard(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        // 快递柜：左侧用大号数字标出柜号，一眼看到去哪个柜
+                                        if (classifyPickupPlace(smsData.code) == PickupPlace.LOCKER) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .padding(end = 10.dp)
+                                                    .size(if (isSeniorMode) 54.dp else 42.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                                    ),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Text(
+                                                    text = smsData.lockerNumber.ifBlank { "柜" },
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = if (isSeniorMode) {
+                                                        MaterialTheme.typography.headlineMedium
+                                                    } else {
+                                                        MaterialTheme.typography.titleLarge
+                                                    },
+                                                )
+                                            }
+                                        }
+
                                         Text(
                                             text = formatPickupCode(smsData.code),
                                             textDecoration = if (smsData.isCompleted) TextDecoration.LineThrough else TextDecoration.None,

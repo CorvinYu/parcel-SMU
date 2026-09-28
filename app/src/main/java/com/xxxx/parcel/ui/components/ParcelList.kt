@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -162,6 +164,8 @@ fun ParcelList(
     preferLockerAddress: Boolean,
     isSeniorMode: Boolean,
     isTimeSort: Boolean = false,
+    /** 由首页持有，用于判断「列表是否装得下」，从而把下方空白让给底部条码 */
+    listState: LazyListState = rememberLazyListState(),
 ) {
     val parcelsData by viewModel.parcelsData.collectAsState()
     val filteredParcelsData = if (showCompleted) parcelsData else parcelsData.filter { parcel ->
@@ -237,6 +241,7 @@ fun ParcelList(
     )
     else
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),

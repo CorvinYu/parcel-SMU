@@ -31,6 +31,7 @@ private const val KEY_PAYLOAD = "barcode_payload"
 private const val KEY_SYMBOLOGY = "barcode_symbology"
 private const val KEY_STRIP = "barcode_strip_enabled"
 private const val KEY_BOTTOM = "barcode_bottom_enabled"
+private const val KEY_BOTTOM_FILL = "barcode_bottom_fill_enabled"
 private const val KEY_BACKGROUND = "barcode_background_enabled"
 private const val KEY_USE_ORIGINAL = "barcode_use_original"
 private const val KEY_UPDATED_AT = "barcode_updated_at"
@@ -83,6 +84,18 @@ fun isBarcodeBottomEnabled(context: Context): Boolean =
 
 fun saveBarcodeBottomEnabled(context: Context, enabled: Boolean) {
     barcodePrefs(context).edit().putBoolean(KEY_BOTTOM, enabled).apply()
+}
+
+/**
+ * 底部**填充**：把首页下方「没有取件码」的整块空白都交给条码。
+ * 列表一长就自动让位（缩到最小高度），列表短时条码占满剩余空间。
+ * 与 [isBarcodeBottomEnabled]（固定高度的一条浮窗）是两种不同形态，可分别开关。
+ */
+fun isBarcodeBottomFillEnabled(context: Context): Boolean =
+    barcodePrefs(context).getBoolean(KEY_BOTTOM_FILL, false)
+
+fun saveBarcodeBottomFillEnabled(context: Context, enabled: Boolean) {
+    barcodePrefs(context).edit().putBoolean(KEY_BOTTOM_FILL, enabled).apply()
 }
 
 /** 铺满首页背景 */

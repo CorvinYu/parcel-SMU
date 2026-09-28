@@ -6,9 +6,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -22,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
@@ -39,6 +43,7 @@ import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
+import com.xxxx.parcel.util.isBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveHorizontalLayout
 import com.xxxx.parcel.util.saveIndex
@@ -71,6 +76,9 @@ fun HomeScreen(
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
+    var barcodeBottomFillEnabled by remember { mutableStateOf(isBarcodeBottomFillEnabled(context)) }
+    // 列表滚动状态由首页持有：用来判断「列表装不装得下」，好把下方空白让给条码
+    val listState = rememberLazyListState()
     // 条码铺作背景时，文字直接压在条码上会难读 —— 给文字容器加半透明垫子
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
     var showBarcodePresentation by remember { mutableStateOf(false) }
@@ -153,35 +161,69 @@ fun HomeScreen(
             }
         }
     ) { innerPadding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (hasPermission) ParcelList(
-                context = context,
-                viewModel = viewModel,
-                navController = navController,
-                updateAllWidget = updateAllWidget,
-                showCompleted = showCompleted,
-                showCodeTime = showCodeTime,
-                showCompartment = showCompartment,
-                isHorizontalLayout = isHorizontalLayout,
-                preferLockerAddress = preferLockerAddress,
-                isSeniorMode = isSeniorMode,
-                isTimeSort = isTimeSort
-            ) else
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+            // 列表「装得下」时，把下方空白整块让给条码；装不下就缩到最小高度、给取件码让位。
+            // 用容器总高度 maxHeight（固定值）而不是列表视口来算，避免「条码变高→视口变矮→条码又变矮」的来回震荡。
+            val density = LocalDensity.current
+            val listInfo = listState.layoutInfo
+            val contentHeightDp = remember(listInfo) {
+                if (listInfo.totalItemsCount > 0 &&
+                    listInfo.visibleItemsInfo.size == listInfo.totalItemsCount
                 ) {
-                    Button(onClick = { onCallBack() }) {
-                        Text("获取短信权限")
-                    }
+                    with(density) { listInfo.visibleItemsInfo.sumOf { it.size }.toDp() }
+                } else {
+                    null
+                }
+            }
+            val minBarcodeHeight = if (isSeniorMode) 136.dp else 100.dp
+            val fillHeightDp = contentHeightDp
+                ?.let { (maxHeight - it).coerceAtLeast(minBarcodeHeight) }
+                ?: minBarcodeHeight
+
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (hasPermission) ParcelList(
+                        context = context,
+                        viewModel = viewModel,
+                        navController = navController,
+                        updateAllWidget = updateAllWidget,
+                        showCompleted = showCompleted,
+                        showCodeTime = showCodeTime,
+                        showCompartment = showCompartment,
+                        isHorizontalLayout = isHorizontalLayout,
+                        preferLockerAddress = preferLockerAddress,
+                        isSeniorMode = isSeniorMode,
+                        isTimeSort = isTimeSort,
+                        listState = listState
+                    ) else
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Button(onClick = { onCallBack() }) {
+                                Text("获取短信权限")
+                            }
+                        }
                 }
 
-            if (barcodeBottomEnabled) {
+                if (barcodeBottomFillEnabled) {
+                    BarcodeBottomCard(
+                        context = context,
+                        isSeniorMode = isSeniorMode,
+                        onPresent = { showBarcodePresentation = true },
+                        onOpenSettings = { navController.navigate("barcode") },
+                        fillHeightDp = fillHeightDp.value.toInt()
+                    )
+                }
+            }
+
+            // 固定高度的一条浮窗（与「底部填充」是两种形态；同时开启时以填充为准）
+            if (barcodeBottomEnabled && !barcodeBottomFillEnabled) {
                 Box(modifier = Modifier.align(Alignment.BottomCenter)) {
                     BarcodeBottomCard(
                         context = context,
