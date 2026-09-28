@@ -39,6 +39,7 @@ import com.xxxx.parcel.ui.AddRuleScreen
 import com.xxxx.parcel.ui.AddressGroupScreen
 import com.xxxx.parcel.ui.AppBackgroundScreen
 import com.xxxx.parcel.ui.BarcodeScreen
+import com.xxxx.parcel.ui.RouteScreen
 import com.xxxx.parcel.ui.FailSmsScreen
 import com.xxxx.parcel.ui.HomeScreen
 import com.xxxx.parcel.ui.RulesScreen
@@ -536,6 +537,13 @@ fun App(
                         onSettingsChanged = {
                             (context as? MainActivity)?.notifyBarcodeChanged()
                         }
+                    )
+                }
+                composable("pickup_route") {
+                    RouteScreen(
+                        context = context,
+                        viewModel = viewModel,
+                        navController = navController,
                     )
                 }
                 composable("logs") {

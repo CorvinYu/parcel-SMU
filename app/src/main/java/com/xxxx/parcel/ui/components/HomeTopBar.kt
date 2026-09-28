@@ -271,6 +271,18 @@ fun HomeTopBar(
                     DropdownMenuItem(
                         text = {
                             Text(
+                                "取件路线",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("pickup_route")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
                                 "监听第三方app通知",
                                 style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
                             )
