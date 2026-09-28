@@ -27,8 +27,9 @@ android {
         applicationId = "com.xxxx.parcel"
         minSdk = 29
         targetSdk = 35
-        versionCode = 75
-        versionName = "1.0.68-haida.7"
+        // versionName 由用户指定（0.1.7）；versionCode 必须单调递增，否则无法覆盖安装
+        versionCode = 76
+        versionName = "0.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
