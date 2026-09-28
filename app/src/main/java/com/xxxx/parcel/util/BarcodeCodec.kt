@@ -235,6 +235,63 @@ fun cropRect(
     return PixelImageResult(w, h, out)
 }
 
+/**
+ * 从截图里**裁出条码区域的原图**（不解码、不重编码）。
+ *
+ * 为什么需要这条路：实测用户的微信专属码截图时发现，
+ * 条码**实际编码的内容**（11 字符）与页面上印的明文（8 字符）**并不一致**。
+ * 此时「解码后重绘」等于把不确定的东西当成真值；而直接裁原图可以做到内容 **100% 保真**，
+ * 扫码枪读到什么，重绘前就是什么。
+ *
+ * 实现：逐条深色横带尝试识别，**能解出条码的那一条**就是条码所在的带；
+ * 再横向收紧到有深色像素的列范围（左右各留静区）。
+ */
+fun extractBarcodeImage(pixels: IntArray, width: Int, height: Int): PixelImageResult? {
+    if (width <= 0 || height <= 0) return null
+    val margin = maxOf(6, height / 120)
+    for (band in darkRowBands(pixels, width, height)) {
+        val top = (band.first - margin).coerceAtLeast(0)
+        val bottom = (band.last + margin).coerceAtMost(height - 1)
+        val bandHeight = bottom - top + 1
+        if (bandHeight < 8) continue
+        val crop = cropRect(pixels, width, height, 0, top, width, bandHeight) ?: continue
+        if (decodeBarcodePixels(crop.pixels, crop.width, crop.height) != null) {
+            return trimToBars(crop)
+        }
+    }
+    return null
+}
+
+/** 横向收紧到条码本体的列范围，左右各留一段静区（静区不足会导致扫码枪读不到）。 */
+private fun trimToBars(image: PixelImageResult): PixelImageResult {
+    var left = image.width
+    var right = -1
+    for (x in 0 until image.width) {
+        var hasDark = false
+        for (y in 0 until image.height) {
+            val p = image.pixels[y * image.width + x]
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            if ((r * 30 + g * 59 + b * 11) / 100 < DARK_LUMINANCE) {
+                hasDark = true
+                break
+            }
+        }
+        if (hasDark) {
+            if (x < left) left = x
+            right = x
+        }
+    }
+    if (right < 0 || right <= left) return image
+
+    val padding = maxOf(8, image.height / 8)
+    val start = (left - padding).coerceAtLeast(0)
+    val end = (right + padding).coerceAtMost(image.width - 1)
+    return cropRect(image.pixels, image.width, image.height, start, 0, end - start + 1, image.height)
+        ?: image
+}
+
 /** 取中心区域（按比例）。 */
 fun cropCenter(pixels: IntArray, width: Int, height: Int, ratio: Float): PixelImageResult? {
     if (ratio <= 0f || ratio > 1f) return null

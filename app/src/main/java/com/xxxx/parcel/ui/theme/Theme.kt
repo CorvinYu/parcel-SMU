@@ -30,9 +30,8 @@ import com.xxxx.parcel.util.AppBackgroundPreset
 import com.xxxx.parcel.util.AppBackgroundScaleMode
 import com.xxxx.parcel.util.getAppBackgroundSettings
 import com.xxxx.parcel.util.getBarcodePayload
-import com.xxxx.parcel.util.getBarcodeSymbology
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
-import com.xxxx.parcel.util.renderBarcode
+import com.xxxx.parcel.util.loadBarcodeBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -124,9 +123,7 @@ fun ParcelTheme(
             null
         } else {
             withContext(Dispatchers.Default) {
-                getBarcodePayload(context)?.let { payload ->
-                    renderBarcode(payload, getBarcodeSymbology(context), screenWidthPx, screenHeightPx)
-                }
+                loadBarcodeBitmap(context, screenWidthPx, screenHeightPx)
             }
         }
     }

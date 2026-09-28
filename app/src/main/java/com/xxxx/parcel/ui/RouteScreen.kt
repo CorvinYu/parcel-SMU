@@ -184,16 +184,42 @@ fun RouteScreen(
                     )
                 }
 
+                if (route.specialZoneCodes.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("特殊区（未纳入路线）", fontWeight = FontWeight.Medium)
+                    Text(
+                        route.specialZoneCodes.joinToString("、"),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "J / S / Y 这几个区的编号规则与普通排不同（例如顺丰 S3-2-2628、大物 Y5-7-1 是三段式），" +
+                            "在确认它们各自的规则之前，本页不猜、只如实列出。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                if (route.lockerCodes.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("快递柜（不在人工货架路径上）", fontWeight = FontWeight.Medium)
+                    Text(
+                        route.lockerCodes.joinToString("、"),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "纯数字取件码对应快递柜，与人工货架不是同一套寻址方式。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
                 if (route.unresolved.isNotEmpty()) {
                     HorizontalDivider()
-                    Text("需要单独确认的货格号", fontWeight = FontWeight.Medium)
+                    Text("无法识别", fontWeight = FontWeight.Medium)
                     Text(
                         route.unresolved.joinToString("、"),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "这些属于特殊区（J / S / M）或超出已配置的排范围，本页暂不把它们纳入路线。" +
-                            "请在下面把字母序列改对，或到现场核实这两个区域的编号规则。",
+                        "这些既不是纯数字，也没能解析成「字母+货架号-格号」。可以把下面的排字母序列改对再试。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

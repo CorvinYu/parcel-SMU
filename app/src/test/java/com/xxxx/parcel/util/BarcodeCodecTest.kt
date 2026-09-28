@@ -249,6 +249,30 @@ class BarcodeCodecTest {
         assertTrue(pasteInto(canvas, 500, 300, bar, 20, 40))
     }
 
+    @Test
+    fun `能从合成截图里裁出条码原图，且不含大片空白`() {
+        val payload = "1234567890"
+        val bar = renderBarcodePixels(payload, BarcodeSymbology.CODE_128, 700, 200)!!
+        val canvas = blankCanvas(1080, 2400, white)
+        assertTrue(pasteInto(canvas, 1080, 2400, bar, 60, 420))
+
+        val extracted = extractBarcodeImage(canvas, 1080, 2400)
+        assertNotNull("应当能裁出条码原图", extracted)
+        assertTrue("高度应收窄到条码附近（实际 ${extracted!!.height}）", extracted.height < 400)
+        assertTrue("宽度应收窄掉两侧空白（实际 ${extracted.width}）", extracted.width < 1080)
+        assertEquals(
+            "裁出的原图必须仍可被识别（原图模式就靠它保真）",
+            payload,
+            decodeBarcodePixels(extracted.pixels, extracted.width, extracted.height)
+        )
+    }
+
+    @Test
+    fun `裁不出条码时返回 null 而不是乱给一块图`() {
+        val blank = blankCanvas(800, 1200, white)
+        assertNull(extractBarcodeImage(blank, 800, 1200))
+    }
+
     // ===== 工具 =====
 
     private fun middleRow(image: PixelImageResult): IntArray {

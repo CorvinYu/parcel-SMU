@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,7 +43,9 @@ import androidx.compose.ui.window.DialogProperties
 import com.xxxx.parcel.util.BarcodeSymbology
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
-import com.xxxx.parcel.util.renderBarcode
+import com.xxxx.parcel.util.hasBarcodeOriginalImage
+import com.xxxx.parcel.util.isBarcodeOriginalPreferred
+import com.xxxx.parcel.util.loadBarcodeBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -54,18 +57,22 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun BarcodeImage(
-    payload: String,
+    payload: String?,
     symbology: BarcodeSymbology,
     heightDp: Int,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
         val widthPx = with(density) { maxWidth.roundToPx() }
         val heightPx = with(density) { heightDp.dp.roundToPx() }
-        val bitmap by produceState<Bitmap?>(null, payload, symbology, widthPx, heightPx) {
+        val useOriginal = remember { isBarcodeOriginalPreferred(context) }
+        val hasOriginal = remember { hasBarcodeOriginalImage(context) }
+        // 原图模式优先：直接用截图里裁出的原图，不做解码重编码
+        val bitmap by produceState<Bitmap?>(null, payload, symbology, widthPx, heightPx, useOriginal, hasOriginal) {
             value = withContext(Dispatchers.Default) {
-                renderBarcode(payload, symbology, widthPx, heightPx)
+                loadBarcodeBitmap(context, widthPx, heightPx)
             }
         }
         val image = bitmap
@@ -78,7 +85,7 @@ fun BarcodeImage(
         ) {
             if (image == null) {
                 Text(
-                    text = "条码生成失败（内容或码制不匹配）",
+                    text = "条码不可用（内容或码制不匹配）",
                     color = Color(0xFFAA0000),
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -107,6 +114,8 @@ fun BarcodeStrip(
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
+    // 有原图也算「已设置」——原图模式不依赖解码是否成功
+    val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
 
@@ -153,6 +162,8 @@ fun BarcodeBottomCard(
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
+    // 有原图也算「已设置」——原图模式不依赖解码是否成功
+    val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
 
@@ -197,6 +208,8 @@ fun BarcodePresentationDialog(
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
+    // 有原图也算「已设置」——原图模式不依赖解码是否成功
+    val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
     val configuration = LocalConfiguration.current
 
     // 出示期间把屏幕亮度拉到最高，退出时恢复
@@ -235,7 +248,7 @@ fun BarcodePresentationDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                if (payload.isNullOrBlank()) {
+                if (!hasBarcode) {
                     Text(
                         text = "尚未设置条码内容",
                         fontSize = 20.sp,
@@ -256,7 +269,7 @@ fun BarcodePresentationDialog(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        text = payload,
+                        text = payload.orEmpty(),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF222222),

@@ -99,11 +99,42 @@ class PickupRouteTest {
 
     @Test
     fun `特殊区与未知排返回 null`() {
-        assertNull(locate(parseCompartmentCode("J3-15")!!, layout))  // J 是特殊区
-        assertNull(locate(parseCompartmentCode("S6-02")!!, layout))  // S 是特殊区
-        assertNull(locate(parseCompartmentCode("M1-01")!!, layout))  // M 是大件仓库
+        assertNull(locate(parseCompartmentCode("J3-15")!!, layout))  // J：最里面那排的特殊区
+        assertNull(locate(parseCompartmentCode("S6-02")!!, layout))  // S：顺丰区（三段式编号）
+        assertNull(locate(parseCompartmentCode("Y1-01")!!, layout))  // Y：大物区（用户 2026-10-01 更正）
         assertNull(locate(parseCompartmentCode("Z1-1")!!, layout))   // Z 不在排序列里
         assertNull(locate(parseCompartmentCode("D13-1")!!, layout))  // 货架号越界
+    }
+
+    @Test
+    fun `M 是普通排而不是大物区（用户更正）`() {
+        val code = parseCompartmentCode("M5-5")!!
+        val located = locate(code, layout)
+        assertNotNull("M5-5 应当能定位：用户更正「大物是 Y 不是 M」", located)
+        assertEquals(5, located!!.code.shelfNumber)
+    }
+
+    @Test
+    fun `真实短信样例的分类与定位`() {
+        // 人工货架（普通排）—— 全部应能解析并定位
+        listOf(
+            "B4-18", "D8-6", "F12-32", "F7-24", "Q12-25",
+            "D3-24", "M5-5", "E9-9", "F2-5", "F11-12", "Q11-27"
+        ).forEach { raw ->
+            val code = parseCompartmentCode(raw)
+            assertNotNull("$raw 应能解析", code)
+            assertNotNull("$raw 应能定位", locate(code!!, layout))
+        }
+
+        // 混在一起时应各归其位，不丢件也不静默算错
+        val route = planPickupRoute(
+            listOf("D8-6", "J5-21", "S3-2-2628", "Y5-7-1", "54018314", "乱写"),
+            layout
+        )
+        assertEquals(1, route.resolvedCount)
+        assertEquals(listOf("J5-21", "S3-2-2628", "Y5-7-1"), route.specialZoneCodes)
+        assertEquals(listOf("54018314"), route.lockerCodes)
+        assertEquals(listOf("乱写"), route.unresolved)
     }
 
     // ===== 距离度量性质 =====
@@ -233,16 +264,17 @@ class PickupRouteTest {
             returnToEntrance = true
         )
         assertEquals(2, route.resolvedCount)
-        assertEquals(listOf("J3-15", "乱写的", "Z9-9"), route.unresolved)
+        assertEquals(listOf("J3-15"), route.specialZoneCodes)
+        assertEquals(listOf("乱写的", "Z9-9"), route.unresolved)
         assertTrue(route.totalTiles > 0)
     }
 
     @Test
-    fun `全部无法定位时返回空路线而不是崩溃`() {
-        val route = planPickupRoute(listOf("J1-1", "M2-2"), layout)
+    fun `没有任何普通排货架时返回空路线而不是崩溃`() {
+        val route = planPickupRoute(listOf("J1-1", "S2-2"), layout)
         assertEquals(0, route.resolvedCount)
         assertEquals(0, route.totalTiles)
-        assertEquals(listOf("J1-1", "M2-2"), route.unresolved)
+        assertEquals(listOf("J1-1", "S2-2"), route.specialZoneCodes)
     }
 
     @Test

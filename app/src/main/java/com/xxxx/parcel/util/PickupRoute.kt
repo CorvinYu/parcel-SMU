@@ -50,12 +50,23 @@ data class CompartmentCode(
 /**
  * 场地布局参数。**除默认值外都应视为待用户现场核验的可编辑配置**，不要硬编码进逻辑。
  *
- * @param rowLetters     由入口向深处排列的普通排字母（**不含** J/S/M 等特殊区）
+ * @param rowLetters     由入口向深处排列的普通排字母（**不含**特殊区）
  * @param shelvesPerRow  每排货架数（默认 12）
  * @param leftBlockEnd   纵向通道左侧的货架号上界（默认 4 ⇒ 左 1~4、右 5~12）
  * @param corridorOffsetTiles 入口到纵向主通道的横向距离（用户口述「4 块瓷砖」）
  * @param rowSpacingTiles     相邻两排之间的纵向距离（瓷砖数）
- * @param specialZoneLetters  特殊区字母：解析得出但不参与普通排定位（默认 J/S/M）
+ * @param specialZoneLetters  特殊区字母：**暂不参与货架路径**，但会单独回报
+ *
+ * ## 默认值的证据（2026-10-01 用户真实短信样例）
+ *
+ * 观测到的取件码：`B4-18` `D8-6` `F12-32` `F7-24` `Q12-25` `D3-24` `M5-5` `J5-21`
+ * `E9-9` `F2-5` `F11-12` `Q11-27`，另有 `S3-2-2628`（顺丰，三段式）、
+ * `Y5-7-1`（**大物区**，三段式）、纯数字如 `54018314`（快递柜）。
+ *
+ * ⇒ **M 是普通排**（用户 2026-10-01 更正：大物是 **Y** 而不是 M，之前记错了）。
+ * ⇒ 字母观测范围 B~Q，故默认取 A~Q 去掉特殊区；**实际范围仍需用户现场核实**。
+ * ⇒ J 用户此前描述为「最里面那排左侧的特殊区」，故默认仍按特殊区处理、单独回报，
+ *    待用户确认其物理位置后再决定是否并入排序列。
  */
 data class SiteLayout(
     val rowLetters: List<Char>,
@@ -63,15 +74,14 @@ data class SiteLayout(
     val leftBlockEnd: Int = 4,
     val corridorOffsetTiles: Int = 4,
     val rowSpacingTiles: Int = 1,
-    val specialZoneLetters: Set<Char> = setOf('J', 'S', 'M'),
+    val specialZoneLetters: Set<Char> = setOf('J', 'S', 'Y'),
 ) {
     companion object {
-        /**
-         * 默认布局：A~L 跳过 J（J/S/M 为特殊区）。**字母上界尚未经用户现场核验**，
-         * 一旦确认请在此改掉，或由界面配置覆盖。
-         */
+        /** 由入口向深处的普通排（默认值待现场核实，界面可编辑）。 */
+        val DEFAULT_SPECIAL_ZONES: Set<Char> = setOf('J', 'S', 'Y')
+
         fun default(): SiteLayout = SiteLayout(
-            rowLetters = ('A'..'L').filter { it != 'J' && it != 'S' && it != 'M' }
+            rowLetters = ('A'..'Q').filter { it !in DEFAULT_SPECIAL_ZONES }
         )
     }
 }
@@ -162,12 +172,22 @@ data class PickupRoute(
     val totalTiles: Int,
     /** 每一段的步数：第 0 段为「入口 → 第 1 件」，之后逐件；若折返入口则最后一段为「末件 → 入口」 */
     val legTiles: List<Int>,
-    /** 无法定位的原始货格号（特殊区 J/S/M、未知排字母、号段越界、格式不符） */
+    /** 特殊区货格号（J / S / Y 等，布局尚未确认，**不参与路径规划**，单独列出以免用户以为丢了） */
+    val specialZoneCodes: List<String>,
+    /** 纯数字取件码 = 快递柜，不在人工货架路径上 */
+    val lockerCodes: List<String>,
+    /** 完全无法识别的原文 */
     val unresolved: List<String>,
     /** 是否为精确最优（false 表示件数过多，退化为启发式） */
     val exact: Boolean,
 ) {
     val resolvedCount: Int get() = orderedCodes.size
+}
+
+/** 该取件码是否只是数字（快递柜）。 */
+fun isLockerCode(raw: String): Boolean {
+    val text = raw.trim()
+    return text.isNotEmpty() && text.all { it.isDigit() }
 }
 
 /** 超过这个件数就不用 O(2^n·n^2) 的精确 DP，退化为最近邻 + 2-opt。 */
@@ -187,8 +207,21 @@ fun planPickupRoute(
     returnToEntrance: Boolean = true,
 ): PickupRoute {
     val unresolved = mutableListOf<String>()
+    val specialZones = mutableListOf<String>()
+    val lockers = mutableListOf<String>()
     val located = mutableListOf<ShelfLocation>()
     for (raw in rawCodes) {
+        if (isLockerCode(raw)) {
+            // 纯数字 ⇒ 快递柜，不在人工货架路径上
+            lockers += raw.trim()
+            continue
+        }
+        val firstLetter = raw.trim().uppercase().firstOrNull()
+        if (firstLetter != null && firstLetter in layout.specialZoneLetters) {
+            // J / S / Y 等特殊区：编号规则与普通排不同，布局未确认前不臆测
+            specialZones += raw
+            continue
+        }
         val code = parseCompartmentCode(raw)
         if (code == null) {
             unresolved += raw
@@ -203,7 +236,15 @@ fun planPickupRoute(
     }
 
     if (located.isEmpty()) {
-        return PickupRoute(emptyList(), 0, emptyList(), unresolved, exact = true)
+        return PickupRoute(
+            orderedCodes = emptyList(),
+            totalTiles = 0,
+            legTiles = emptyList(),
+            specialZoneCodes = specialZones,
+            lockerCodes = lockers,
+            unresolved = unresolved,
+            exact = true,
+        )
     }
 
     val useExact = located.size <= MAX_EXACT_ITEMS
@@ -226,6 +267,8 @@ fun planPickupRoute(
         orderedCodes = order.map { it.code },
         totalTiles = legs.sum(),
         legTiles = legs,
+        specialZoneCodes = specialZones,
+        lockerCodes = lockers,
         unresolved = unresolved,
         exact = useExact,
     )

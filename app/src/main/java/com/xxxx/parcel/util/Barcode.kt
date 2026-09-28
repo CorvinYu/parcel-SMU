@@ -8,17 +8,23 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import java.io.File
+import java.io.FileOutputStream
 
 /**
- * 微信快递中心「进出条码」的 Android 侧适配：图片加载、Bitmap ↔ 像素、设置持久化。
+ * 微信快递中心「进出条码」的 Android 侧适配：图片加载、Bitmap ↔ 像素、原图存取、设置持久化。
  *
- * **编解码算法本身不在这里**，而在 `BarcodeCodec.kt`（纯 Kotlin、无 Android 依赖、可 JVM 单元测试）。
- * 这么拆是为了让「截图能不能认出条码」「铺满全屏后还能不能扫」这两件事有真凭实据。
+ * **编解码算法本身在 `BarcodeCodec.kt`**（纯 Kotlin、无 Android 依赖、可 JVM 单元测试）。
  *
- * 背景与约束（详见项目 NOTES.md）：
- * - 该条码是**静态**的一维 Code128，截图一次可长期使用。
- * - 一维条码只能**横向等比**缩放；纵向可任意拉伸。
- * - 用 ZXing 而非 ML Kit：前者纯 Java、完全离线，符合本 app「不联网」定位。
+ * ## 两种出示方式
+ *
+ * - **原图模式（默认）**：直接把截图里裁出的条码原图存下来出示。
+ *   不解码、不重编码 ⇒ **内容 100% 保真**。
+ * - **重绘模式**：解码出内容后用 ZXing 重新生成清晰条码。
+ *   优点是可以任意放大、无 JPEG 噪点；代价是依赖解码正确性。
+ *
+ * 之所以默认原图：实测用户的微信专属码截图时发现，条码**实际编码的内容**（11 字符）
+ * 与页面上印的明文（8 字符）**并不一致**。这种情况下重绘等于把不确定的东西当真理。
  */
 private const val PREFS_NAME = "parcel_prefs"
 private const val KEY_PAYLOAD = "barcode_payload"
@@ -26,11 +32,14 @@ private const val KEY_SYMBOLOGY = "barcode_symbology"
 private const val KEY_STRIP = "barcode_strip_enabled"
 private const val KEY_BOTTOM = "barcode_bottom_enabled"
 private const val KEY_BACKGROUND = "barcode_background_enabled"
+private const val KEY_USE_ORIGINAL = "barcode_use_original"
 private const val KEY_UPDATED_AT = "barcode_updated_at"
 private const val TAG = "ParcelBarcode"
 
-/** 识别前先把超大截图缩到这个量级，避免 OOM 与无谓的耗时。 */
-private const val MAX_DECODE_DIMEN = 2000
+/** 识别前先把超大截图缩到这个量级，避免 OOM。 */
+private const val MAX_DECODE_DIMEN = 3200
+
+private const val ORIGINAL_IMAGE_FILE = "barcode_original.png"
 
 private fun barcodePrefs(context: Context): SharedPreferences =
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -84,13 +93,102 @@ fun saveBarcodeBackgroundEnabled(context: Context, enabled: Boolean) {
     barcodePrefs(context).edit().putBoolean(KEY_BACKGROUND, enabled).apply()
 }
 
-// ===== 从截图识别 =====
+/**
+ * 原图模式：直接用截图里裁出的条码原图，不做解码重编码 ⇒ 内容 100% 保真。
+ *
+ * **默认关闭**：默认仍是「解码后重绘」（这是已验证可用的行为，条码更干净）。
+ * 只有当驿站扫码枪不认重绘出来的条码时，才建议打开原图模式作为兜底。
+ */
+fun isBarcodeOriginalPreferred(context: Context): Boolean =
+    barcodePrefs(context).getBoolean(KEY_USE_ORIGINAL, false)
 
-/** 从相册/截图 Uri 中解出条码内容（识别策略见 `decodeBarcodeFromScreenshot`）。 */
-fun decodeBarcodeFromUri(context: Context, uri: Uri): String? {
-    val bitmap = loadBitmapFromUri(context, uri) ?: return null
-    return decodeBarcodeFromBitmap(bitmap)
+fun saveBarcodeOriginalPreferred(context: Context, value: Boolean) {
+    barcodePrefs(context).edit().putBoolean(KEY_USE_ORIGINAL, value).apply()
 }
+
+// ===== 原图存取 =====
+
+fun barcodeOriginalImageFile(context: Context): File = File(context.filesDir, ORIGINAL_IMAGE_FILE)
+
+fun hasBarcodeOriginalImage(context: Context): Boolean = barcodeOriginalImageFile(context).isFile
+
+fun saveBarcodeOriginalImage(context: Context, image: PixelImageResult): Boolean {
+    return try {
+        val bitmap = Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+        FileOutputStream(barcodeOriginalImageFile(context)).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        bitmap.recycle()
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "save original barcode failed: ${e.message}")
+        false
+    }
+}
+
+fun clearBarcodeOriginalImage(context: Context) {
+    runCatching { barcodeOriginalImageFile(context).delete() }
+}
+
+/**
+ * 统一的取图入口：按当前模式返回条码位图。
+ *
+ * 原图模式优先用裁出来的原图（内容保真）；没有原图或用户选择重绘时，才用解码内容重新生成。
+ */
+fun loadBarcodeBitmap(context: Context, widthPx: Int, heightPx: Int): Bitmap? {
+    if (widthPx <= 0 || heightPx <= 0) return null
+
+    if (isBarcodeOriginalPreferred(context)) {
+        val file = barcodeOriginalImageFile(context)
+        if (file.isFile) {
+            decodeImageFile(file)?.let { return it }
+        }
+    }
+    val payload = getBarcodePayload(context) ?: return null
+    return renderBarcode(payload, getBarcodeSymbology(context), widthPx, heightPx)
+}
+
+private fun decodeImageFile(file: File): Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        var sampleSize = 1
+        while (longest / sampleSize > MAX_DECODE_DIMEN) sampleSize *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        BitmapFactory.decodeFile(file.absolutePath, options)
+    } catch (e: Exception) {
+        Log.w(TAG, "decode original barcode failed: ${e.message}")
+        null
+    }
+}
+
+// ===== 从截图导入 =====
+
+/** 一次导入的结果：解出的内容 + 是否成功保存了条码原图。 */
+data class BarcodeImportResult(val payload: String?, val originalSaved: Boolean)
+
+/**
+ * 导入截图：**同时**解出内容并裁出条码原图。
+ * 原图用于「原图模式」保真出示，内容用于界面显示与人工核对。
+ */
+fun importBarcodeFromUri(context: Context, uri: Uri): BarcodeImportResult {
+    val bitmap = loadBitmapFromUri(context, uri) ?: return BarcodeImportResult(null, false)
+    val width = bitmap.width
+    val height = bitmap.height
+    if (width <= 0 || height <= 0) return BarcodeImportResult(null, false)
+
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+    val payload = decodeBarcodeFromScreenshot(pixels, width, height)
+    val extracted = extractBarcodeImage(pixels, width, height)
+    val saved = extracted != null && saveBarcodeOriginalImage(context, extracted)
+    return BarcodeImportResult(payload, saved)
+}
+
+/** 从相册/截图 Uri 中解出条码内容（不保存原图）。 */
+fun decodeBarcodeFromUri(context: Context, uri: Uri): String? = importBarcodeFromUri(context, uri).payload
 
 fun decodeBarcodeFromBitmap(bitmap: Bitmap): String? {
     val scaled = scaleDownIfNeeded(bitmap)
@@ -129,7 +227,9 @@ private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 val longest = maxOf(info.size.width, info.size.height)
                 if (longest > MAX_DECODE_DIMEN) {
-                    decoder.setTargetSampleSize(Math.ceil(longest.toDouble() / MAX_DECODE_DIMEN).toInt())
+                    var sampleSize = 1
+                    while (longest / sampleSize > MAX_DECODE_DIMEN) sampleSize *= 2
+                    decoder.setTargetSampleSize(sampleSize)
                 }
             }
         } else {
@@ -137,11 +237,9 @@ private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeStream(context.contentResolver.openInputStream(uri), null, bounds)
                 val longest = maxOf(bounds.outWidth, bounds.outHeight)
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = if (longest > MAX_DECODE_DIMEN) {
-                        Math.ceil(longest.toDouble() / MAX_DECODE_DIMEN).toInt()
-                    } else 1
-                }
+                var sampleSize = 1
+                while (longest / sampleSize > MAX_DECODE_DIMEN) sampleSize *= 2
+                val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
                 BitmapFactory.decodeStream(input, null, options)
             }
         }
