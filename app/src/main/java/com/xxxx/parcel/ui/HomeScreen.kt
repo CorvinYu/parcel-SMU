@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -80,8 +79,8 @@ fun HomeScreen(
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
     var barcodeBottomFillEnabled by remember { mutableStateOf(isBarcodeBottomFillEnabled(context)) }
-    // 列表滚动状态由首页持有：用来判断「列表装不装得下」，好把下方空白让给条码
-    val listState = rememberLazyListState()
+    // 由列表上报「当前页内容高度（px）」，用来算出底部条码能占多少空白
+    var listContentHeightPx by remember { mutableStateOf<Int?>(null) }
     // 条码铺作背景时，文字直接压在条码上会难读 —— 给文字容器加半透明垫子
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
     var showBarcodePresentation by remember { mutableStateOf(false) }
@@ -172,15 +171,8 @@ fun HomeScreen(
             // 列表「装得下」时，把下方空白整块让给条码；装不下就缩到最小高度、给取件码让位。
             // 用容器总高度 maxHeight（固定值）而不是列表视口来算，避免「条码变高→视口变矮→条码又变矮」的来回震荡。
             val density = LocalDensity.current
-            val listInfo = listState.layoutInfo
-            val contentHeightDp = remember(listInfo) {
-                if (listInfo.totalItemsCount > 0 &&
-                    listInfo.visibleItemsInfo.size == listInfo.totalItemsCount
-                ) {
-                    with(density) { listInfo.visibleItemsInfo.sumOf { it.size }.toDp() }
-                } else {
-                    null
-                }
+            val contentHeightDp = remember(listContentHeightPx) {
+                listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
             // 最多占屏幕 1/4，别把页面顶得太高（用户反馈：太高不好看）
@@ -209,7 +201,7 @@ fun HomeScreen(
                         preferLockerAddress = preferLockerAddress,
                         isSeniorMode = isSeniorMode,
                         isTimeSort = isTimeSort,
-                        listState = listState
+                        onListContentHeightPx = { listContentHeightPx = it }
                     ) else
                         Column(
                             modifier = Modifier.fillMaxSize(),

@@ -2,7 +2,6 @@ package com.xxxx.parcel.ui.components
 
 import android.annotation.SuppressLint
 import android.content.Context
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,7 +37,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -170,8 +168,8 @@ fun ParcelList(
     preferLockerAddress: Boolean,
     isSeniorMode: Boolean,
     isTimeSort: Boolean = false,
-    /** 由首页持有，用于判断「列表是否装得下」，从而把下方空白让给底部条码 */
-    listState: LazyListState = rememberLazyListState(),
+    /** 上报「当前页列表内容高度（px；列表可滚动时为 null）」，用于底部条码自动让位 */
+    onListContentHeightPx: (Int?) -> Unit = {},
 ) {
     val parcelsData by viewModel.parcelsData.collectAsState()
     val failedMessages by viewModel.failedMessages.collectAsState()
@@ -217,27 +215,20 @@ fun ParcelList(
         )
     } else filteredParcelsData
 
-    // 三大类：快递站 / 快递柜 / 校外（用户 2026-10-01 指定），用横向标签切换
-    val stationParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.STATION }
-    val lockerParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.LOCKER }
-    val offCampusParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.OFF_CAMPUS }
-    val categoryCounts = listOf(stationParcels.size, lockerParcels.size, offCampusParcels.size)
+    // 三大类：快递站 / 快递柜 / 校外（用户 2026-10-01 指定）。
+    // 用 HorizontalPager 做「手指跟手翻页 + 点标签动画滚动」，与「横向地址」同一套效果。
+    val categoryParcels = listOf(
+        orderedParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
+        orderedParcelsData.filter { it.categoryOf() == PickupCategory.LOCKER },
+        orderedParcelsData.filter { it.categoryOf() == PickupCategory.OFF_CAMPUS },
+    )
+    val categoryCounts = categoryParcels.map { it.size }
     val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
-    var pickedCategory by remember { mutableStateOf<Int?>(null) }
-    val categoryIndex = pickedCategory ?: defaultCategoryIndex
-    val visibleParcels = when (categoryIndex) {
-        0 -> stationParcels
-        1 -> lockerParcels
-        else -> offCampusParcels
-    }
-    val parcelListEntries = visibleParcels.map { parcel ->
-        ParcelListEntry(
-            parcel = parcel,
-            // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不用再重复「自助取件」
-            hideHeader = categoryIndex == 0,
-            showLockerTag = categoryIndex != 1,
-        )
-    }
+    val pagerState = rememberPagerState(
+        initialPage = defaultCategoryIndex,
+        pageCount = { PickupCategory.entries.size },
+    )
+    val scope = rememberCoroutineScope()
 
     if (isHorizontalLayout && filteredParcelsData.isNotEmpty()) {
         HorizontalList(
@@ -273,46 +264,70 @@ fun ParcelList(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CategoryTabRow(
-            counts = categoryCounts,
-            selected = categoryIndex,
-            onSelect = { pickedCategory = it },
-        )
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                // 横向滑动切换分类（纵向滚动仍交给列表，两者不冲突）
-                .pointerInput(categoryIndex) {
-                    var dragTotal = 0f
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            val lastIndex = PickupCategory.entries.size - 1
-                            when {
-                                dragTotal <= -100f && categoryIndex < lastIndex ->
-                                    pickedCategory = categoryIndex + 1
+        TabRow(selectedTabIndex = pagerState.currentPage) {
+            PickupCategory.entries.forEachIndexed { index, category ->
+                Tab(
+                    selected = pagerState.currentPage == index,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                    text = {
+                        Text(
+                            text = if (categoryCounts[index] > 0) {
+                                "${category.label} ${categoryCounts[index]}"
+                            } else {
+                                category.label
+                            },
+                            maxLines = 1,
+                        )
+                    },
+                )
+            }
+        }
 
-                                dragTotal >= 100f && categoryIndex > 0 ->
-                                    pickedCategory = categoryIndex - 1
-                            }
-                            dragTotal = 0f
-                        },
-                        onHorizontalDrag = { _, amount -> dragTotal += amount },
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f),
+        ) { page ->
+            val pageParcels = categoryParcels[page]
+            // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不再重复「自助取件」
+            val entries = pageParcels.map { parcel ->
+                ParcelListEntry(
+                    parcel = parcel,
+                    hideHeader = page == 0,
+                    showLockerTag = page != 1,
+                )
+            }
+            val pageListState = rememberLazyListState()
+            val layoutInfo = pageListState.layoutInfo
+            // 把「当前页的列表内容高度」上报首页，用于底部条码自动让位
+            LaunchedEffect(layoutInfo, page, pagerState.currentPage) {
+                if (page == pagerState.currentPage) {
+                    onListContentHeightPx(
+                        if (layoutInfo.totalItemsCount > 0 &&
+                            layoutInfo.visibleItemsInfo.size == layoutInfo.totalItemsCount
+                        ) {
+                            layoutInfo.visibleItemsInfo.sumOf { it.size }
+                        } else {
+                            null
+                        }
                     )
                 }
-        ) {
-            val showOffCampusHint = categoryIndex == 2 && failedMessages.isNotEmpty()
-            if (visibleParcels.isEmpty() && !showOffCampusHint) {
+            }
+
+            val showUnparsedHint = page == 2 && failedMessages.isNotEmpty()
+            if (entries.isEmpty() && !showUnparsedHint) {
                 EmptyParcelView(navController = navController, isSeniorMode = isSeniorMode)
             } else {
                 LazyColumn(
-                    state = listState,
+                    state = pageListState,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),
                     verticalArrangement = Arrangement.Top,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    items(parcelListEntries, key = { it.key }) { entry ->
+                    items(entries, key = { it.key }) { entry ->
                         val result = entry.parcel
                         val isExpanded = expandedStates.value[result.address] ?: true
                         AddressCard(
@@ -335,11 +350,11 @@ fun ParcelList(
                             hideHeader = entry.hideHeader,
                         )
                     }
-                    if (showOffCampusHint) {
-                        item(key = "off_campus_hint") {
+                    if (showUnparsedHint) {
+                        item(key = "unparsed_hint") {
                             Text(
-                                text = "另有 ${failedMessages.size} 条短信没能解析出取件码 ——" +
-                                    "校外的取件码格式可能不一样，可到「解析失败」里对照原文。",
+                                text = "另有 ${failedMessages.size} 条短信没能解析出取件码，" +
+                                    "可到「解析失败」里对照原文。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
@@ -369,23 +384,6 @@ private fun ParcelData.categoryOf(): PickupCategory {
     return classifyPickupCategory(first.code, first.sms.body)
 }
 
-@Composable
-private fun CategoryTabRow(counts: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
-    TabRow(selectedTabIndex = selected) {
-        PickupCategory.entries.forEachIndexed { index, category ->
-            Tab(
-                selected = selected == index,
-                onClick = { onSelect(index) },
-                text = {
-                    Text(
-                        text = if (counts[index] > 0) "${category.label} ${counts[index]}" else category.label,
-                        maxLines = 1,
-                    )
-                },
-            )
-        }
-    }
-}
 
 @Composable
 private fun EmptyParcelView(
