@@ -20,6 +20,7 @@ import java.io.FileOutputStream
 fun loadCustomRulesToParser(context: Context, parser: SmsParser) {
     getCustomList(context, "address").forEach { if (it.isNotBlank()) parser.addCustomAddressPattern(it) }
     getCustomList(context, "code").forEach { if (it.isNotBlank()) parser.addCustomCodePattern(it) }
+    getCustomList(context, "codeKeyword").forEach { if (it.isNotBlank()) parser.addCustomCodeKeyword(it) }
     getCustomList(context, "ignoreKeywords").forEach { if (it.isNotBlank()) parser.addIgnoreKeyword(it) }
     parser.preferLockerAddress = getPreferLockerAddress(context)
 }
@@ -86,19 +87,23 @@ fun addCompletedIds(context: Context, viewModel: ParcelViewModel, smsList: List<
 }
 
 fun getAllSaveData(context: Context, viewModel: ParcelViewModel) {
-    val listAddr = getCustomList(context, "address").toMutableList()
-    val listCode = getCustomList(context, "code").toMutableList()
-    val completedIds = getCustomList(context, "completedIds").toMutableList()
-    val ignoreKeywords = getCustomList(context, "ignoreKeywords").toMutableList()
-    val timeFilterIndex = getIndex(context)
-    val preferLockerAddress = getPreferLockerAddress(context)
+        val listAddr = getCustomList(context, "address").toMutableList()
+        val listCode = getCustomList(context, "code").toMutableList()
+        val listCodeKeyword = getCustomList(context, "codeKeyword").toMutableList()
+        val completedIds = getCustomList(context, "completedIds").toMutableList()
+        val ignoreKeywords = getCustomList(context, "ignoreKeywords").toMutableList()
+        val timeFilterIndex = getIndex(context)
+        val preferLockerAddress = getPreferLockerAddress(context)
 
-    listAddr.forEach {
-        viewModel.addCustomAddressPattern(it)
-    }
-    listCode.forEach {
-        viewModel.addCustomCodePattern(it)
-    }
+        listAddr.forEach {
+            viewModel.addCustomAddressPattern(it)
+        }
+        listCode.forEach {
+            viewModel.addCustomCodePattern(it)
+        }
+        listCodeKeyword.forEach {
+            viewModel.addCustomCodeKeyword(it)
+        }
     ignoreKeywords.forEach {
         viewModel.addIgnoreKeyword(it)
     }
@@ -113,6 +118,83 @@ fun getPreferLockerAddress(context: Context): Boolean {
         prefs.getBoolean("prefer_locker_address", true)
     } catch (_: Exception) {
         true
+    }
+}
+
+fun savePreferLockerAddress(context: Context, prefer: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("prefer_locker_address", prefer).apply()
+    } catch (_: Exception) {
+    }
+}
+
+// ===== 首页显示设置（parcel_prefs） =====
+fun saveShowCompleted(context: Context, show: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("show_completed_codes", show).apply()
+    } catch (_: Exception) {
+    }
+}
+
+fun getShowCompleted(context: Context): Boolean {
+    return try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.getBoolean("show_completed_codes", true)
+    } catch (_: Exception) {
+        true
+    }
+}
+
+fun saveShowCodeTime(context: Context, show: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("show_code_time", show).apply()
+    } catch (_: Exception) {
+    }
+}
+
+fun getShowCodeTime(context: Context): Boolean {
+    return try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.getBoolean("show_code_time", true)
+    } catch (_: Exception) {
+        true
+    }
+}
+
+fun saveShowCompartment(context: Context, show: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("show_compartment", show).apply()
+    } catch (_: Exception) {
+    }
+}
+
+fun getShowCompartment(context: Context): Boolean {
+    return try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.getBoolean("show_compartment", true)
+    } catch (_: Exception) {
+        true
+    }
+}
+
+fun saveTimeSort(context: Context, timeSort: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("time_sort", timeSort).apply()
+    } catch (_: Exception) {
+    }
+}
+
+fun getTimeSort(context: Context): Boolean {
+    return try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.getBoolean("time_sort", false)
+    } catch (_: Exception) {
+        false
     }
 }
 
@@ -265,6 +347,23 @@ fun saveAppBackgroundImage(context: Context, uri: Uri): Boolean {
     }
 }
 
+fun saveHorizontalLayout(context: Context, horizontal: Boolean) {
+    try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("horizontal_layout", horizontal).apply()
+    } catch (_: Exception) {
+    }
+}
+
+fun getHorizontalLayout(context: Context): Boolean {
+    return try {
+        val prefs = context.getSharedPreferences("parcel_prefs", Context.MODE_PRIVATE)
+        prefs.getBoolean("horizontal_layout", false)
+    } catch (_: Exception) {
+        false
+    }
+}
+
 private fun decodeBackgroundBitmapFromUri(
     context: Context,
     uri: Uri,
@@ -360,6 +459,7 @@ fun clearCustomPattern(
 fun clearAllCustomPatterns(context: Context, viewModel: ParcelViewModel) {
     saveCustomList(context, "address", mutableSetOf())
     saveCustomList(context, "code", mutableSetOf())
+    saveCustomList(context, "codeKeyword", mutableSetOf())
     viewModel.clearAllCustomPatterns()
 }
 
@@ -672,6 +772,38 @@ fun removeSystemSmsPackage(context: Context, pkg: String) {
     val set = getSystemSmsPackages(context)
     set.remove(pkg)
     setSystemSmsPackages(context, set)
+}
+
+// ===== 取件码备注 =====
+@kotlinx.serialization.Serializable
+data class CodeNote(val id: String, val note: String)
+
+fun getCodeNotes(context: Context): Map<String, String> {
+    val sp = context.getSharedPreferences("MyPrefs", Context.MODE_PRIVATE)
+    val jsonStr = sp.getString("code_notes_json", null) ?: return emptyMap()
+    return try {
+        Json.decodeFromString<List<CodeNote>>(jsonStr).associate { it.id to it.note }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+}
+
+fun saveCodeNote(context: Context, id: String, note: String) {
+    val sp = context.getSharedPreferences("MyPrefs", Context.MODE_PRIVATE)
+    val currentJson = sp.getString("code_notes_json", null) ?: "[]"
+    val currentList = try {
+        Json.decodeFromString<List<CodeNote>>(currentJson).toMutableList()
+    } catch (e: Exception) {
+        mutableListOf()
+    }
+
+    currentList.removeAll { it.id == id }
+    // 备注为空视为删除
+    if (note.isNotBlank()) {
+        currentList.add(CodeNote(id, note.trim().take(9)))
+    }
+
+    sp.edit().putString("code_notes_json", Json.encodeToString(currentList)).apply()
 }
 
 // ===== 地址归类映射 =====

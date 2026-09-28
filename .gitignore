@@ -17,6 +17,12 @@ key.properties
 .kotlin
 .vscode
 .gradle-home/
+.android-sdk/
+.android-user/
+.devtools/
+# hub 本地工作笔记，不推到公开仓库
+CLAUDE.md
+NOTES.md
 .local-gradle/
 *.bak
 *.jks
