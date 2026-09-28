@@ -1,6 +1,6 @@
 # 📦 取件码海大版 | Pickup Code Haida Edition
 
-> 面向**上海海事大学（临港校区）**快递站场景优化的取件码应用分支。
+> 面向 **上海海事大学（临港校区）** 快递站场景优化的取件码应用分支。
 > fork 自 [shareven/parcel](https://github.com/shareven/parcel)（MIT）。
 > **本版本不是原作者的官方发布版本。**
 
