@@ -66,13 +66,16 @@ fun BarcodeImage(
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
         val widthPx = with(density) { maxWidth.roundToPx() }
-        val heightPx = with(density) { heightDp.dp.roundToPx() }
         val useOriginal = remember { isBarcodeOriginalPreferred(context) }
         val hasOriginal = remember { hasBarcodeOriginalImage(context) }
-        // 原图模式优先：直接用截图里裁出的原图，不做解码重编码
-        val bitmap by produceState<Bitmap?>(null, payload, symbology, widthPx, heightPx, useOriginal, hasOriginal) {
+        // ⚠️ 这里**只按宽度**渲染一次，高度用固定值，原因是两个实测问题：
+        //   1) 高度在做动画 ⇒ 若把它当 key，会**每帧重算整张位图**（百万级像素循环）→ 卡顿；
+        //   2) key 一变，produceState 会把值重置为 null ⇒ 动画中间闪出几帧空白"白窗"。
+        // 一维条码纵向拉伸不影响识别（条宽不变），所以显示时用 FillBounds 撑满容器即可。
+        val renderHeightPx = 300
+        val bitmap by produceState<Bitmap?>(null, payload, symbology, widthPx, useOriginal, hasOriginal) {
             value = withContext(Dispatchers.Default) {
-                loadBarcodeBitmap(context, widthPx, heightPx)
+                loadBarcodeBitmap(context, widthPx, renderHeightPx)
             }
         }
         val image = bitmap
@@ -95,7 +98,12 @@ fun BarcodeImage(
                     bitmap = image.asImageBitmap(),
                     contentDescription = "取件条码",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit,
+                    // 一维条码纵向拉伸无害（条宽不变）；二维码必须等比，否则会变形扫不出
+                    contentScale = if (symbology == BarcodeSymbology.QR_CODE) {
+                        ContentScale.Fit
+                    } else {
+                        ContentScale.FillBounds
+                    },
                 )
             }
         }

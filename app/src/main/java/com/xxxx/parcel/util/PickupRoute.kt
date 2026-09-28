@@ -202,6 +202,29 @@ enum class PickupPlace { STATION, LOCKER }
 fun classifyPickupPlace(code: String): PickupPlace =
     if (isLockerCode(code)) PickupPlace.LOCKER else PickupPlace.STATION
 
+/** 列表三大类（用户 2026-10-01 指定：快递站 / 快递柜 / 校外）。 */
+enum class PickupCategory(val label: String) {
+    STATION("快递站"),
+    LOCKER("快递柜"),
+    OFF_CAMPUS("校外"),
+}
+
+/**
+ * 三大类判定。
+ *
+ * 判据（依用户真实样例）：
+ * 1. 短信**正文**里出现「海事大学」⇒ 校内；否则 ⇒ 校外
+ * 2. 校内 且 取件码为纯数字 ⇒ 快递柜
+ * 3. 校内 且 取件码含字母 ⇒ 快递站（含顺丰 S、大件 Y）
+ *
+ * ⚠️ 必须用短信正文而不是解析后的地址：`D8-6` 那条的解析地址是「请用D8-6到人工货架取包裹」，
+ * 里面**没有**「海事大学」，用地址判断会把它误判成校外。
+ */
+fun classifyPickupCategory(code: String, smsBody: String): PickupCategory {
+    if (!smsBody.contains("海事大学")) return PickupCategory.OFF_CAMPUS
+    return if (isLockerCode(code)) PickupCategory.LOCKER else PickupCategory.STATION
+}
+
 /** 超过这个件数就不用 O(2^n·n^2) 的精确 DP，退化为最近邻 + 2-opt。 */
 const val MAX_EXACT_ITEMS = 13
 

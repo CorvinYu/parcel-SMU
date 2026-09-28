@@ -182,10 +182,12 @@ fun HomeScreen(
                     null
                 }
             }
-            val minBarcodeHeight = if (isSeniorMode) 136.dp else 100.dp
-            val targetFillHeight = contentHeightDp
-                ?.let { (maxHeight - it).coerceAtLeast(minBarcodeHeight) }
-                ?: minBarcodeHeight
+            val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
+            // 最多占屏幕 1/4，别把页面顶得太高（用户反馈：太高不好看）
+            val maxBarcodeHeight = maxHeight * 0.25f
+            val targetFillHeight = (contentHeightDp?.let { maxHeight - it } ?: maxBarcodeHeight)
+                .coerceAtMost(maxBarcodeHeight)
+                .coerceAtLeast(minOf(minBarcodeHeight, maxBarcodeHeight))
             // 隐藏/取出取件码时列表高度会突变，条码高度用动画跟上，避免「啪」地跳一下
             val animatedFillHeight by animateDpAsState(
                 targetValue = targetFillHeight,

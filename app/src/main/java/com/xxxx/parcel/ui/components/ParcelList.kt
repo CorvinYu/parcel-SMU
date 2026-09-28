@@ -3,6 +3,7 @@ package com.xxxx.parcel.ui.components
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,8 +45,8 @@ import androidx.navigation.NavController
 import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
-import com.xxxx.parcel.util.PickupPlace
-import com.xxxx.parcel.util.classifyPickupPlace
+import com.xxxx.parcel.util.PickupCategory
+import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
@@ -212,18 +214,26 @@ fun ParcelList(
         )
     } else filteredParcelsData
 
-    // 默认分类：快递柜（自助取件，取件码为纯数字）与快递站（人工货架，含顺丰 S、大件 Y）分成两组
-    val lockerParcels = orderedParcelsData.filter { it.isLockerGroup() }
-    val stationParcels = orderedParcelsData.filterNot { it.isLockerGroup() }
-    val parcelListEntries = buildList {
-        if (lockerParcels.isNotEmpty()) {
-            add(ParcelListEntry.Header("快递柜 · 自助取件"))
-            lockerParcels.forEach { add(ParcelListEntry.Card(it, showLockerTag = false)) }
-        }
-        if (stationParcels.isNotEmpty()) {
-            add(ParcelListEntry.Header("快递站 · 人工货架"))
-            stationParcels.forEach { add(ParcelListEntry.Card(it, showLockerTag = true)) }
-        }
+    // 三大类：快递站 / 快递柜 / 校外（用户 2026-10-01 指定），用横向标签切换
+    val stationParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.STATION }
+    val lockerParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.LOCKER }
+    val offCampusParcels = orderedParcelsData.filter { it.categoryOf() == PickupCategory.OFF_CAMPUS }
+    val categoryCounts = listOf(stationParcels.size, lockerParcels.size, offCampusParcels.size)
+    val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
+    var pickedCategory by remember { mutableStateOf<Int?>(null) }
+    val categoryIndex = pickedCategory ?: defaultCategoryIndex
+    val visibleParcels = when (categoryIndex) {
+        0 -> stationParcels
+        1 -> lockerParcels
+        else -> offCampusParcels
+    }
+    val parcelListEntries = visibleParcels.map { parcel ->
+        ParcelListEntry(
+            parcel = parcel,
+            // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不用再重复「自助取件」
+            hideHeader = categoryIndex == 0,
+            showLockerTag = categoryIndex != 1,
+        )
     }
 
     if (isHorizontalLayout && filteredParcelsData.isNotEmpty()) {
@@ -251,23 +261,33 @@ fun ParcelList(
         return
     }
 
-    if (filteredParcelsData.isEmpty()) EmptyParcelView(
-        navController = navController,
-        isSeniorMode = isSeniorMode,
-    )
-    else
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            items(parcelListEntries, key = { it.key }) { entry ->
-                when (entry) {
-                    is ParcelListEntry.Header -> ParcelGroupHeader(entry.title)
-                    is ParcelListEntry.Card -> {
+    if (filteredParcelsData.isEmpty()) {
+        EmptyParcelView(
+            navController = navController,
+            isSeniorMode = isSeniorMode,
+        )
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        CategoryTabRow(
+            counts = categoryCounts,
+            selected = categoryIndex,
+            onSelect = { pickedCategory = it },
+        )
+        Box(modifier = Modifier.weight(1f)) {
+            if (visibleParcels.isEmpty()) {
+                EmptyParcelView(navController = navController, isSeniorMode = isSeniorMode)
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),
+                    verticalArrangement = Arrangement.Top,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    items(parcelListEntries, key = { it.key }) { entry ->
                         val result = entry.parcel
                         val isExpanded = expandedStates.value[result.address] ?: true
                         AddressCard(
@@ -287,39 +307,46 @@ fun ParcelList(
                             codeNotes = codeNotes,
                             onLongPressCode = { noteTarget = it },
                             showLockerTag = entry.showLockerTag,
+                            hideHeader = entry.hideHeader,
                         )
                     }
                 }
             }
         }
-}
-
-/** 列表条目：分组标题 或 地址卡片 */
-private sealed interface ParcelListEntry {
-    val key: String
-
-    data class Header(val title: String) : ParcelListEntry {
-        override val key: String get() = "header:$title"
-    }
-
-    data class Card(val parcel: ParcelData, val showLockerTag: Boolean) : ParcelListEntry {
-        override val key: String get() = "card:${parcel.address}"
     }
 }
 
-private fun ParcelData.isLockerGroup(): Boolean =
-    smsDataList.any { classifyPickupPlace(it.code) == PickupPlace.LOCKER }
+/** 列表条目：一个地址分组卡片 */
+private data class ParcelListEntry(
+    val parcel: ParcelData,
+    val hideHeader: Boolean,
+    val showLockerTag: Boolean,
+) {
+    val key: String get() = "card:${parcel.address}"
+}
+
+/** 该地址分组属于哪一大类（同组取第一条短信的正文判定）。 */
+private fun ParcelData.categoryOf(): PickupCategory {
+    val first = smsDataList.firstOrNull() ?: return PickupCategory.OFF_CAMPUS
+    return classifyPickupCategory(first.code, first.sms.body)
+}
 
 @Composable
-private fun ParcelGroupHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 4.dp, top = 14.dp, bottom = 2.dp),
-    )
+private fun CategoryTabRow(counts: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
+    TabRow(selectedTabIndex = selected) {
+        PickupCategory.entries.forEachIndexed { index, category ->
+            Tab(
+                selected = selected == index,
+                onClick = { onSelect(index) },
+                text = {
+                    Text(
+                        text = if (counts[index] > 0) "${category.label} ${counts[index]}" else category.label,
+                        maxLines = 1,
+                    )
+                },
+            )
+        }
+    }
 }
 
 @Composable

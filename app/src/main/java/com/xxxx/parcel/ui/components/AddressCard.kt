@@ -74,6 +74,8 @@ fun AddressCard(
     onLongPressCode: (SmsData) -> Unit = {},
     /** 列表已按「快递柜」分组时，卡片标题就不用再重复「· 自助取件」了 */
     showLockerTag: Boolean = true,
+    /** 隐藏整行地址头（含 + 与整组勾选按钮）—— 快递站那种短信碎片地址用 */
+    hideHeader: Boolean = false,
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
@@ -94,7 +96,8 @@ fun AddressCard(
             .wrapContentHeight()
             .padding(horizontal = 0.dp),
     ) {
-        Row(
+        // 快递站的地址就是短信碎片（「可凭S1-5-2871到店海事大学快递中心店提取」），整行隐藏
+        if (!hideHeader) Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
