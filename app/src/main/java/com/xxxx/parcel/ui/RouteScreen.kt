@@ -41,7 +41,8 @@ import androidx.navigation.NavController
 import com.xxxx.parcel.util.SiteLayout
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getRouteAisleSpacing
-import com.xxxx.parcel.util.getRouteCrossAisle
+import com.xxxx.parcel.util.getRouteExitDepth
+import com.xxxx.parcel.util.getRouteExitLateral
 import com.xxxx.parcel.util.getRouteDoorToSpine
 import com.xxxx.parcel.util.getRouteRowLetters
 import com.xxxx.parcel.util.isRouteReturnToEntrance
@@ -50,7 +51,8 @@ import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.parseRowLetters
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveRouteAisleSpacing
-import com.xxxx.parcel.util.saveRouteCrossAisle
+import com.xxxx.parcel.util.saveRouteExitDepth
+import com.xxxx.parcel.util.saveRouteExitLateral
 import com.xxxx.parcel.util.saveRouteDoorToSpine
 import com.xxxx.parcel.util.saveRouteReturnToEntrance
 import com.xxxx.parcel.util.saveRouteRowLetters
@@ -76,14 +78,16 @@ fun RouteScreen(
     var returnToEntrance by remember { mutableStateOf(isRouteReturnToEntrance(context)) }
     var aisleSpacingText by remember { mutableStateOf(getRouteAisleSpacing(context).toString()) }
     var doorToSpineText by remember { mutableStateOf(getRouteDoorToSpine(context).toString()) }
-    var crossAisleText by remember { mutableStateOf(getRouteCrossAisle(context).toString()) }
+    var exitDepthText by remember { mutableStateOf(getRouteExitDepth(context).toString()) }
+    var exitLateralText by remember { mutableStateOf(getRouteExitLateral(context).toString()) }
 
-    val layout = remember(rowLettersText, aisleSpacingText, doorToSpineText, crossAisleText) {
+    val layout = remember(rowLettersText, aisleSpacingText, doorToSpineText, exitDepthText, exitLateralText) {
         SiteLayout.default().copy(
             rowLetters = parseRowLetters(rowLettersText),
             aisleSpacingTiles = aisleSpacingText.toIntOrNull()?.coerceIn(1, 20) ?: 3,
             doorToSpineTiles = doorToSpineText.toIntOrNull()?.coerceIn(0, 50) ?: 4,
-            crossAisleTiles = crossAisleText.toIntOrNull()?.coerceIn(0, 20) ?: 1,
+            exitDepthTiles = exitDepthText.toIntOrNull()?.coerceIn(0, 60) ?: 10,
+            exitLateralTiles = exitLateralText.toIntOrNull()?.coerceIn(0, 30) ?: 5,
         )
     }
     val pending = remember(successData) {
@@ -150,7 +154,7 @@ fun RouteScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            if (returnToEntrance) "路径：入口 → 逐件取 → 返回入口" else "路径：入口 → 逐件取 → 到最深一件为止",
+                            if (returnToEntrance) "路径：南门进 → 逐件取 → 西门出" else "路径：南门进 → 逐件取 → 到最深一件为止",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (zoneCounts.isNotEmpty()) {
@@ -204,7 +208,7 @@ fun RouteScreen(
 
                 if (returnToEntrance && route.legTiles.size == route.resolvedCount + 1) {
                     Text(
-                        "最后返回出口：${route.legTiles.last()} 格",
+                        "最后从西门出去：${route.legTiles.last()} 格",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -244,9 +248,10 @@ fun RouteScreen(
                     Text("纵向：16 排，由入口向里 ${layout.rowLetters.joinToString(" ")}", style = MaterialTheme.typography.bodySmall)
                     Text("横向：每排 12 个货架 —— 主通道西侧 1~4、东侧 5~12", style = MaterialTheme.typography.bodySmall)
                     Text("通道：每两排背靠背共用一条横向通道；主纵向通道在货架 4 与 5 之间", style = MaterialTheme.typography.bodySmall)
+                    Text("**背靠背的两排之间过不去** —— 必须各自回到主通道（现场确认）", style = MaterialTheme.typography.bodySmall)
                     Text("最里侧通道挂：J 柜列（6 条纵向柜列）、S 顺丰区（3 个货架）", style = MaterialTheme.typography.bodySmall)
                     Text("东侧另有：Y 大件区（y1~y7 + y8 的 8 行 × 3 子位）", style = MaterialTheme.typography.bodySmall)
-                    Text("入口在南侧（J39:M40），出口在西侧（A15:A30）", style = MaterialTheme.typography.bodySmall)
+                    Text("**南门进（J39:M40）→ 西门出（A15:A30）**", style = MaterialTheme.typography.bodySmall)
                     Text(
                         "分区：主货架区 / J 柜列区 / 顺丰 S 区 / 大件 Y 区　—— 四类都已纳入本页规划。",
                         style = MaterialTheme.typography.bodySmall,
@@ -300,11 +305,18 @@ fun RouteScreen(
                 onSave = { saveRouteDoorToSpine(context, it) },
             )
             NumberField(
-                value = crossAisleText,
-                onValueChange = { crossAisleText = it },
-                label = "背靠背两排之间横穿的代价（格）",
-                supporting = "默认 1。同一条通道南北两侧可以直接横穿，不必绕回主通道。",
-                onSave = { saveRouteCrossAisle(context, it) },
+                value = exitDepthText,
+                onValueChange = { exitDepthText = it },
+                label = "出口（西门）在主通道上的位置（格）",
+                supporting = "从入口沿主通道走多少格到西门那一段。默认 10（原图 A15:A30 跨 排 p~d 取中）。",
+                onSave = { saveRouteExitDepth(context, it) },
+            )
+            NumberField(
+                value = exitLateralText,
+                onValueChange = { exitLateralText = it },
+                label = "出口距主通道多远（格）",
+                supporting = "默认 5（西侧门在 1 号货架之外）。",
+                onSave = { saveRouteExitLateral(context, it) },
             )
 
             Row(
@@ -312,9 +324,9 @@ fun RouteScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("取完折返回入口", style = MaterialTheme.typography.bodyLarge)
+                    Text("取完从西门出去", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "关闭则按「敞开路径」算：最优解会把最深的一件排在最后，少走一段回程。",
+                        "关闭则按「敞开路径」算：最优解会把最深的一件排在最后，不走回西门。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

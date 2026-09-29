@@ -340,23 +340,42 @@ class PickupRouteTest {
     }
 
     @Test
-    fun `背靠背的两排可以横穿，不必绕回主通道`() {
-        // A 排（通道 0 南侧）与 B 排（通道 0 北侧）：同一横向位置，横穿 1 格
+    fun `背靠背的两排之间过不去，必须各自回主通道`() {
+        // A 排（通道 0 南侧）与 B 排（通道 0 北侧）在同一横向位置
         val a4 = locate(parseCompartmentCode("A4-1")!!, layout)!!
         val b4 = locate(parseCompartmentCode("B4-1")!!, layout)!!
         assertEquals(0, a4.depthTiles)
         assertEquals(0, b4.depthTiles)
         assertEquals(AisleSide.SOUTH, a4.aisleSide)
         assertEquals(AisleSide.NORTH, b4.aisleSide)
-        assertEquals(layout.crossAisleTiles, walkTiles(a4, b4, layout))
+        // 用户 2026-09-29 现场确认：背靠背挡死 ⇒ 各自回主通道 = 横向 1 + 1
+        assertEquals(2, walkTiles(a4, b4, layout))
+        assertEquals(2, walkTiles(b4, a4, layout))
 
-        // 横向也要走一段时：|Δ横向| + 横穿代价
+        // 横向也要走一段时：横向「之和」（不是差）
         val b1 = locate(parseCompartmentCode("B1-1")!!, layout)!!   // 横向 4
-        assertEquals(3 + layout.crossAisleTiles, walkTiles(a4, b1, layout))
+        assertEquals(1 + 4, walkTiles(a4, b1, layout))
 
-        // 不同通道则必须回主通道：横向 + 通道间距 + 横向
+        // 不同通道同样回主通道：横向 + 通道间距 + 横向
         val c4 = locate(parseCompartmentCode("C4-1")!!, layout)!!
         assertEquals(1 + layout.aisleSpacingTiles + 1, walkTiles(a4, c4, layout))
+    }
+
+    @Test
+    fun `终点是西侧大门而不是南门`() {
+        val m1 = locate(parseCompartmentCode("M1-1")!!, layout)!!
+        val a1 = locate(parseCompartmentCode("A1-1")!!, layout)!!
+        val r1 = locate(parseCompartmentCode("R1-1")!!, layout)!!
+        // 西门在中间深度附近 ⇒ 靠中间深度的排离出口最近
+        assertTrue(
+            "靠近西门的排应比最南/最北的排近",
+            exitFromTiles(m1, layout) < exitFromTiles(a1, layout) &&
+                exitFromTiles(m1, layout) < exitFromTiles(r1, layout),
+        )
+        // 口径：横向回主通道 + |深度差| + 出口横向
+        val m4 = locate(parseCompartmentCode("M4-1")!!, layout)!!   // 紧邻主通道 ⇒ lateral 1
+        val expected = 1 + kotlin.math.abs(m4.depthTiles - layout.exitDepthTiles) + layout.exitLateralTiles
+        assertEquals(expected, exitFromTiles(m4, layout))
     }
 
     @Test
@@ -369,9 +388,11 @@ class PickupRouteTest {
     }
 
     @Test
-    fun `折返最优值等于两倍Steiner子树权重，敞开路径再减去最深目标深度`() {
-        // 独立验算：不依赖 DP，用走行图的树结构直接推导理论最优值。
-        // 前提：样本点在互不相同的通道上，此时不存在「横穿」近路，走行图退化为树。
+    fun `最优值可用树结构独立推导（南门进、西门出）`() {
+        // 独立验算：不依赖 DP，直接用走行图的树结构推导理论最优值。
+        // 0.1.9 起终点是**西门**（不是回到南门），所以这里验两条：
+        //   ① 南门进 → 西门出（含所有目标）：2×Steiner − dist(南门, 西门)
+        //   ② 敞开路径（终点任意）：2×Steiner − 最深目标深度
         val codes = listOf("A1-1", "C4-1", "E5-1", "G9-1")
         val positions = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
         assertEquals(
@@ -380,16 +401,25 @@ class PickupRouteTest {
             positions.map { it.aisle }.distinct().size,
         )
 
-        val steiner = layout.doorToSpineTiles +
+        // 最小子树（含西门那条支路）：主通道从入口伸到「最深目标与西门中更深的那个」
+        val deepest = maxOf(positions.maxOf { it.depthTiles }, layout.exitDepthTiles)
+        val steinerWithExit = layout.doorToSpineTiles +
+            deepest +
+            positions.sumOf { it.lateralTiles } +
+            layout.exitLateralTiles
+
+        val doorToExit = layout.doorToSpineTiles + layout.exitDepthTiles + layout.exitLateralTiles
+        val toExit = planPickupRoute(codes, layout, returnToEntrance = true).totalTiles
+        assertEquals("南门进→西门出 应等于 2×Steiner − dist(南门,西门)",
+            2 * steinerWithExit - doorToExit, toExit)
+
+        // 敞开路径不经过西门 ⇒ 子树里不能算西门那条支路
+        val steinerOpen = layout.doorToSpineTiles +
             positions.maxOf { it.depthTiles } +
             positions.sumOf { it.lateralTiles }
-
-        val roundTrip = planPickupRoute(codes, layout, returnToEntrance = true).totalTiles
-        assertEquals("折返最优应等于 2×Steiner", 2 * steiner, roundTrip)
-
         val maxDepth = positions.maxOf { entranceToTiles(it, layout) }
         val openPath = planPickupRoute(codes, layout, returnToEntrance = false).totalTiles
-        assertEquals("敞开路径最优应等于 2×Steiner − 最深目标深度", 2 * steiner - maxDepth, openPath)
+        assertEquals("敞开路径最优应等于 2×Steiner − 最深目标深度", 2 * steinerOpen - maxDepth, openPath)
     }
 
     @Test
