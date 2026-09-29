@@ -71,9 +71,21 @@ function locate(raw){
  const d0=GEO.bandD0[bandOf(i)];
  return{depth:d0+(north?0.75:0.25),lat:shelfLat(shelf),side,aisle:a,
   label:row+' 排 '+shelf+' 号货架'+(cell?' 第'+cell+'格':'')+'（'+(side==='W'?'西侧':'东侧')+'，走廊'+a+'）'};}
+/* 两条纵向干线：主通道（lat 0）与东侧 V 通道（lat ≈ 27）。同走廊可直走，跨走廊取「经主通道 / 经 V」较短者 */
+const VLAT=shelfLat(GEO.shelves)+GEO.shelfW/2+GEO.spineW/2;
+const toV=lat=>lat>=0?Math.abs(VLAT-lat):VLAT+Math.abs(lat);   // 西侧的货要先跨过主通道
 function walk(a,b){const gap=Math.abs(a.depth-b.depth);
- if(a.aisle>=0&&a.aisle===b.aisle)return (a.side===b.side?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap;
- return a.lat+gap+b.lat;}
+ const viaSpine=Math.abs(a.lat)+gap+Math.abs(b.lat);
+ const viaV=toV(a.lat)+gap+toV(b.lat);
+ const sameSide=(a.side===b.side);
+ const same=(a.aisle>=0&&a.aisle===b.aisle)?((sameSide?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap):Infinity;
+ return Math.min(same,viaSpine,viaV);}
+/* 返回某一段实际走法（用于画线，必须与 walk 的取值一致） */
+function legWay(a,b){const gap=Math.abs(a.depth-b.depth);
+ const same=(a.aisle>=0&&a.aisle===b.aisle);
+ const cS=Math.abs(a.lat)+gap+Math.abs(b.lat), cV=toV(a.lat)+gap+toV(b.lat), cX=same?Math.abs(a.lat-b.lat)+gap:Infinity;
+ if(cX<=cS&&cX<=cV) return{k:'same',c:cX};
+ return cV<cS?{k:'V',c:cV,mid:VLAT}:{k:'spine',c:cS,mid:0};}
 const entranceTo=a=>4+a.depth+a.lat, exitFrom=a=>a.lat+Math.abs(a.depth-10)+Math.abs(GEO.EX[0]);
 function plan(items){const n=items.length;if(!n)return{order:[],legs:[],total:0};
  if(n>13)return nn(items);
@@ -115,12 +127,21 @@ function drawOv(){
   ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});
   ctx.stroke();ctx.setLineDash([]);}}
 function routePath(){
- const pts=[[PX(0),PY(cmid(0))]];let cur=null;
- items.forEach(it=>{const a=it.pos,ai=Math.max(a.aisle,0),yy=PY(cmid(ai));
-  if(!cur||cur.ai!==ai){if(cur)pts.push([PX(0),cur.yy]);pts.push([PX(0),yy]);}
-  pts.push([PX(a.side==='W'?-a.lat:a.lat),yy]);cur={ai,yy};});
- if(cur)pts.push([PX(0),cur.yy]);
- pts.push([PX(0),PY(10)]);pts.push([PX(GEO.EX[0]),PY(10)]);
+ const pts=[[PX(GEO.IG[1]),PY(GEO.IG[2])],[PX(0),PY(GEO.IG[2])]];   // 入口闸机 → 主通道南端
+ const put=(lat,depth)=>pts.push([PX(lat),PY(depth)]);
+ const cm=k=>cmid(Math.min(Math.max(k,0),7));
+ let prev=null;
+ items.forEach(it=>{const a=it.pos;
+  if(prev){
+   const w=legWay(prev,a);
+   if(w.k==='same'){ put(a.side==='W'?-a.lat:a.lat,cm(a.aisle)); }
+   else { put(w.mid,cm(prev.aisle)); put(w.mid,cm(a.aisle)); put(a.side==='W'?-a.lat:a.lat,cm(a.aisle)); }
+  } else {
+   put(0,cm(0)); put(a.side==='W'?-a.lat:a.lat,cm(a.aisle));
+  }
+  prev=a;});
+ if(prev){ put(0,cm(prev.aisle)); put(0,PY(10)); put(PX(GEO.EX[0]),PY(10)); }
+ else { put(0,PY(10)); put(PX(GEO.EX[0]),PY(10)); }
  const out=[];pts.forEach(q=>{const l=out[out.length-1];
   if(!l||Math.abs(l[0]-q[0])>1e-6||Math.abs(l[1]-q[1])>1e-6)out.push(q);});return out;}
 const codesEl=document.getElementById('codes');
