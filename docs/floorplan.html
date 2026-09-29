@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>海大快递站 · 平面图（工程俯视图 v3）</title>
+<style>
+  :root{--ink:#111;--muted:#666;--line:#c8ccd2;--accent:#1f6feb;}
+  *{box-sizing:border-box}
+  body{margin:0;background:#eceef1;font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--ink)}
+  header{padding:10px 16px;background:#fff;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 2px;font-size:16px}
+  .sub{color:var(--muted);font-size:12px}
+  main{display:grid;grid-template-columns:1fr 330px;gap:10px;padding:10px;align-items:start}
+  @media(max-width:1200px){main{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px}
+  .card h2{margin:0 0 6px;font-size:13.5px}
+  canvas{width:100%;height:auto;display:block;background:#fff;cursor:crosshair}
+  .lg{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:12px;margin:0;padding:0;list-style:none}
+  .lg i{display:inline-block;width:13px;height:10px;border:1px solid #555;margin-right:5px;vertical-align:-1px}
+  label{display:block;font-size:12px;color:var(--muted);margin:6px 0 2px}
+  input[type=text],input[type=number]{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:5px;font:inherit}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  button{padding:6px 9px;border:1px solid var(--line);background:#fff;border-radius:5px;cursor:pointer;font:inherit}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  .seq{list-style:none;padding:0;margin:0;max-height:330px;overflow:auto}
+  .seq li{display:flex;gap:7px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .seq .n{flex:0 0 20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:var(--accent);color:#fff;font-size:11.5px;font-weight:700}
+  .seq .code{font-family:ui-monospace,Consolas,monospace;font-weight:700}
+  .seq .leg{margin-left:auto;color:var(--muted);white-space:nowrap}
+  .hint{color:var(--muted);font-size:11.5px}
+  .todo{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:7px 9px;font-size:12px;color:#7c2d12}
+  .badge{display:inline-block;padding:1px 6px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>海大快递站 · 平面图（工程俯视图 v3）</h1>
+  <div class="sub">上方为北｜<b>蓝灰＝通道</b>（只可走这里）｜<b>灰底＝货架</b>（不可穿越）｜横向严格按瓷砖比例，纵向放大以便标注</div>
+</header>
+<main>
+  <div>
+    <div class="card">
+      <canvas id="map" width="1460" height="820"></canvas>
+      <div class="row">
+        <button id="btnRun" class="primary">计算顺序</button>
+        <button id="btnClear">清空</button>
+        <button id="btnRandom5">随机 5 件</button>
+        <button id="btnRandom10">随机 10 件</button>
+        <button id="btnDemo">示例：B 排东西两侧</button>
+      </div>
+      <div class="hint">点货架加取件点（吸附最近货架）。红线只沿通道走，不穿货架。</div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h2>图例</h2>
+      <ul class="lg">
+        <li><i style="background:#dfe7ef"></i>通道（横向走廊／主纵通道）</li>
+        <li><i style="background:#e8e8ea"></i>货架（灰）</li>
+        <li><i style="background:#cfe0f5"></i>J 柜列 / S 顺丰（北端）</li>
+        <li><i style="background:#e2d4f0"></i>Y 大件（东侧）</li>
+        <li><i style="background:#f6e2c8"></i>A 区（左下独立区）</li>
+        <li><i style="background:#bfe3c8"></i>入口大门＋刷码闸机</li>
+        <li><i style="background:#f0b9b9"></i>出口大门／出站闸机</li>
+        <li><i style="background:#555"></i>墙（不可通行）</li>
+      </ul>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h2>取件码</h2>
+      <input type="text" id="codes" value="B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1">
+      <div class="hint" style="margin-top:5px">支持 <code>B12-18</code>、<code>Q5-3</code>、<code>J5-21</code>、<code>S3-2-2628</code>、<code>Y5-7-1</code>、<code>Y8-1-3</code>、<code>A4-1</code>。</div>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>建议顺序 <span class="badge" id="totalBadge">—</span></h2>
+      <ol class="seq" id="seq"></ol>
+      <div class="hint" id="runInfo"></div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h2>结构（本次按你的更正）</h2>
+      <ul class="hint" style="padding-left:16px;margin:0">
+        <li><b>15 排</b>：B C D E F G H K L M N O P Q R；<b>A 是左下独立区</b></li>
+        <li>每两排背靠背占一条 1 格宽带，走廊 2 格 ⇒ 站距 3 格</li>
+        <li>走廊 0…8：B 靠最南走廊；<b>C｜D E｜F G｜H K｜L M｜N O｜P</b> 各共用；最北 Q｜R；第 8 条在 R 之北（J 柜列前）</li>
+        <li>最北一对 <b>Q／R 左右镜像</b>（西侧 Q 北、东侧 R 北）</li>
+        <li>S：s1 贴墙单独，s2｜s3 背靠背，s3 南侧走廊；宽度＝货架 5~12 跨度</li>
+        <li>闸机：入口（南 J39:M40）／出口大门（西 A15:A30）／出站 C12／顺丰 C13</li>
+      </ul>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <h2>标注用参数</h2>
+      <div class="g2">
+        <div><label>货架宽（格）</label><input type="number" id="p_shelfW" value="3"></div>
+        <div><label>横向通道宽（格）</label><input type="number" id="p_aisleW" value="2"></div>
+        <div><label>货架数／排</label><input type="number" id="p_shelves" value="12"></div>
+        <div><label>西侧上界</label><input type="number" id="p_left" value="4"></div>
+      </div>
+      <div class="row"><button id="btnApply" class="primary">重画</button></div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <div class="todo"><b>待你确认：</b>① 最北一对旁边单独的那排是 <b>P</b> 还是别的（15 排里必有一排单独）② A 区 a1~a9 的相互位置 ③ 东侧是否与西侧对称也有横向走廊（原图只标了 D~M 西半段）</div>
+    </div>
+  </div>
+</main>
+<script>
+/* ================= 模型（与已验证逻辑一致） ================= */
+const ROWS=['B','C','D','E','F','G','H','K','L','M','N','O','P','Q','R'];
+const P=()=>({
+  shelfW:+document.getElementById('p_shelfW').value||3,
+  aisleW:+document.getElementById('p_aisleW').value||2,
+  shelves:+document.getElementById('p_shelves').value||12,
+  left:+document.getElementById('p_left').value||4,
+  door:4, exitD:10, exitL:15, pairD:1, spineW:3,
+});
+const sp=p=>p.aisleW+p.pairD, lb=p=>(p.spineW+p.shelfW)/2;
+const aisleOf=i=>(i+1)>>1, sideOf=i=>(i%2===1)?'S':'N';
+const corrDepth=(p,a)=>a*sp(p), acDepth=(p,a)=>corrDepth(p,a)+p.aisleW/2;
+const shelfLat=(p,s)=>lb(p)+(s<=p.left?(p.left-s):(s-p.left-1))*p.shelfW;
+/* 排 → (走廊, 南北侧)：C｜D 共用走廊1，依此类推；B 靠走廊0、R 靠走廊7 */
+function rowCorr(i){ return aisleOf(i); }               // B0 C1 D1 E2 F2 G3 H3 K4 L4 M5 N5 O6 P6 Q7 R7
+function special(p){
+  const sw=p.shelfW,b=lb(p),s=sp(p),o={};
+  const jl={6:b}; let x=b+sw/2+s+sw/2; jl[5]=x; jl[4]=x+sw;
+  x=jl[4]+sw/2+s+sw/2; jl[3]=x; jl[2]=x+sw; x=jl[2]+sw/2+s+sw/2; jl[1]=x;
+  for(let i=1;i<=6;i++)o['J'+i]={lat:jl[i],side:'W'};
+  const lastShelf=lb(p)+(p.shelves-p.left-1)*p.shelfW, yl=lastShelf+sw/2+s+sw/2;
+  for(const k of [1,2,3,4,5,6,7])o['Y'+k]={lat:yl,side:'E',rev:(k===2?4:k===4?4:k===5?7:k===7?8:0)};
+  o['Y8']={lat:yl,side:'E',rows:8};
+  for(const k of [1,2,3])o['S'+k]={lat:b,side:'E'};   // S 区三排（深度在 locate 里给）
+  // A 区：左下角，9 个货架（横竖混合）。用「格坐标」表述：col 从西向东、row 从北向南
+  o.A=[['A8',1,1,'h'],['A9',2,1,'h'],['A7',1,2,'v'],['A4',1,3,'h'],['A5',2,3,'h'],
+       ['A6',1,4,'v'],['A3',1,5,'h'],['A2',2,5,'h'],['A1',3,5,'h']];
+  return o;
+}
+function locate(raw,p){
+  const t=String(raw).trim().toUpperCase();
+  const m=t.match(/^([A-Z])\s*(\d{1,2})(?:\s*[-－–—]\s*(\d{1,3}))?(?:\s*[-－–—]\s*(\d{1,4}))?$/);
+  if(!m)return null;
+  const row=m[1],shelf=+m[2],cell=m[3]?+m[3]:null,sub=m[4]?+m[4]:null;
+  if('JSYA'.includes(row)){
+    const o=special(p),e=o[row==='A'?null:row+shelf];
+    if(row==='A'){const e2=o.A.find(x=>x[0]==='A'+shelf); if(!e2)return null;
+      return{depth:-(1+(e2[2]-1)*2),lat:-(4+(e2[1]-1)*6),side:'W',aisle:-1,zone:'A',
+             label:'A 区 a'+shelf+(e2[3]==='v'?'（竖排）':'（横排）')};}
+    if(!e)return null;
+    const c=cell||1;
+    if(row==='J')return{depth:26+c-1,lat:e.lat,side:'W',aisle:8,zone:'J',label:'J 区 j'+shelf+' 第'+c+'格'};
+    if(row==='S'){const d={1:31,2:29,3:28}[shelf];
+      return{depth:d,lat:e.lat+(c-1)*2.4,side:'E',aisle:8,zone:'S',label:'S 区 s'+shelf+' 第'+c+'格'};}
+    if(row==='Y'){if(shelf===8){const k=Math.min(Math.max(c,1),8),ix=Math.min(Math.max(sub||1,1),3);
+        return{depth:29+k,lat:e.lat+ix-1,side:'E',aisle:8,zone:'Y',label:'Y 区 y8-'+k+' 第'+ix+'子位'};}
+      const dd={1:34,2:32,3:31,4:29,5:25,6:25,7:22}[shelf]||30;
+      return{depth:dd,lat:e.rev?(e.lat+e.rev-c):(e.lat+c-1),side:'E',aisle:8,zone:'Y',
+             label:'Y 区 y'+shelf+' 第'+c+'格'+(e.rev?'（反向）':'')};}
+  }
+  const i=ROWS.indexOf(row); if(i<0)return null;
+  if(shelf<1||shelf>p.shelves)return null;
+  const a=rowCorr(i),side=shelf<=p.left?'W':'E';
+  // 最北一对 Q／R 镜像：西侧 Q 在北、东侧 R 在北 ⇒ 深度上区分
+  let north=(sideOf(i)==='N');
+  if((row==='Q'||row==='R')&&a===7) north=(row===((side==='W')?'Q':'R'));
+  return{depth:corrDepth(p,rowCorr(i))+(north?2.2:0),lat:shelfLat(p,shelf),side,aisle:a,row,north,
+         label:row+' 排 '+shelf+' 号货架'+(cell?' 第'+cell+'格':'')+'（'+(side==='W'?'西侧':'东侧')+'）'};
+}
+function walk(a,b,p){
+  const gap=Math.abs(a.depth-b.depth);
+  if(a.aisle>=0&&a.aisle===b.aisle) return (a.side===b.side?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap;
+  return a.lat+gap+b.lat;
+}
+const entranceTo=(a,p)=>p.door+a.depth+a.lat, exitFrom=(a,p)=>a.lat+Math.abs(a.depth-p.exitD)+p.exitL;
+function plan(items,p){
+  const n=items.length; if(!n)return{order:[],legs:[],total:0};
+  if(n>13)return heuristic(items,p);
+  const full=1<<n,INF=1e9;
+  const from=items.map(a=>entranceTo(a,p)),toEx=items.map(a=>exitFrom(a,p));
+  const d=items.map(a=>items.map(b=>walk(a,b,p)));
+  const dp=Array.from({length:full},()=>new Array(n).fill(INF)),par=Array.from({length:full},()=>new Array(n).fill(-1));
+  for(let i=0;i<n;i++)dp[1<<i][i]=from[i];
+  for(let mk=1;mk<full;mk++)for(let L=0;L<n;L++){const c=dp[mk][L]; if(c>=INF)continue;
+    for(let x=0;x<n;x++){if(mk&(1<<x))continue;const nm=mk|(1<<x),v=c+d[L][x];
+      if(v<dp[nm][x]){dp[nm][x]=v;par[nm][x]=L;}}}
+  let best=INF,bl=0;
+  for(let i=0;i<n;i++){const v=dp[full-1][i]+toEx[i];if(v<best){best=v;bl=i;}}
+  const rev=[];let mk=full-1,cur=bl;
+  while(cur>=0){rev.push(cur);const pv=par[mk][cur];mk&=~(1<<cur);cur=pv;}
+  rev.reverse();
+  const legs=[from[rev[0]]];
+  for(let i=0;i+1<rev.length;i++)legs.push(walk(items[rev[i]],items[rev[i+1]],p));
+  legs.push(exitFrom(items[rev[rev.length-1]],p));
+  return{order:rev.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};
+}
+function heuristic(items,p){
+  const left=items.map((_,i)=>i),order=[];let cur=null;
+  while(left.length){let bi=0,bv=Infinity;
+    left.forEach((i,k)=>{const v=cur===null?entranceTo(items[i],p):walk(cur,items[i],p);if(v<bv){bv=v;bi=k;}});
+    order.push(left[bi]);cur=items[left[bi]];left.splice(bi,1);}
+  const legs=[entranceTo(items[order[0]],p)];
+  for(let i=0;i+1<order.length;i++)legs.push(walk(items[order[i]],items[order[i+1]],p));
+  legs.push(exitFrom(items[order[order.length-1]],p));
+  return{order:order.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};
+}
+
+/* ================= 制图 ================= */
+const cv=document.getElementById('map'),ctx=cv.getContext('2d');
+let G=null,items=[],lastPlan=null;
+
+/* 纵向：走廊 16px、背靠背带 26px、南区(A区/入口) 210px、北区(J/S) 190px —— 固定高度，保证标注不挤 */
+const H_CORR=16,H_BAND=26,H_SOUTH=210,H_NORTH=190,M_TOP=34,M_BOT=26;
+function buildV(p){
+  const v={corr:[],band:[],southY:0};
+  let y=M_TOP+H_NORTH;                       // 从上往下排：先北区
+  v.northY0=M_TOP; v.northY1=M_TOP+H_NORTH;
+  for(let k=0;k<=8;k++){
+    v.corr[k]={y0:y,y1:y+H_CORR,mid:y+H_CORR/2}; y+=H_CORR;
+    if(k<8){v.band[k]={y0:y,y1:y+H_BAND,mid:y+H_BAND/2,south:y+H_BAND*0.32,north:y+H_BAND*0.68}; y+=H_BAND;}
+  }
+  v.southY0=y; v.southY1=y+H_SOUTH;
+  return v;
+}
+function geom(p){
+  const sw=p.shelfW, s=sp(p), V=buildV(p);
+  const x0=196, maxLatW=lb(p)+(p.left-1)*sw+sw/2, lastShelf=lb(p)+(p.shelves-p.left-1)*sw;
+  const maxLatE=lastShelf+sw/2+s+sw*2;
+  const pxTile=(cv.width-x0-24)/(maxLatW+maxLatE);
+  const ox=x0+maxLatW*pxTile;               // lat=0（主通道中心线）的 x
+  return{p,s,V,x0,pxTile,ox,maxLatW,maxLatE,lastShelf,
+    X:l=>ox+l*pxTile, minY:M_TOP, maxY:V.southY1};
+}
+function draw(){
+  const p=P(),g=geom(p);G=g;
+  const X=g.X, V=g.V;
+  ctx.clearRect(0,0,cv.width,cv.height);ctx.textAlign='center';ctx.textBaseline='middle';
+  // 标题栏
+  ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';ctx.textAlign='left';
+  ctx.fillText('海大快递站 平面图 · 北 ↑ · 横向比例尺 1 格 = '+g.pxTile.toFixed(1)+'px（纵向已放大以便标注）',12,16);
+  ctx.font='11px sans-serif';ctx.fillStyle='#666';
+  ctx.fillText('15 排（B~R）＋ A 区（左下）＋ J 柜列／S 顺丰（北）＋ Y 大件（东）　格子 = 瓷砖',12,30);
+  ctx.textAlign='center';
+
+  // 通道（走廊 + 主纵通道 + V 通道）
+  for(let k=0;k<=8;k++){const c=V.corr[k];
+    ctx.fillStyle='#dfe7ef';ctx.fillRect(X(-g.maxLatW-1),c.y0,(g.maxLatW+g.maxLatE+2)*g.pxTile,H_CORR);
+    ctx.strokeStyle='#b9c3cf';ctx.strokeRect(X(-g.maxLatW-1)+.5,c.y0+.5,(g.maxLatW+g.maxLatE+2)*g.pxTile-1,H_CORR-1);
+    ctx.fillStyle='#33506f';ctx.font='bold 10px sans-serif';
+    ctx.fillText('走廊 '+k,X(-g.maxLatW-2.2),c.mid);
+  }
+  // 主纵通道（贯穿南北区）
+  ctx.fillStyle='#dfe7ef';
+  ctx.fillRect(X(-p.spineW/2),M_TOP,p.spineW*g.pxTile,V.southY1-M_TOP);
+  ctx.strokeStyle='#b9c3cf';ctx.strokeRect(X(-p.spineW/2)+.5,M_TOP+.5,p.spineW*g.pxTile-1,V.southY1-M_TOP-1);
+  // V 通道（东侧）
+  const vL=g.lastShelf+p.shelfW/2;
+  ctx.fillStyle='#dfe7ef';ctx.fillRect(X(vL),M_TOP,p.spineW*g.pxTile,V.southY1-M_TOP);
+  ctx.strokeStyle='#b9c3cf';ctx.strokeRect(X(vL)+.5,M_TOP+.5,p.spineW*g.pxTile-1,V.southY1-M_TOP-1);
+
+  // 排：band k 的南半＝走廊 k 的北侧排；北半＝走廊 k+1 的南侧排
+  const bandRow=(k,half)=>{ // 返回 [rowLetter, isNorthHalf]
+    const northIdx=ROWS.findIndex((r,i)=>rowCorr(i)===k&&sideOf(i)==='N');
+    const southIdx=ROWS.findIndex((r,i)=>rowCorr(i)===k+1&&sideOf(i)==='S');
+    return half==='S'?southIdx:northIdx;
+  };
+  for(let k=0;k<8;k++){
+    const b=V.band[k];
+    [['S',b.south],['N',b.north]].forEach(([half,yy])=>{
+      const idx=bandRow(k,half); if(idx<0){ return; }
+      const row=ROWS[idx], south=(half==='S');
+      for(let sNo=1;sNo<=p.shelves;sNo++){
+        const lat=shelfLat(p,sNo),isW=sNo<=p.left, h=H_BAND*0.28;
+        let yTop=yy-h/2;
+        // 最北一对镜像：西侧 Q 在北、东侧 R 在北
+        if((row==='Q'||row==='R')&&k===7){ yTop=(isW? (row==='Q'):(row==='R'))?(b.north-h/2):(b.south-h/2); }
+        const x0=X(lat-p.shelfW/2);
+        ctx.fillStyle=isW?'#e8e8ea':'#eef1f3';ctx.fillRect(x0,yTop,p.shelfW*g.pxTile,h);
+        ctx.strokeStyle=(sNo===p.left||sNo===p.left+1)?'#444':'#9aa2ac';
+        ctx.lineWidth=(sNo===p.left||sNo===p.left+1)?1.4:.7;
+        ctx.strokeRect(x0+.5,yTop+.5,p.shelfW*g.pxTile-1,h-1);ctx.lineWidth=1;
+        ctx.fillStyle='#333';ctx.font='9px ui-monospace,Consolas,monospace';
+        ctx.fillText(String(sNo),x0+p.shelfW*g.pxTile/2,yTop+h/2);
+      }
+      // 排号写在左侧留白，两种半带错开 y
+      ctx.fillStyle='#111';ctx.font='bold 12px ui-monospace,Consolas,monospace';ctx.textAlign='right';
+      ctx.fillText(row+'（'+(south?'南':'北')+'侧）',x0Row(),yy);
+      ctx.textAlign='center';
+    });
+  }
+  function x0Row(){return 150;}
+  // 北区：J 柜列（竖）＋ S 三排
+  {const b=lb(p),t=special(p);
+   for(let i=1;i<=6;i++){const lat=t['J'+i].lat;
+     ctx.fillStyle='#cfe0f5';ctx.fillRect(X(-lat-p.shelfW/2),M_TOP+26,p.shelfW*g.pxTile,H_NORTH-46);
+     ctx.strokeStyle='#5b7fa6';ctx.strokeRect(X(-lat-p.shelfW/2)+.5,M_TOP+26.5,p.shelfW*g.pxTile-1,H_NORTH-47);
+     ctx.fillStyle='#1e3a5f';ctx.font='bold 11px ui-monospace,monospace';
+     ctx.save();ctx.translate(X(-lat),M_TOP+26+(H_NORTH-46)/2);ctx.rotate(-Math.PI/2);
+     ctx.fillText('j'+i+' 柜列',0,0);ctx.restore();}
+   const sRows=[['s1（1~10，贴墙）',M_TOP+30],['s2（1~8）',M_TOP+120],['s3（1~8）',M_TOP+146]];
+   sRows.forEach(([t2,yy])=>{
+     ctx.fillStyle='#cfe0f5';ctx.fillRect(X(lb(p)-p.shelfW/2),yy,(g.lastShelf-lb(p)+p.shelfW*1.2)*g.pxTile,20);
+     ctx.strokeStyle='#5b7fa6';ctx.strokeRect(X(lb(p)-p.shelfW/2)+.5,yy+.5,(g.lastShelf-lb(p)+p.shelfW*1.2)*g.pxTile-1,19);
+     ctx.fillStyle='#1e3a5f';ctx.font='bold 10px sans-serif';
+     ctx.fillText(t2,X(lb(p)+10),yy+10);});
+   ctx.fillStyle='#666';ctx.font='10px sans-serif';
+   ctx.fillText('s2｜s3 背靠背，s3 南侧即走廊 8',X(lb(p)+10),M_TOP+172);
+  }
+  // 东侧 Y 区
+  {const t=special(p),yl=t['Y1'].lat;
+   [['y1~y7',M_TOP+30,120],['y8（8 行×3 子位）',M_TOP+156,26]].forEach(([t2,yy,hh])=>{
+     ctx.fillStyle='#e2d4f0';ctx.fillRect(X(yl-2),yy,46,hh);
+     ctx.strokeStyle='#7c5aa6';ctx.strokeRect(X(yl-2)+.5,yy+.5,45,hh-1);
+     ctx.fillStyle='#4b2e6f';ctx.font='bold 10px sans-serif';
+     ctx.fillText(t2,X(yl+21),yy+hh/2);});
+  }
+  // 南区：A 区（左下）＋ 入口／出口闸机
+  {const sy=V.southY0;
+   // A 区：8 列宽 × 南区高，按 col/row 网格摆
+   const gx=lb(p)+p.shelfW*1.5, gy0=sy+26, cellW=p.shelfW*2.6, cellH=30;
+   ctx.fillStyle='#f6e2c8';
+   special(p).A.forEach(([k,col,rw,ori])=>{
+     const x=X(-(gx+(col-1)*cellW)), yy=gy0+(rw-1)*cellH;
+     const w=(ori==='v'?cellW*0.5:cellW*0.9), h=(ori==='v'?cellH*0.9:20);
+     ctx.fillStyle='#f6e2c8';ctx.fillRect(x-w/2,yy,w,h);
+     ctx.strokeStyle='#a8763e';ctx.strokeRect(x-w/2+.5,yy+.5,w-1,h-1);
+     ctx.fillStyle='#6b4a1e';ctx.font='bold 10px ui-monospace,monospace';
+     ctx.fillText(k.toLowerCase(),x,yy+h/2);});
+   ctx.strokeStyle='#a8763e';ctx.setLineDash([5,4]);
+   ctx.strokeRect(X(-(gx+2.6*cellW/2))-6,gy0-8,cellW*2.6+12,cellH*5+16);ctx.setLineDash([]);
+   ctx.fillStyle='#8a5a20';ctx.font='bold 10.5px sans-serif';
+   ctx.fillText('A 区（a1~a9，独立区）',X(-(gx+cellW/2)),sy+12);
+   // 入口大门＋3 闸机（A 区东侧、主通道南端附近）
+   ctx.fillStyle='#bfe3c8';ctx.fillRect(X(-1),sy+56,6*g.pxTile,14);
+   ctx.strokeStyle='#4b8b5f';ctx.strokeRect(X(-1)+.5,sy+56.5,6*g.pxTile-1,13);
+   ctx.fillStyle='#245c37';ctx.font='bold 10.5px sans-serif';
+   ctx.fillText('入口大门 J39:M40 ＋3 刷码闸机',X(2),sy+63);
+   ctx.fillStyle='#bfe3c8';ctx.fillRect(X(-1),sy+88,6*g.pxTile,14);
+   ctx.strokeRect(X(-1)+.5,sy+88.5,6*g.pxTile-1,13);
+   ctx.fillStyle='#245c37';ctx.fillText('进入闸机 J35:M36',X(2),sy+95);
+   // 出口大门（西侧，跨 o~d）＋ C12／C13
+   const yTop=V.corr[6].y0, yBot=V.corr[1].y1;
+   ctx.fillStyle='#f0b9b9';ctx.fillRect(X(-p.exitL)-9,yTop,16,yBot-yTop);
+   ctx.strokeStyle='#a34a4a';ctx.strokeRect(X(-p.exitL)-8.5,yTop+.5,15,yBot-yTop-1);
+   ctx.fillStyle='#7a2020';ctx.font='bold 10px sans-serif';
+   ctx.save();ctx.translate(X(-p.exitL)-16,(yTop+yBot)/2);ctx.rotate(-Math.PI/2);
+   ctx.fillText('出口大门 A15:A30（7 闸机，跨 o~d）',0,0);ctx.restore();
+   ctx.fillStyle='#f0b9b9';ctx.fillRect(X(-p.exitL)-9,V.corr[7].y0-4,16,14);
+   ctx.fillStyle='#7a2020';ctx.font='bold 10px sans-serif';
+   ctx.fillText('出站闸机 C12 / 顺丰闸机 C13',X(-g.maxLatW+14),V.corr[7].y0+3);
+  }
+  // 墙（外圈）
+  ctx.strokeStyle='#555';ctx.lineWidth=3;
+  ctx.strokeRect(X(-g.maxLatW-2.5),M_TOP-6,(g.maxLatW+g.maxLatE+5)*g.pxTile,V.southY1-M_TOP+12);
+  ctx.lineWidth=1;
+  // 比例尺
+  ctx.strokeStyle='#111';ctx.beginPath();
+  ctx.moveTo(X(-g.maxLatW),cv.height-10);ctx.lineTo(X(-g.maxLatW)+10*g.pxTile,cv.height-10);ctx.stroke();
+  ctx.fillStyle='#111';ctx.font='10px sans-serif';
+  ctx.fillText('10 格（瓷砖）',X(-g.maxLatW)+5*g.pxTile,cv.height-20);
+  drawPoints();
+}
+function routePath(p,g){
+  const pts=[[g.X(0),g.V.corr[0].mid]];
+  let cur=null;
+  items.forEach(it=>{const a=it.pos,ai=Math.max(a.aisle,0),yy=g.V.corr[Math.min(ai,8)].mid;
+    if(!cur||cur.ai!==ai){if(cur)pts.push([g.X(0),cur.yy]);pts.push([g.X(0),yy]);}
+    pts.push([g.X(a.side==='W'?-a.lat:a.lat),yy]);cur={ai,yy};});
+  if(cur)pts.push([g.X(0),cur.yy]);
+  const exY=g.V.corr.reduce((best,c)=>Math.abs((c.y0+c.y1)/2-((M_TOP+300)/1))<0?best:best,g.V.corr[4].mid);
+  pts.push([g.X(0),g.V.corr[4].mid]);           // 出口大门在走廊 4 附近（深度≈10）
+  pts.push([g.X(-p.exitL),g.V.corr[4].mid]);
+  const out=[];pts.forEach(q=>{const l=out[out.length-1];
+    if(!l||Math.abs(l[0]-q[0])>1e-6||Math.abs(l[1]-q[1])>1e-6)out.push(q);});
+  return out;
+}
+function drawPoints(){
+  const p=G.p;
+  items.forEach((it,i)=>{const a=it.pos;
+    const x=G.X(a.side==='W'?-a.lat:a.lat),y=G.V.corr[Math.min(Math.max(a.aisle,0),8)].mid;
+    ctx.beginPath();ctx.arc(x,y,9,0,Math.PI*2);ctx.fillStyle='#1f6feb';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
+    ctx.fillStyle='#fff';ctx.font='bold 11px sans-serif';ctx.fillText(String(i+1),x,y+.5);});
+  if(lastPlan){ctx.strokeStyle='rgba(200,30,30,.9)';ctx.lineWidth=2.4;ctx.setLineDash([6,4]);
+    ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});
+    ctx.stroke();ctx.setLineDash([]);}
+}
+/* ================= 交互 ================= */
+const codesEl=document.getElementById('codes');
+const currentCodes=()=>codesEl.value.split(/[,，、\s]+/).map(s=>s.trim()).filter(Boolean);
+function run(){
+  const p=P(),bad=[];items=[];
+  currentCodes().forEach(c=>{const pos=locate(c,p);pos?items.push({code:c,pos}):bad.push(c);});
+  const res=plan(items.map(i=>i.pos),p);
+  const byPos=new Map(items.map(i=>[JSON.stringify(i.pos),i]));
+  const ordered=res.order.map(q=>byPos.get(JSON.stringify(q)));
+  lastPlan=routePath(p,G);
+  const seqEl=document.getElementById('seq');seqEl.innerHTML='';
+  ordered.forEach((it,i)=>{const li=document.createElement('li');
+    li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+it.code+'</span><br><span class="hint">'+
+      it.pos.label+(i>0?'　上一件→本件 '+res.legs[i]+' 格':'')+'</span></span>'+
+      (i===ordered.length-1?'<span class="leg">出西门 '+res.legs[ordered.length]+' 格</span>':'');
+    seqEl.appendChild(li);});
+  document.getElementById('totalBadge').textContent='共 '+res.total+' 格';
+  document.getElementById('runInfo').textContent=bad.length?('无法定位：'+bad.join('、')):'';
+  drawPoints();
+}
+document.getElementById('btnApply').onclick=()=>{draw();run();};
+document.getElementById('btnRun').onclick=run;
+document.getElementById('btnClear').onclick=()=>{items=[];lastPlan=null;draw();};
+document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1';run();};
+function randomN(n){const p=P(),a=[];
+  for(let i=0;i<n;i++)a.push(ROWS[Math.floor(Math.random()*ROWS.length)]+(1+Math.floor(Math.random()*p.shelves))+'-'+(1+Math.floor(Math.random()*32)));
+  codesEl.value=a.join(', ');run();}
+document.getElementById('btnRandom5').onclick=()=>randomN(5);
+document.getElementById('btnRandom10').onclick=()=>randomN(10);
+cv.addEventListener('click',ev=>{
+  const r=cv.getBoundingClientRect();
+  const mx=(ev.clientX-r.left)*(cv.width/r.width),my=(ev.clientY-r.top)*(cv.height/r.height);
+  const p=P();let best=null,bd=Infinity;
+  ROWS.forEach((row,i)=>{const a=rowCorr(i),south=sideOf(i)==='S';
+    const yy=south?G.V.band[Math.min(Math.max(a-1,0),7)].south:G.V.band[Math.min(a,7)].north;
+    for(let s=1;s<=p.shelves;s++){
+      const dd=Math.hypot(yy-my,G.X(shelfLat(p,s))-mx);
+      if(dd<bd){bd=dd;best=row+s+'-1';}}});
+  if(best&&bd<60){codesEl.value=currentCodes().concat(best).join(', ');run();}
+});
+draw();run();
+</script>
+</body>
+</html>
