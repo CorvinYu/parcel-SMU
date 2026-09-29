@@ -142,8 +142,7 @@ fun HomeTopBar(
                             .padding(bottom = 28.dp),
                     ) {
 
-                    // 「海大版功能」放在菜单最前面（用户要求），「按取件路线排序」是它的第一条
-                    SheetSectionTitle("海大版功能")
+                    SheetSectionTitle("显示与排序")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -156,56 +155,6 @@ fun HomeTopBar(
                             onToggleRouteSort()
                         }
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "页面背景",
-                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("app_background")
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "快递中心条码",
-                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("barcode")
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "取件路线",
-                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("pickup_route")
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "条码试验（柜机扫取件码）",
-                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("barcode_lab")
-                        }
-                    )
-
-                    SheetSectionTitle("显示与排序")
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -325,6 +274,43 @@ fun HomeTopBar(
                         onClick = {
                             showMenu = false
                             navController.navigate("logs")
+                        }
+                    )
+                    SheetSectionTitle("海大版功能")
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "页面背景",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("app_background")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "快递中心条码",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("barcode")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "取件路线",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("pickup_route")
                         }
                     )
                     SheetSectionTitle("更多")
