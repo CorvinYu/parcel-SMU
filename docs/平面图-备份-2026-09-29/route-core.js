@@ -245,20 +245,28 @@
     return { trunks: trunks, corridors: corridors, cross: overlap(trunks) };
   }
 
-  /* ---------- 4) 精确排序：Held–Karp（起点固定=入口，终点自由=就近闸机） ---------- */
+  /* ---------- 4) 精确排序：Held–Karp ＋ 顺丰出库先后约束 ----------
+   * 起点：入口闸机（固定）。
+   * 终点：有普通件 → 7 号普通闸机；**只有顺丰件 → 顺丰出库闸机**。
+   * 🔴 用户 2026-09-29 规则：「只要拿了 S，一定要先从顺丰专用闸机出库；
+   *    若同时还有普通件，可以在顺丰出库后再去普通货架，最后从普通闸机出库直接走人。」
+   * ⇒ 这是**带先后约束**的开放路径 TSP：顺丰出库点必须排在**所有 S 件之后**。
+   * `pick.stub`：件在自身区内要走的那一小段（如 J 柜列的纵深），逐段计入。
+   */
   function solve(picks, opts) {
     var model = opts.model, entranceCell = opts.entranceCell;
-    /* 出口闸机**按件分工**（用户 Excel 的三处闸机标签）：
-     *   普通件 → 「7号普通闸机」（C22:E57，需扫快递与取件码条码）
-     *   顺丰件（S 开头）→ 「顺丰专用闸机」C17:E21 / 「顺丰自取快递出口」C12:E16
-     * opts.gatesOf(pick, i) 可覆盖；缺省则所有件共用 opts.gateCells。 */
     var defaultGates = opts.gateCells || [];
-    var gatesOf = opts.gatesOf || function () { return defaultGates; };
+    var sfCells = opts.sfGateCells || [];
+    var normalGates = opts.normalGateCells || defaultGates;
     var n = picks.length;
-    if (!n) return { order: [], total: 0, exact: true, legs: [] };
+    var stubOf = function (p) { return p.stub || 0; };            // 区内走位，单位：**瓷砖**
+    /* ⚠️ DP 内部一律用**单元格**记账，最后才 ×CELL_TILES；
+       所以 stub 必须先换算成单元格，否则会被最后那次 ×0.5 少算一半（踩过）。 */
+    var sc = function (p) { return (p.stub || 0) / CELL_TILES; };
+    if (!n) return { order: [], total: 0, exact: true, legs: [], sequence: [], sfAfter: -1 };
 
     var srcs = [{ key: 'entrance', row: entranceCell.row, col: entranceCell.col }].concat(
-      picks.map(function (p, i) { return { key: 'p' + i, row: p.cell.row, col: p.cell.col }; }));
+      picks.map(function (p) { return { key: 'p', row: p.cell.row, col: p.cell.col }; }));
     var bfs = srcs.map(function (s) { return model.bfs(s.row, s.col); });
 
     function cellDistTo(i, row, col) {
@@ -266,108 +274,268 @@
       if (!b || idx < 0 || b.dist[idx] < 0) return Infinity;
       return b.dist[idx];
     }
-    function pair(i, j) {   // i,j 为 picks 下标；0 号源是入口
-      return cellDistTo(i + 1, picks[j].cell.row, picks[j].cell.col);
-    }
-    var fromEntrance = picks.map(function (p, j) { return cellDistTo(0, p.cell.row, p.cell.col); });
-    var toGate = picks.map(function (p, i) {
-      var G = gatesOf(p, i), best = Infinity;
-      for (var g = 0; g < G.length; g++) {
-        var d = cellDistTo(i + 1, G[g][0], G[g][1]);
-        if (d < best) best = d;
+    /* 从第 i 个源（0=入口，i+1=第 i 件）到一组格子里最近的那个：距离 + 目标格 */
+    function nearestIn(i, cells) {
+      var best = Infinity, bc = null;
+      for (var k = 0; k < cells.length; k++) {
+        var d = cellDistTo(i, cells[k][0], cells[k][1]);
+        if (d < best) { best = d; bc = cells[k]; }
       }
-      if (best === Infinity) throw new Error('件 ' + (p.label || i) + ' 没有任何可达的出口闸机');
+      return { d: best, cell: bc };
+    }
+    /* 两组格子之间的最短距离（对 A 逐点 BFS，取到 B 的最近） */
+    function minBetween(cellsA, cellsB) {
+      var best = Infinity;
+      for (var a = 0; a < cellsA.length; a++) {
+        var b = model.bfs(cellsA[a][0], cellsA[a][1]);
+        for (var k = 0; k < cellsB.length; k++) {
+          var idx = model.at(cellsB[k][0], cellsB[k][1]);
+          if (idx >= 0 && b.dist[idx] >= 0 && b.dist[idx] < best) best = b.dist[idx];
+        }
+      }
       return best;
-    });
+    }
+    function pair(i, j) {
+      return sc(picks[i]) + cellDistTo(i + 1, picks[j].cell.row, picks[j].cell.col) + sc(picks[j]);
+    }
 
-    var i2, j2, total, order;
+    var sfMask = 0, sfCount = 0;
+    picks.forEach(function (p, i) { if (p.sf) { sfMask |= (1 << i); sfCount++; } });
+    var hasSf = sfCount > 0;
+    var hasNormal = picks.some(function (p) { return !p.sf; });
+    if (hasSf && !sfCells.length) throw new Error('有顺丰件但没提供顺丰出库闸机格');
+
+    var fromEntrance = picks.map(function (p, j) {
+      return cellDistTo(0, p.cell.row, p.cell.col) + sc(p);
+    });
+    var toNormal = picks.map(function (p, i) {
+      var r = nearestIn(i + 1, normalGates);
+      if (r.d === Infinity) throw new Error('件 ' + (p.label || i) + ' 到普通闸机不可达');
+      return r.d + sc(p);
+    });
+    var toSf = picks.map(function (p, i) {
+      var r = nearestIn(i + 1, sfCells);
+      if (r.d === Infinity) throw new Error('件 ' + (p.label || i) + ' 到顺丰出库闸机不可达');
+      return r.d + sc(p);
+    });
+    var sfToNormal = hasSf ? minBetween(sfCells, normalGates) : Infinity;   // 出库后走到普通闸机
+
+    var total, order, seqNodes, sfAfter = -1;
     if (n <= EXACT_MAX) {
-      var full = 1 << n, INF = Infinity;
-      var dp = [], par = [];
-      for (i2 = 0; i2 < full; i2++) { dp.push(new Array(n).fill(INF)); par.push(new Array(n).fill(-1)); }
-      for (i2 = 0; i2 < n; i2++) dp[1 << i2][i2] = fromEntrance[i2];
+      /* 状态：dp[mask][last][sfDone]，last ∈ 0..n-1 为件、n 为顺丰出库点 */
+      var full = 1 << n, INF = Infinity, L = n + 1;
+      var id = function (m, l, s) { return ((m * L + l) << 1) | s; };
+      var dp = new Float64Array(full * L * 2).fill(INF);
+      var par = new Int32Array(full * L * 2).fill(-1);
+      for (var i2 = 0; i2 < n; i2++) dp[id(1 << i2, i2, 0)] = fromEntrance[i2];
       for (var mask = 1; mask < full; mask++) {
-        for (var last = 0; last < n; last++) {
-          var v = dp[mask][last];
-          if (v >= INF) continue;
-          for (var x = 0; x < n; x++) {
-            if (mask & (1 << x)) continue;
-            var nm = mask | (1 << x), nv = v + pair(last, x);
-            if (nv < dp[nm][x]) { dp[nm][x] = nv; par[nm][x] = last; }
+        for (var last = 0; last < L; last++) {
+          for (var sfl = 0; sfl < 2; sfl++) {
+            var cur = dp[id(mask, last, sfl)];
+            if (cur >= INF) continue;
+            if (last === n) {
+              /* 已出库：只能继续去没取的件 */
+              for (var x1 = 0; x1 < n; x1++) {
+                if (mask & (1 << x1)) continue;
+                var r1 = nearestIn(x1 + 1, sfCells);          // 对称：件 x1 到顺丰出库点的距离
+                var nv1 = cur + r1.d + sc(picks[x1]);
+                var t1 = id(mask | (1 << x1), x1, 1);
+                if (nv1 < dp[t1]) { dp[t1] = nv1; par[t1] = last; }
+              }
+            } else {
+              for (var x2 = 0; x2 < n; x2++) {
+                if (mask & (1 << x2)) continue;
+                var nv2 = cur + pair(last, x2);
+                var t2 = id(mask | (1 << x2), x2, sfl);
+                if (nv2 < dp[t2]) { dp[t2] = nv2; par[t2] = last; }
+              }
+              /* 去顺丰出库：必须所有 S 件都取完，且尚未出库 */
+              if (hasSf && !sfl && (mask & sfMask) === sfMask) {
+                var nv3 = cur + toSf[last];
+                var t3 = id(mask, n, 1);
+                if (nv3 < dp[t3]) { dp[t3] = nv3; par[t3] = last; }
+              }
+            }
           }
         }
       }
-      var best = INF, bl = -1;
-      for (i2 = 0; i2 < n; i2++) {
-        var t = dp[full - 1][i2] + toGate[i2];
-        if (t < best) { best = t; bl = i2; }
+      var best = INF, bLast = -1, bSf = 0;
+      for (var l2 = 0; l2 < L; l2++) {
+        for (var s3 = 0; s3 < 2; s3++) {
+          var v = dp[id(full - 1, l2, s3)];
+          if (v >= INF) continue;
+          if (hasSf && !s3) continue;                     // 拿了 S 却没出库 ⇒ 非法
+          var endCost;
+          if (hasNormal) endCost = (l2 === n) ? sfToNormal : toNormal[l2];
+          else { if (l2 !== n) continue; endCost = 0; }    // 只有顺丰件 ⇒ 终点就是顺丰出库点
+          if (v + endCost < best) { best = v + endCost; bLast = l2; bSf = s3; }
+        }
       }
-      if (bl < 0) throw new Error('无可行顺序：出口不可达（闸机格数=' + defaultGates.length + '）');
-      /* 回溯顺序 */
-      order = []; var mk = full - 1, cur = bl;
-      while (cur >= 0) { order.push(cur); var pv = par[mk][cur]; mk &= ~(1 << cur); cur = pv; }
-      order.reverse();
+      if (bLast < 0) throw new Error('无可行顺序（检查闸机带与先后约束）');
+      /* 回溯：seqNodes 为含顺丰出库点的节点序列 */
+      seqNodes = [];
+      var mk = full - 1, cLast = bLast, cSf = bSf;
+      while (cLast >= 0) {
+        seqNodes.push({ node: cLast, sf: cSf });
+        var pidx = id(mk, cLast, cSf);
+        var pv = par[pidx];
+        if (cLast === n) cSf = 0; else mk &= ~(1 << cLast);
+        cLast = pv;
+      }
+      seqNodes.reverse();
       total = best;
     } else {
-      /* 启发式：最近邻 + 2-opt（如实标记 exact=false，不假装最优） */
-      var left = picks.map(function (_, i) { return i; }), seq = [], cu = -1;
-      while (left.length) {
-        var bi = 0, bv = Infinity;
-        for (var k = 0; k < left.length; k++) {
-          var cand = cu < 0 ? fromEntrance[left[k]] : pair(cu, left[k]);
-          if (cand < bv) { bv = cand; bi = k; }
+      /* 启发式（>13 件）：S 件块 → 顺丰出库 → 普通件块，块内最近邻 + 2-opt，如实标 exact=false */
+      var sList = [], nList = [];
+      picks.forEach(function (p, i) { (p.sf ? sList : nList).push(i); });
+      function nn(list, fromSf) {
+        var left = list.slice(), seq = [], cu = -1;
+        while (left.length) {
+          var bi = 0, bv = Infinity;
+          for (var k = 0; k < left.length; k++) {
+            var x = left[k], cand;
+            if (cu >= 0) cand = pair(cu, x);
+            else if (fromSf) cand = nearestIn(x + 1, sfCells).d + sc(picks[x]);
+            else cand = fromEntrance[x];
+            if (cand < bv) { bv = cand; bi = k; }
+          }
+          seq.push(left[bi]); cu = left[bi]; left.splice(bi, 1);
         }
-        seq.push(left[bi]); cu = left[bi]; left.splice(bi, 1);
+        return seq;
       }
-      function cost(s) {
-        var t2 = fromEntrance[s[0]];
-        for (var q = 0; q + 1 < s.length; q++) t2 += pair(s[q], s[q + 1]);
-        return t2 + toGate[s[s.length - 1]];
+      function seqCost(sS, nS) {
+        var t = 0, cu = -1;
+        sS.forEach(function (x) { t += (cu < 0) ? fromEntrance[x] : pair(cu, x); cu = x; });
+        if (hasSf) {
+          t += toSf[cu];                                        // 含最后一件的 stub
+          if (nS.length) {
+            t += nearestIn(nS[0] + 1, sfCells).d + sc(picks[nS[0]]);
+            var cu2 = -1;
+            nS.forEach(function (x) { if (cu2 >= 0) t += pair(cu2, x); cu2 = x; });
+            t += toNormal[cu2];
+          }
+        } else {
+          var cu3 = -1;
+          nS.forEach(function (x) { t += (cu3 < 0) ? fromEntrance[x] : pair(cu3, x); cu3 = x; });
+          t += toNormal[cu3];
+        }
+        return t;
       }
-      var improved = true;
-      while (improved) {
-        improved = false;
-        for (var a1 = 0; a1 < seq.length; a1++) for (var b1 = a1 + 1; b1 < seq.length; b1++) {
-          var cand2 = seq.slice(0, a1).concat(seq.slice(a1, b1 + 1).reverse(), seq.slice(b1 + 1));
-          if (cost(cand2) < cost(seq) - 1e-9) { seq = cand2; improved = true; }
+      var sSeq = nn(sList, false), nSeq = nn(nList, hasSf);
+      function twoOpt(arr, which) {
+        var improved = true;
+        while (improved) {
+          improved = false;
+          for (var a = 0; a < arr.length; a++) for (var b = a + 1; b < arr.length; b++) {
+            var cand = arr.slice(0, a).concat(arr.slice(a, b + 1).reverse(), arr.slice(b + 1));
+            var cur = (which === 's') ? seqCost(arr, nSeq) : seqCost(sSeq, arr);
+            var nw = (which === 's') ? seqCost(cand, nSeq) : seqCost(sSeq, cand);
+            if (nw < cur - 1e-9) { arr.length = 0; Array.prototype.push.apply(arr, cand); improved = true; }
+          }
         }
       }
-      order = seq; total = cost(seq);
+      twoOpt(sSeq, 's');
+      twoOpt(nSeq, 'n');
+      order = sSeq.concat(nSeq);
+      seqNodes = [];
+      sSeq.forEach(function (x) { seqNodes.push({ node: x, sf: 0 }); });
+      if (hasSf) seqNodes.push({ node: n, sf: 1 });
+      nSeq.forEach(function (x) { seqNodes.push({ node: x, sf: hasSf ? 1 : 0 }); });
+      total = seqCost(sSeq, nSeq);
     }
 
-    /* 逐段单元格路径（画线 + 断言用） */
-    var legs = [], cellsOut = [];
-    var entrancePath = model.path(bfs[0], picks[order[0]].cell.row, picks[order[0]].cell.col);
-    legs.push({ from: '入口', to: picks[order[0]].label, cells: entrancePath, tiles: entrancePath ? (entrancePath.length - 1) * CELL_TILES : null });
-    cellsOut = cellsOut.concat(entrancePath || []);
-    for (var q2 = 0; q2 + 1 < order.length; q2++) {
-      var pth = model.path(bfs[order[q2] + 1], picks[order[q2 + 1]].cell.row, picks[order[q2 + 1]].cell.col);
-      legs.push({ from: picks[order[q2]].label, to: picks[order[q2 + 1]].label, cells: pth, tiles: pth ? (pth.length - 1) * CELL_TILES : null });
-      cellsOut = cellsOut.concat(pth || []);
+    /* ---------- 段路径（画线 + 断言用）：直接用图的单元格序列 ---------- */
+    var legs = [], cellsOut = [], cursor = null, sfRowCol = null;
+    function pushLeg(from, to, cells, tiles, kind) {
+      legs.push({ from: from, to: to, cells: cells, tiles: tiles, kind: kind });
+      cellsOut = cellsOut.concat(cells || []);
     }
-    var lastPick = order[order.length - 1];
-    var lastGates = gatesOf(picks[lastPick], lastPick);
-    var bestGate = null, bg = Infinity;
-    for (var g2 = 0; g2 < lastGates.length; g2++) {
-      var gd = cellDistTo(lastPick + 1, lastGates[g2][0], lastGates[g2][1]);
-      if (gd < bg) { bg = gd; bestGate = lastGates[g2]; }
+    /* 入口 → 第一站 */
+    var firstNode = seqNodes[0].node;
+    if (firstNode === n) {
+      var r0 = nearestIn(0, sfCells);
+      var p0 = model.path(bfs[0], r0.cell[0], r0.cell[1]);
+      pushLeg('入口', '顺丰出库', p0, r0.d * CELL_TILES, 'sf');
+      sfRowCol = r0.cell; cursor = 'sf';
+    } else {
+      var pa = model.path(bfs[0], picks[firstNode].cell.row, picks[firstNode].cell.col);
+      pushLeg('入口', picks[firstNode].label, pa,
+        (pa ? (pa.length - 1) * CELL_TILES : 0) + stubOf(picks[firstNode]), 'entrance');
+      cursor = firstNode;
     }
-    var exitPath = model.path(bfs[lastPick + 1], bestGate[0], bestGate[1]);
-    legs.push({ from: picks[lastPick].label, to: '闸机出口', cells: exitPath, tiles: exitPath ? (exitPath.length - 1) * CELL_TILES : null });
-    cellsOut = cellsOut.concat(exitPath || []);
+    for (var k = 1; k < seqNodes.length; k++) {
+      var nd = seqNodes[k].node;
+      if (cursor === 'sf') {
+        /* 出库 → 件 nd：用「件→出库」最短路反向（无向图，对称） */
+        var rr = nearestIn(nd + 1, sfCells);
+        var pth = model.path(bfs[nd + 1], rr.cell[0], rr.cell[1]);
+        pth = (pth || []).slice().reverse();
+        pushLeg('顺丰出库', picks[nd].label, pth, rr.d * CELL_TILES + stubOf(picks[nd]), 'pick');
+        cursor = nd;
+      } else if (nd === n) {
+        var rs = nearestIn(cursor + 1, sfCells);
+        var ps = model.path(bfs[cursor + 1], rs.cell[0], rs.cell[1]);
+        pushLeg(picks[cursor].label, '顺丰出库', ps, rs.d * CELL_TILES + stubOf(picks[cursor]), 'sf');
+        sfRowCol = rs.cell; cursor = 'sf';
+      } else {
+        var pp = model.path(bfs[cursor + 1], picks[nd].cell.row, picks[nd].cell.col);
+        pushLeg(picks[cursor].label, picks[nd].label, pp,
+          (pp ? (pp.length - 1) * CELL_TILES : 0) + stubOf(picks[cursor]) + stubOf(picks[nd]), 'pick');
+        cursor = nd;
+      }
+    }
+    /* 终点：有普通件 → 普通闸机；否则停在顺丰出库点 */
+    var bestGate = sfRowCol, exitKind = 'sf';
+    if (hasNormal) {
+      if (cursor === 'sf') {
+        /* 出库后走到普通闸机：取最近的一对（顺丰格 → 普通格） */
+        var bpair = null, bd = Infinity;
+        for (var a3 = 0; a3 < sfCells.length; a3++) {
+          var bb = model.bfs(sfCells[a3][0], sfCells[a3][1]);
+          for (var g3 = 0; g3 < normalGates.length; g3++) {
+            var ix = model.at(normalGates[g3][0], normalGates[g3][1]);
+            if (ix >= 0 && bb.dist[ix] >= 0 && bb.dist[ix] < bd) { bd = bb.dist[ix]; bpair = { sf: sfCells[a3], g: normalGates[g3] }; }
+          }
+        }
+        var pe = model.path(model.bfs(bpair.sf[0], bpair.sf[1]), bpair.g[0], bpair.g[1]);
+        pushLeg('顺丰出库', '普通闸机出库', pe, (pe ? (pe.length - 1) * CELL_TILES : 0), 'exit');
+        bestGate = bpair.g;
+      } else {
+        var rg = nearestIn(cursor + 1, normalGates);
+        var pg = model.path(bfs[cursor + 1], rg.cell[0], rg.cell[1]);
+        pushLeg(picks[cursor].label, '普通闸机出库', pg, rg.d * CELL_TILES + stubOf(picks[cursor]), 'exit');
+        bestGate = rg.cell;
+      }
+      exitKind = 'normal';
+    }
 
+    order = seqNodes.filter(function (x) { return x.node !== n; }).map(function (x) { return x.node; });
+    for (var z = 0, cnt = 0; z < seqNodes.length; z++) {
+      if (seqNodes[z].node === n) { sfAfter = cnt; break; }
+      cnt++;
+    }
     return {
       order: order, total: total * CELL_TILES, exact: n <= EXACT_MAX,
-      legs: legs, cells: cellsOut, gateExit: bestGate, bfs: bfs, srcs: srcs, orderIdx: order
+      legs: legs, cells: cellsOut, gateExit: bestGate, exitKind: exitKind,
+      sfGate: sfRowCol, sfAfter: sfAfter, hasSf: hasSf, hasNormal: hasNormal,
+      bfs: bfs, srcs: srcs
     };
   }
 
   /* ---------- 5) 取件码定位：完全由 Excel 合并区坐标驱动 ----------
-   * 形如 `D8-6` / `S3-2-2628` / `J5-21` / `Y8-1-3` / `A4-1`；
-   * 命中合并区（如 `D8`）⇒ 取该区中心，再投影到最近通道格。
-   * Y 区在用户精确版里是**一整块**（`Y区域`）⇒ 只能定位到东侧通道的最近点（已在界面注明）。
+   * 形如 `D8-6` / `S3-2-2628` / `J5-21` / `Y8-1-3` / `A4-1`。
+   * 精度分三档：
+   *   ① **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增**（实测锚点 O7:U7 / O9:U9 / O10:U10）
+   *      ⇒ 按格号取货架**横向**位置（只影响投影到哪一个通道格）
+   *   ② **J 柜列**：沿列**由外端（靠通道）向里递增**，每列 ≥21 格（实测 j5-21）
+   *      ⇒ 按格号取**纵深**位置，并把「从通道走进柜列」的那段 `stub` 计入走位
+   *      ⚠️ 每列实际格数未实测（`货位清单` Q1b/Q5）⇒ 用 `jCells`（默认 21）等比铺开
+   *   ③ **Y 大件**：精确版里是**一整块**（`Y区域`）⇒ 只能定位到东侧通道最近点，`approx=true`
+   * 普通排货架：仍取合并区中心（同一货架内不同格视为同一点）
    */
-  function makeLocator(cor, model) {
+  function makeLocator(cor, model, opts) {
+    opts = opts || {};
+    var jCells = opts.jCells || 21;                 // J 每列格数（未实测，占位）
     var byLabel = {};
     (cor.rects || []).forEach(function (r) {
       if (!r.label) return;
@@ -390,18 +558,35 @@
       var approx = false;
       if (!e) { e = byLabel[letter + '区域'] || byLabel[letter + '区']; approx = !!e; }
       if (!e) return null;
+      /* ---- 区内格位 → 精确坐标（S 用横向、J 用纵深；其余取合并区中心）---- */
       var lat = (e.lat0 + e.lat1) / 2, depth = (e.d0 + e.d1) / 2;
+      var posNote = '';
+      if (letter === 'S') {
+        var sn = (shelf === 1) ? 10 : 8;                       // s1=10 格、s2/s3=8 格（实测锚点）
+        var sk = Math.min(Math.max((cell || 1) - 1, 0), sn - 1);
+        lat = e.lat0 + (sn > 1 ? sk / (sn - 1) : 0) * (e.lat1 - e.lat0);
+        posNote = 's' + shelf + ' 第' + (cell || 1) + '格（' + sn + ' 格中，左端为 1）';
+      } else if (letter === 'J') {
+        var jk = Math.min(Math.max((cell || 1) - 1, 0), jCells - 1);
+        depth = e.d0 + (jCells > 1 ? jk / (jCells - 1) : 0) * (e.d1 - e.d0);   // d0 = 靠通道的外端
+        posNote = 'j' + shelf + ' 第' + (cell || 1) + '格（沿列由外端向里，按 ' + jCells + ' 格铺开）';
+      }
       /* 投影：从整个合并区出发、绕开墙与货架的 BFS（不允许穿墙） */
       var src = [];
       for (var r = e.r0; r <= e.r1; r++) for (var c = e.c0; c <= e.c1; c++) src.push([r, c]);
       var near = model.nearestWalkFrom(src, (e.r0 + e.r1 + 1) / 2, (e.c0 + e.c1 + 1) / 2);
       if (!near) return null;
+      /* 区内那一段（投影格 ↔ 取件格）走位：J 柜列的纵深必须算进距离，其余近似为 0 */
+      var pc = model.pointOf(near.row, near.col);
+      var stub = (letter === 'J') ? Math.abs(depth - pc.depth) : 0;
       return {
         code: raw, letter: letter, shelf: shelf, cell: cell, sub: sub, rect: e, approx: approx,
-        lat: lat, depth: depth, cellPos: near,
+        lat: lat, depth: depth, cellPos: near, stub: stub,
         label: letter + ' 排 ' + shelf + ' 号货架' + (cell ? ' 第' + cell + '格' : '')
-          + '（lat ' + lat.toFixed(1) + '，深 ' + depth.toFixed(1) + ' → 投影到通道格 '
-          + near.row + ',' + near.col + '）' + (approx ? '　⚠ 该区在精确版里是一整块，只定位到最近通道点' : '')
+          + (posNote ? '　' + posNote : '')
+          + '（lat ' + lat.toFixed(1) + '，深 ' + depth.toFixed(1) + ' → 通道格 '
+          + near.row + ',' + near.col + (stub > 0.01 ? '，区内走位 ' + stub.toFixed(1) + ' 格' : '') + '）'
+          + (approx ? '　⚠ 该区在精确版里是一整块，只定位到最近通道点' : '')
       };
     };
   }

@@ -37,8 +37,8 @@ ul.tight li{margin:1px 0}
 <div class="err" id="err"></div>
 <div class="hint" style="margin-top:5px">图上直接点货架 = 加一个取件点；蓝点上的数字是<b>建议取件序号</b>；绿点＝入口，红框＝闸机带。</div></div>
 <div class="card" style="margin-top:10px"><h2>取件码 <span class="badge" id="cnt">0 件</span></h2>
-<input type="text" id="codes" value="B1-1, Q1-3, D8-6, F12-32, S3-2-2628, J5-21">
-<div class="hint" style="margin-top:5px">支持 <code>B12-18</code> <code>Q5-3</code> <code>J5-21</code> <code>S3-2-2628</code> <code>Y5-7-1</code> <code>A4-1</code>；每个点会<b>投影到最近的通道格</b>再参与计算。</div></div>
+<input type="text" id="codes" value="B1-1, S3-2-2628, D8-6, J5-21, F12-32, Q1-3">
+<div class="hint" style="margin-top:5px">支持 <code>B12-18</code> <code>S3-2-2628</code>（顺丰，取件后会先安排顺丰出库） <code>J5-21</code> <code>Y5-7-1</code> <code>A4-1</code>；每个点会<b>投影到最近的通道格</b>（绕开墙）再参与计算。</div></div>
 </div><div>
 <div class="card"><h2>模型自检 <span class="badge" id="mdlBadge">—</span></h2>
 <ul class="tight" id="mdlList"></ul>
@@ -49,10 +49,16 @@ ul.tight li{margin:1px 0}
 <li>可走格 = 你 Excel 里填了<b>通道色</b>的全部单元格（3362 格），逐格对齐，未改动一列一行</li>
 <li>纵向干线 <b>3 条</b>：西侧（靠闸机，列 F~J）、主通道（列 AI~AN）、东侧（列 CK~CP）</li>
 <li>横向走廊 <b>10 条</b>（含最北 J/S 区那条）；闸机带 C12:E16 / C17:E21 / C22:E57 可通行，只用于出行</li>
-<li>起点＝入口闸机（W59:AB59）；终点＝<b>按件分工</b>：普通件走「7 号普通闸机」C22:E57，S 顺丰件走「顺丰专用闸机 C17:E21 / 顺丰自取出口 C12:E16」—— 依据你 Excel 的闸机标签，<b>此分工待你确认</b></li>
-<li>距离单位＝<b>瓷砖</b>（1 单元格 = 0.5 瓷砖）；同货架内不同格暂视为同一点</li>
-<li>J / S 有多条货架（J1~J6、S1~S3）；<b>Y 区在你精确版里是一整块</b>，只能定位到东侧通道最近点</li>
-<li>≤13 件＝精确最优（Held–Karp）；更多件退化为最近邻 + 2-opt，并如实标「非精确」</li>
+<li>起点＝入口闸机（W59:AB59）</li>
+<li>🔴 <b>顺丰出库规则</b>：只要取了 <b>S 件</b>，就必须先到<b>顺丰专用闸机</b>出库；若同时还有普通件，
+    可以在顺丰出库后再去普通货架，最后从 <b>7 号普通闸机</b>出库直接走人；只有顺丰件时，出库点就是终点。
+    <i>程序把它作为「出库点必须在所有 S 件之后」的先后约束，交给 Held–Karp 求最优顺序</i></li>
+<li><b>S 区</b>按格位定位：s1 货位 1~10、s2/s3 各 1~8，左端为 1 向右递增（实测锚点 O7:U7 / O9:U9 / O10:U10）</li>
+<li><b>J 柜列</b>按格位定位：沿列由外端（靠通道）向里递增，<b>柜列纵深计入走位</b>；
+    每列实际格数未实测 ⇒ 按 <b>21 格</b>等比铺开（待确认 Q1b/Q5）</li>
+<li><b>Y 大件区</b>在你精确版里是<b>一整块</b>（<code>Y区域</code>）⇒ 只定位到东侧通道最近点，<b>无法分 y1~y8</b></li>
+<li>距离单位＝<b>瓷砖</b>（1 单元格 = 0.5 瓷砖）；普通排货架内不同格暂视为同一点</li>
+<li>≤13 件＝精确最优（Held–Karp）；更多件退化为「S 块 → 出库 → 普通块」+ 2-opt，并如实标「非精确」</li>
 </ul></div></div></main>
 <script>/* route-core.js — 海大快递站寻路核心（纯逻辑，浏览器与 Node 共用）
  * ============================================================================
@@ -301,20 +307,28 @@ ul.tight li{margin:1px 0}
     return { trunks: trunks, corridors: corridors, cross: overlap(trunks) };
   }
 
-  /* ---------- 4) 精确排序：Held–Karp（起点固定=入口，终点自由=就近闸机） ---------- */
+  /* ---------- 4) 精确排序：Held–Karp ＋ 顺丰出库先后约束 ----------
+   * 起点：入口闸机（固定）。
+   * 终点：有普通件 → 7 号普通闸机；**只有顺丰件 → 顺丰出库闸机**。
+   * 🔴 用户 2026-09-29 规则：「只要拿了 S，一定要先从顺丰专用闸机出库；
+   *    若同时还有普通件，可以在顺丰出库后再去普通货架，最后从普通闸机出库直接走人。」
+   * ⇒ 这是**带先后约束**的开放路径 TSP：顺丰出库点必须排在**所有 S 件之后**。
+   * `pick.stub`：件在自身区内要走的那一小段（如 J 柜列的纵深），逐段计入。
+   */
   function solve(picks, opts) {
     var model = opts.model, entranceCell = opts.entranceCell;
-    /* 出口闸机**按件分工**（用户 Excel 的三处闸机标签）：
-     *   普通件 → 「7号普通闸机」（C22:E57，需扫快递与取件码条码）
-     *   顺丰件（S 开头）→ 「顺丰专用闸机」C17:E21 / 「顺丰自取快递出口」C12:E16
-     * opts.gatesOf(pick, i) 可覆盖；缺省则所有件共用 opts.gateCells。 */
     var defaultGates = opts.gateCells || [];
-    var gatesOf = opts.gatesOf || function () { return defaultGates; };
+    var sfCells = opts.sfGateCells || [];
+    var normalGates = opts.normalGateCells || defaultGates;
     var n = picks.length;
-    if (!n) return { order: [], total: 0, exact: true, legs: [] };
+    var stubOf = function (p) { return p.stub || 0; };            // 区内走位，单位：**瓷砖**
+    /* ⚠️ DP 内部一律用**单元格**记账，最后才 ×CELL_TILES；
+       所以 stub 必须先换算成单元格，否则会被最后那次 ×0.5 少算一半（踩过）。 */
+    var sc = function (p) { return (p.stub || 0) / CELL_TILES; };
+    if (!n) return { order: [], total: 0, exact: true, legs: [], sequence: [], sfAfter: -1 };
 
     var srcs = [{ key: 'entrance', row: entranceCell.row, col: entranceCell.col }].concat(
-      picks.map(function (p, i) { return { key: 'p' + i, row: p.cell.row, col: p.cell.col }; }));
+      picks.map(function (p) { return { key: 'p', row: p.cell.row, col: p.cell.col }; }));
     var bfs = srcs.map(function (s) { return model.bfs(s.row, s.col); });
 
     function cellDistTo(i, row, col) {
@@ -322,108 +336,268 @@ ul.tight li{margin:1px 0}
       if (!b || idx < 0 || b.dist[idx] < 0) return Infinity;
       return b.dist[idx];
     }
-    function pair(i, j) {   // i,j 为 picks 下标；0 号源是入口
-      return cellDistTo(i + 1, picks[j].cell.row, picks[j].cell.col);
-    }
-    var fromEntrance = picks.map(function (p, j) { return cellDistTo(0, p.cell.row, p.cell.col); });
-    var toGate = picks.map(function (p, i) {
-      var G = gatesOf(p, i), best = Infinity;
-      for (var g = 0; g < G.length; g++) {
-        var d = cellDistTo(i + 1, G[g][0], G[g][1]);
-        if (d < best) best = d;
+    /* 从第 i 个源（0=入口，i+1=第 i 件）到一组格子里最近的那个：距离 + 目标格 */
+    function nearestIn(i, cells) {
+      var best = Infinity, bc = null;
+      for (var k = 0; k < cells.length; k++) {
+        var d = cellDistTo(i, cells[k][0], cells[k][1]);
+        if (d < best) { best = d; bc = cells[k]; }
       }
-      if (best === Infinity) throw new Error('件 ' + (p.label || i) + ' 没有任何可达的出口闸机');
+      return { d: best, cell: bc };
+    }
+    /* 两组格子之间的最短距离（对 A 逐点 BFS，取到 B 的最近） */
+    function minBetween(cellsA, cellsB) {
+      var best = Infinity;
+      for (var a = 0; a < cellsA.length; a++) {
+        var b = model.bfs(cellsA[a][0], cellsA[a][1]);
+        for (var k = 0; k < cellsB.length; k++) {
+          var idx = model.at(cellsB[k][0], cellsB[k][1]);
+          if (idx >= 0 && b.dist[idx] >= 0 && b.dist[idx] < best) best = b.dist[idx];
+        }
+      }
       return best;
-    });
+    }
+    function pair(i, j) {
+      return sc(picks[i]) + cellDistTo(i + 1, picks[j].cell.row, picks[j].cell.col) + sc(picks[j]);
+    }
 
-    var i2, j2, total, order;
+    var sfMask = 0, sfCount = 0;
+    picks.forEach(function (p, i) { if (p.sf) { sfMask |= (1 << i); sfCount++; } });
+    var hasSf = sfCount > 0;
+    var hasNormal = picks.some(function (p) { return !p.sf; });
+    if (hasSf && !sfCells.length) throw new Error('有顺丰件但没提供顺丰出库闸机格');
+
+    var fromEntrance = picks.map(function (p, j) {
+      return cellDistTo(0, p.cell.row, p.cell.col) + sc(p);
+    });
+    var toNormal = picks.map(function (p, i) {
+      var r = nearestIn(i + 1, normalGates);
+      if (r.d === Infinity) throw new Error('件 ' + (p.label || i) + ' 到普通闸机不可达');
+      return r.d + sc(p);
+    });
+    var toSf = picks.map(function (p, i) {
+      var r = nearestIn(i + 1, sfCells);
+      if (r.d === Infinity) throw new Error('件 ' + (p.label || i) + ' 到顺丰出库闸机不可达');
+      return r.d + sc(p);
+    });
+    var sfToNormal = hasSf ? minBetween(sfCells, normalGates) : Infinity;   // 出库后走到普通闸机
+
+    var total, order, seqNodes, sfAfter = -1;
     if (n <= EXACT_MAX) {
-      var full = 1 << n, INF = Infinity;
-      var dp = [], par = [];
-      for (i2 = 0; i2 < full; i2++) { dp.push(new Array(n).fill(INF)); par.push(new Array(n).fill(-1)); }
-      for (i2 = 0; i2 < n; i2++) dp[1 << i2][i2] = fromEntrance[i2];
+      /* 状态：dp[mask][last][sfDone]，last ∈ 0..n-1 为件、n 为顺丰出库点 */
+      var full = 1 << n, INF = Infinity, L = n + 1;
+      var id = function (m, l, s) { return ((m * L + l) << 1) | s; };
+      var dp = new Float64Array(full * L * 2).fill(INF);
+      var par = new Int32Array(full * L * 2).fill(-1);
+      for (var i2 = 0; i2 < n; i2++) dp[id(1 << i2, i2, 0)] = fromEntrance[i2];
       for (var mask = 1; mask < full; mask++) {
-        for (var last = 0; last < n; last++) {
-          var v = dp[mask][last];
-          if (v >= INF) continue;
-          for (var x = 0; x < n; x++) {
-            if (mask & (1 << x)) continue;
-            var nm = mask | (1 << x), nv = v + pair(last, x);
-            if (nv < dp[nm][x]) { dp[nm][x] = nv; par[nm][x] = last; }
+        for (var last = 0; last < L; last++) {
+          for (var sfl = 0; sfl < 2; sfl++) {
+            var cur = dp[id(mask, last, sfl)];
+            if (cur >= INF) continue;
+            if (last === n) {
+              /* 已出库：只能继续去没取的件 */
+              for (var x1 = 0; x1 < n; x1++) {
+                if (mask & (1 << x1)) continue;
+                var r1 = nearestIn(x1 + 1, sfCells);          // 对称：件 x1 到顺丰出库点的距离
+                var nv1 = cur + r1.d + sc(picks[x1]);
+                var t1 = id(mask | (1 << x1), x1, 1);
+                if (nv1 < dp[t1]) { dp[t1] = nv1; par[t1] = last; }
+              }
+            } else {
+              for (var x2 = 0; x2 < n; x2++) {
+                if (mask & (1 << x2)) continue;
+                var nv2 = cur + pair(last, x2);
+                var t2 = id(mask | (1 << x2), x2, sfl);
+                if (nv2 < dp[t2]) { dp[t2] = nv2; par[t2] = last; }
+              }
+              /* 去顺丰出库：必须所有 S 件都取完，且尚未出库 */
+              if (hasSf && !sfl && (mask & sfMask) === sfMask) {
+                var nv3 = cur + toSf[last];
+                var t3 = id(mask, n, 1);
+                if (nv3 < dp[t3]) { dp[t3] = nv3; par[t3] = last; }
+              }
+            }
           }
         }
       }
-      var best = INF, bl = -1;
-      for (i2 = 0; i2 < n; i2++) {
-        var t = dp[full - 1][i2] + toGate[i2];
-        if (t < best) { best = t; bl = i2; }
+      var best = INF, bLast = -1, bSf = 0;
+      for (var l2 = 0; l2 < L; l2++) {
+        for (var s3 = 0; s3 < 2; s3++) {
+          var v = dp[id(full - 1, l2, s3)];
+          if (v >= INF) continue;
+          if (hasSf && !s3) continue;                     // 拿了 S 却没出库 ⇒ 非法
+          var endCost;
+          if (hasNormal) endCost = (l2 === n) ? sfToNormal : toNormal[l2];
+          else { if (l2 !== n) continue; endCost = 0; }    // 只有顺丰件 ⇒ 终点就是顺丰出库点
+          if (v + endCost < best) { best = v + endCost; bLast = l2; bSf = s3; }
+        }
       }
-      if (bl < 0) throw new Error('无可行顺序：出口不可达（闸机格数=' + defaultGates.length + '）');
-      /* 回溯顺序 */
-      order = []; var mk = full - 1, cur = bl;
-      while (cur >= 0) { order.push(cur); var pv = par[mk][cur]; mk &= ~(1 << cur); cur = pv; }
-      order.reverse();
+      if (bLast < 0) throw new Error('无可行顺序（检查闸机带与先后约束）');
+      /* 回溯：seqNodes 为含顺丰出库点的节点序列 */
+      seqNodes = [];
+      var mk = full - 1, cLast = bLast, cSf = bSf;
+      while (cLast >= 0) {
+        seqNodes.push({ node: cLast, sf: cSf });
+        var pidx = id(mk, cLast, cSf);
+        var pv = par[pidx];
+        if (cLast === n) cSf = 0; else mk &= ~(1 << cLast);
+        cLast = pv;
+      }
+      seqNodes.reverse();
       total = best;
     } else {
-      /* 启发式：最近邻 + 2-opt（如实标记 exact=false，不假装最优） */
-      var left = picks.map(function (_, i) { return i; }), seq = [], cu = -1;
-      while (left.length) {
-        var bi = 0, bv = Infinity;
-        for (var k = 0; k < left.length; k++) {
-          var cand = cu < 0 ? fromEntrance[left[k]] : pair(cu, left[k]);
-          if (cand < bv) { bv = cand; bi = k; }
+      /* 启发式（>13 件）：S 件块 → 顺丰出库 → 普通件块，块内最近邻 + 2-opt，如实标 exact=false */
+      var sList = [], nList = [];
+      picks.forEach(function (p, i) { (p.sf ? sList : nList).push(i); });
+      function nn(list, fromSf) {
+        var left = list.slice(), seq = [], cu = -1;
+        while (left.length) {
+          var bi = 0, bv = Infinity;
+          for (var k = 0; k < left.length; k++) {
+            var x = left[k], cand;
+            if (cu >= 0) cand = pair(cu, x);
+            else if (fromSf) cand = nearestIn(x + 1, sfCells).d + sc(picks[x]);
+            else cand = fromEntrance[x];
+            if (cand < bv) { bv = cand; bi = k; }
+          }
+          seq.push(left[bi]); cu = left[bi]; left.splice(bi, 1);
         }
-        seq.push(left[bi]); cu = left[bi]; left.splice(bi, 1);
+        return seq;
       }
-      function cost(s) {
-        var t2 = fromEntrance[s[0]];
-        for (var q = 0; q + 1 < s.length; q++) t2 += pair(s[q], s[q + 1]);
-        return t2 + toGate[s[s.length - 1]];
+      function seqCost(sS, nS) {
+        var t = 0, cu = -1;
+        sS.forEach(function (x) { t += (cu < 0) ? fromEntrance[x] : pair(cu, x); cu = x; });
+        if (hasSf) {
+          t += toSf[cu];                                        // 含最后一件的 stub
+          if (nS.length) {
+            t += nearestIn(nS[0] + 1, sfCells).d + sc(picks[nS[0]]);
+            var cu2 = -1;
+            nS.forEach(function (x) { if (cu2 >= 0) t += pair(cu2, x); cu2 = x; });
+            t += toNormal[cu2];
+          }
+        } else {
+          var cu3 = -1;
+          nS.forEach(function (x) { t += (cu3 < 0) ? fromEntrance[x] : pair(cu3, x); cu3 = x; });
+          t += toNormal[cu3];
+        }
+        return t;
       }
-      var improved = true;
-      while (improved) {
-        improved = false;
-        for (var a1 = 0; a1 < seq.length; a1++) for (var b1 = a1 + 1; b1 < seq.length; b1++) {
-          var cand2 = seq.slice(0, a1).concat(seq.slice(a1, b1 + 1).reverse(), seq.slice(b1 + 1));
-          if (cost(cand2) < cost(seq) - 1e-9) { seq = cand2; improved = true; }
+      var sSeq = nn(sList, false), nSeq = nn(nList, hasSf);
+      function twoOpt(arr, which) {
+        var improved = true;
+        while (improved) {
+          improved = false;
+          for (var a = 0; a < arr.length; a++) for (var b = a + 1; b < arr.length; b++) {
+            var cand = arr.slice(0, a).concat(arr.slice(a, b + 1).reverse(), arr.slice(b + 1));
+            var cur = (which === 's') ? seqCost(arr, nSeq) : seqCost(sSeq, arr);
+            var nw = (which === 's') ? seqCost(cand, nSeq) : seqCost(sSeq, cand);
+            if (nw < cur - 1e-9) { arr.length = 0; Array.prototype.push.apply(arr, cand); improved = true; }
+          }
         }
       }
-      order = seq; total = cost(seq);
+      twoOpt(sSeq, 's');
+      twoOpt(nSeq, 'n');
+      order = sSeq.concat(nSeq);
+      seqNodes = [];
+      sSeq.forEach(function (x) { seqNodes.push({ node: x, sf: 0 }); });
+      if (hasSf) seqNodes.push({ node: n, sf: 1 });
+      nSeq.forEach(function (x) { seqNodes.push({ node: x, sf: hasSf ? 1 : 0 }); });
+      total = seqCost(sSeq, nSeq);
     }
 
-    /* 逐段单元格路径（画线 + 断言用） */
-    var legs = [], cellsOut = [];
-    var entrancePath = model.path(bfs[0], picks[order[0]].cell.row, picks[order[0]].cell.col);
-    legs.push({ from: '入口', to: picks[order[0]].label, cells: entrancePath, tiles: entrancePath ? (entrancePath.length - 1) * CELL_TILES : null });
-    cellsOut = cellsOut.concat(entrancePath || []);
-    for (var q2 = 0; q2 + 1 < order.length; q2++) {
-      var pth = model.path(bfs[order[q2] + 1], picks[order[q2 + 1]].cell.row, picks[order[q2 + 1]].cell.col);
-      legs.push({ from: picks[order[q2]].label, to: picks[order[q2 + 1]].label, cells: pth, tiles: pth ? (pth.length - 1) * CELL_TILES : null });
-      cellsOut = cellsOut.concat(pth || []);
+    /* ---------- 段路径（画线 + 断言用）：直接用图的单元格序列 ---------- */
+    var legs = [], cellsOut = [], cursor = null, sfRowCol = null;
+    function pushLeg(from, to, cells, tiles, kind) {
+      legs.push({ from: from, to: to, cells: cells, tiles: tiles, kind: kind });
+      cellsOut = cellsOut.concat(cells || []);
     }
-    var lastPick = order[order.length - 1];
-    var lastGates = gatesOf(picks[lastPick], lastPick);
-    var bestGate = null, bg = Infinity;
-    for (var g2 = 0; g2 < lastGates.length; g2++) {
-      var gd = cellDistTo(lastPick + 1, lastGates[g2][0], lastGates[g2][1]);
-      if (gd < bg) { bg = gd; bestGate = lastGates[g2]; }
+    /* 入口 → 第一站 */
+    var firstNode = seqNodes[0].node;
+    if (firstNode === n) {
+      var r0 = nearestIn(0, sfCells);
+      var p0 = model.path(bfs[0], r0.cell[0], r0.cell[1]);
+      pushLeg('入口', '顺丰出库', p0, r0.d * CELL_TILES, 'sf');
+      sfRowCol = r0.cell; cursor = 'sf';
+    } else {
+      var pa = model.path(bfs[0], picks[firstNode].cell.row, picks[firstNode].cell.col);
+      pushLeg('入口', picks[firstNode].label, pa,
+        (pa ? (pa.length - 1) * CELL_TILES : 0) + stubOf(picks[firstNode]), 'entrance');
+      cursor = firstNode;
     }
-    var exitPath = model.path(bfs[lastPick + 1], bestGate[0], bestGate[1]);
-    legs.push({ from: picks[lastPick].label, to: '闸机出口', cells: exitPath, tiles: exitPath ? (exitPath.length - 1) * CELL_TILES : null });
-    cellsOut = cellsOut.concat(exitPath || []);
+    for (var k = 1; k < seqNodes.length; k++) {
+      var nd = seqNodes[k].node;
+      if (cursor === 'sf') {
+        /* 出库 → 件 nd：用「件→出库」最短路反向（无向图，对称） */
+        var rr = nearestIn(nd + 1, sfCells);
+        var pth = model.path(bfs[nd + 1], rr.cell[0], rr.cell[1]);
+        pth = (pth || []).slice().reverse();
+        pushLeg('顺丰出库', picks[nd].label, pth, rr.d * CELL_TILES + stubOf(picks[nd]), 'pick');
+        cursor = nd;
+      } else if (nd === n) {
+        var rs = nearestIn(cursor + 1, sfCells);
+        var ps = model.path(bfs[cursor + 1], rs.cell[0], rs.cell[1]);
+        pushLeg(picks[cursor].label, '顺丰出库', ps, rs.d * CELL_TILES + stubOf(picks[cursor]), 'sf');
+        sfRowCol = rs.cell; cursor = 'sf';
+      } else {
+        var pp = model.path(bfs[cursor + 1], picks[nd].cell.row, picks[nd].cell.col);
+        pushLeg(picks[cursor].label, picks[nd].label, pp,
+          (pp ? (pp.length - 1) * CELL_TILES : 0) + stubOf(picks[cursor]) + stubOf(picks[nd]), 'pick');
+        cursor = nd;
+      }
+    }
+    /* 终点：有普通件 → 普通闸机；否则停在顺丰出库点 */
+    var bestGate = sfRowCol, exitKind = 'sf';
+    if (hasNormal) {
+      if (cursor === 'sf') {
+        /* 出库后走到普通闸机：取最近的一对（顺丰格 → 普通格） */
+        var bpair = null, bd = Infinity;
+        for (var a3 = 0; a3 < sfCells.length; a3++) {
+          var bb = model.bfs(sfCells[a3][0], sfCells[a3][1]);
+          for (var g3 = 0; g3 < normalGates.length; g3++) {
+            var ix = model.at(normalGates[g3][0], normalGates[g3][1]);
+            if (ix >= 0 && bb.dist[ix] >= 0 && bb.dist[ix] < bd) { bd = bb.dist[ix]; bpair = { sf: sfCells[a3], g: normalGates[g3] }; }
+          }
+        }
+        var pe = model.path(model.bfs(bpair.sf[0], bpair.sf[1]), bpair.g[0], bpair.g[1]);
+        pushLeg('顺丰出库', '普通闸机出库', pe, (pe ? (pe.length - 1) * CELL_TILES : 0), 'exit');
+        bestGate = bpair.g;
+      } else {
+        var rg = nearestIn(cursor + 1, normalGates);
+        var pg = model.path(bfs[cursor + 1], rg.cell[0], rg.cell[1]);
+        pushLeg(picks[cursor].label, '普通闸机出库', pg, rg.d * CELL_TILES + stubOf(picks[cursor]), 'exit');
+        bestGate = rg.cell;
+      }
+      exitKind = 'normal';
+    }
 
+    order = seqNodes.filter(function (x) { return x.node !== n; }).map(function (x) { return x.node; });
+    for (var z = 0, cnt = 0; z < seqNodes.length; z++) {
+      if (seqNodes[z].node === n) { sfAfter = cnt; break; }
+      cnt++;
+    }
     return {
       order: order, total: total * CELL_TILES, exact: n <= EXACT_MAX,
-      legs: legs, cells: cellsOut, gateExit: bestGate, bfs: bfs, srcs: srcs, orderIdx: order
+      legs: legs, cells: cellsOut, gateExit: bestGate, exitKind: exitKind,
+      sfGate: sfRowCol, sfAfter: sfAfter, hasSf: hasSf, hasNormal: hasNormal,
+      bfs: bfs, srcs: srcs
     };
   }
 
   /* ---------- 5) 取件码定位：完全由 Excel 合并区坐标驱动 ----------
-   * 形如 `D8-6` / `S3-2-2628` / `J5-21` / `Y8-1-3` / `A4-1`；
-   * 命中合并区（如 `D8`）⇒ 取该区中心，再投影到最近通道格。
-   * Y 区在用户精确版里是**一整块**（`Y区域`）⇒ 只能定位到东侧通道的最近点（已在界面注明）。
+   * 形如 `D8-6` / `S3-2-2628` / `J5-21` / `Y8-1-3` / `A4-1`。
+   * 精度分三档：
+   *   ① **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增**（实测锚点 O7:U7 / O9:U9 / O10:U10）
+   *      ⇒ 按格号取货架**横向**位置（只影响投影到哪一个通道格）
+   *   ② **J 柜列**：沿列**由外端（靠通道）向里递增**，每列 ≥21 格（实测 j5-21）
+   *      ⇒ 按格号取**纵深**位置，并把「从通道走进柜列」的那段 `stub` 计入走位
+   *      ⚠️ 每列实际格数未实测（`货位清单` Q1b/Q5）⇒ 用 `jCells`（默认 21）等比铺开
+   *   ③ **Y 大件**：精确版里是**一整块**（`Y区域`）⇒ 只能定位到东侧通道最近点，`approx=true`
+   * 普通排货架：仍取合并区中心（同一货架内不同格视为同一点）
    */
-  function makeLocator(cor, model) {
+  function makeLocator(cor, model, opts) {
+    opts = opts || {};
+    var jCells = opts.jCells || 21;                 // J 每列格数（未实测，占位）
     var byLabel = {};
     (cor.rects || []).forEach(function (r) {
       if (!r.label) return;
@@ -446,18 +620,35 @@ ul.tight li{margin:1px 0}
       var approx = false;
       if (!e) { e = byLabel[letter + '区域'] || byLabel[letter + '区']; approx = !!e; }
       if (!e) return null;
+      /* ---- 区内格位 → 精确坐标（S 用横向、J 用纵深；其余取合并区中心）---- */
       var lat = (e.lat0 + e.lat1) / 2, depth = (e.d0 + e.d1) / 2;
+      var posNote = '';
+      if (letter === 'S') {
+        var sn = (shelf === 1) ? 10 : 8;                       // s1=10 格、s2/s3=8 格（实测锚点）
+        var sk = Math.min(Math.max((cell || 1) - 1, 0), sn - 1);
+        lat = e.lat0 + (sn > 1 ? sk / (sn - 1) : 0) * (e.lat1 - e.lat0);
+        posNote = 's' + shelf + ' 第' + (cell || 1) + '格（' + sn + ' 格中，左端为 1）';
+      } else if (letter === 'J') {
+        var jk = Math.min(Math.max((cell || 1) - 1, 0), jCells - 1);
+        depth = e.d0 + (jCells > 1 ? jk / (jCells - 1) : 0) * (e.d1 - e.d0);   // d0 = 靠通道的外端
+        posNote = 'j' + shelf + ' 第' + (cell || 1) + '格（沿列由外端向里，按 ' + jCells + ' 格铺开）';
+      }
       /* 投影：从整个合并区出发、绕开墙与货架的 BFS（不允许穿墙） */
       var src = [];
       for (var r = e.r0; r <= e.r1; r++) for (var c = e.c0; c <= e.c1; c++) src.push([r, c]);
       var near = model.nearestWalkFrom(src, (e.r0 + e.r1 + 1) / 2, (e.c0 + e.c1 + 1) / 2);
       if (!near) return null;
+      /* 区内那一段（投影格 ↔ 取件格）走位：J 柜列的纵深必须算进距离，其余近似为 0 */
+      var pc = model.pointOf(near.row, near.col);
+      var stub = (letter === 'J') ? Math.abs(depth - pc.depth) : 0;
       return {
         code: raw, letter: letter, shelf: shelf, cell: cell, sub: sub, rect: e, approx: approx,
-        lat: lat, depth: depth, cellPos: near,
+        lat: lat, depth: depth, cellPos: near, stub: stub,
         label: letter + ' 排 ' + shelf + ' 号货架' + (cell ? ' 第' + cell + '格' : '')
-          + '（lat ' + lat.toFixed(1) + '，深 ' + depth.toFixed(1) + ' → 投影到通道格 '
-          + near.row + ',' + near.col + '）' + (approx ? '　⚠ 该区在精确版里是一整块，只定位到最近通道点' : '')
+          + (posNote ? '　' + posNote : '')
+          + '（lat ' + lat.toFixed(1) + '，深 ' + depth.toFixed(1) + ' → 通道格 '
+          + near.row + ',' + near.col + (stub > 0.01 ? '，区内走位 ' + stub.toFixed(1) + ' 格' : '') + '）'
+          + (approx ? '　⚠ 该区在精确版里是一整块，只定位到最近通道点' : '')
       };
     };
   }
@@ -487,15 +678,28 @@ ul.tight li{margin:1px 0}
 const COR={"source":{"path":"海大快递站平面图-2026-09-29-用户精确版.xlsx","sha256":"347aa968142493d8571a2abf0f9224f1a2eacf68eda480f07beccf72a0d19938","bytes":21696},"colorRoles":{"theme3":"walk","theme1":"wall","theme9":"shelfmark","theme5":"gate","theme7":"misc"},"spineCol":37.5,"baseRow":53.5,"span":{"minCol":6,"maxCol":94,"minRow":5,"maxRow":59,"maxRowSheet":71,"maxColSheet":148},"walk":[[5,35,40],[6,35,94],[7,35,94],[8,35,94],[9,35,94],[10,35,40],[10,89,94],[11,35,40],[11,89,94],[12,6,94],[13,6,94],[14,6,94],[15,6,94],[16,6,10],[16,35,40],[16,89,94],[17,6,10],[17,35,40],[17,89,94],[18,6,94],[19,6,94],[20,6,94],[21,6,94],[22,6,10],[22,35,40],[22,89,94],[23,6,10],[23,35,40],[23,89,94],[24,6,94],[25,6,94],[26,6,94],[27,6,94],[28,6,10],[28,35,40],[28,89,94],[29,6,10],[29,35,40],[29,89,94],[30,6,94],[31,6,94],[32,6,94],[33,6,94],[34,6,10],[34,35,40],[34,89,94],[35,6,10],[35,35,40],[35,89,94],[36,6,94],[37,6,94],[38,6,94],[39,6,94],[40,6,10],[40,35,40],[40,89,94],[41,6,10],[41,35,40],[41,89,94],[42,6,94],[43,6,94],[44,6,94],[45,6,94],[46,6,10],[46,35,40],[46,89,94],[47,6,10],[47,35,40],[47,89,94],[48,6,94],[49,6,94],[50,6,94],[51,6,94],[52,6,10],[52,35,40],[52,89,94],[53,6,10],[53,35,40],[53,89,94],[54,6,40],[54,42,94],[55,6,40],[55,42,94],[56,6,40],[56,42,94],[57,6,40],[57,42,94],[58,6,10],[59,6,10]],"wall":[[3,24,34],[4,24,24],[4,34,132],[5,24,24],[5,34,34],[5,132,132],[6,24,24],[6,34,34],[6,132,132],[7,24,24],[7,34,34],[7,132,132],[8,24,24],[8,34,34],[8,132,132],[9,24,24],[9,34,34],[9,132,132],[10,24,24],[10,34,34],[10,132,132],[11,6,24],[11,34,34],[11,132,132],[12,132,132],[13,132,132],[14,132,132],[15,132,132],[16,132,132],[17,132,132],[18,132,132],[19,132,132],[20,132,132],[21,132,132],[22,132,132],[23,132,132],[24,132,132],[25,132,132],[26,132,132],[27,132,132],[28,132,132],[29,132,132],[30,132,132],[31,132,132],[32,132,132],[33,132,132],[34,132,132],[35,132,132],[36,132,132],[37,132,132],[38,132,132],[39,132,132],[40,132,132],[41,132,132],[42,132,132],[43,132,132],[44,132,132],[45,132,132],[46,132,132],[47,132,132],[48,132,132],[49,132,132],[50,132,132],[51,132,132],[52,132,132],[53,132,132],[54,41,41],[54,132,132],[55,41,41],[55,132,132],[56,41,41],[56,132,132],[57,41,41],[57,132,132],[58,2,2],[58,29,133],[59,2,2],[59,29,133],[60,2,2],[60,22,22],[61,2,2],[61,22,22],[62,2,2],[62,22,22],[63,2,2],[63,22,22],[64,2,2],[64,22,22],[65,2,2],[65,22,22],[66,2,2],[66,22,22],[67,2,2],[67,22,22],[68,2,2],[68,22,22],[69,2,2],[69,22,22],[70,2,2],[70,22,22],[71,2,22]],"shelfmark":[[4,25,25],[4,27,28],[4,30,31],[4,33,33],[5,41,41],[5,47,47],[5,53,53],[5,59,59],[5,65,65],[5,71,71],[5,77,77],[5,83,83],[5,89,89],[8,25,25],[8,27,28],[8,30,31],[8,33,33],[10,41,41],[10,47,47],[10,53,53],[10,59,59],[10,65,65],[10,71,71],[10,77,77],[10,83,83],[11,41,41],[11,47,47],[11,53,53],[11,59,59],[11,65,65],[11,71,71],[11,77,77],[11,83,83],[16,11,11],[16,17,17],[16,23,23],[16,29,29],[16,41,41],[16,47,47],[16,53,53],[16,59,59],[16,65,65],[16,71,71],[16,77,77],[16,83,83],[17,11,11],[17,17,17],[17,23,23],[17,29,29],[17,41,41],[17,47,47],[17,53,53],[17,59,59],[17,65,65],[17,71,71],[17,77,77],[17,83,83],[22,11,11],[22,17,17],[22,23,23],[22,29,29],[22,41,41],[22,47,47],[22,53,53],[22,59,59],[22,65,65],[22,71,71],[22,77,77],[22,83,83],[23,11,11],[23,17,17],[23,23,23],[23,29,29],[23,41,41],[23,47,47],[23,53,53],[23,59,59],[23,65,65],[23,71,71],[23,77,77],[23,83,83],[28,11,11],[28,17,17],[28,23,23],[28,29,29],[28,41,41],[28,47,47],[28,53,53],[28,59,59],[28,65,65],[28,71,71],[28,77,77],[28,83,83],[29,11,11],[29,17,17],[29,23,23],[29,29,29],[29,41,41],[29,47,47],[29,53,53],[29,59,59],[29,65,65],[29,71,71],[29,77,77],[29,83,83],[34,11,11],[34,17,17],[34,23,23],[34,29,29],[34,41,41],[34,47,47],[34,53,53],[34,59,59],[34,65,65],[34,71,71],[34,77,77],[34,83,83],[35,11,11],[35,17,17],[35,23,23],[35,29,29],[35,41,41],[35,47,47],[35,53,53],[35,59,59],[35,65,65],[35,71,71],[35,77,77],[35,83,83],[40,11,11],[40,17,17],[40,23,23],[40,29,29],[40,41,41],[40,47,47],[40,53,53],[40,59,59],[40,65,65],[40,71,71],[40,77,77],[40,83,83],[41,11,11],[41,17,17],[41,23,23],[41,29,29],[41,41,41],[41,47,47],[41,53,53],[41,59,59],[41,65,65],[41,71,71],[41,77,77],[41,83,83],[46,11,11],[46,17,17],[46,23,23],[46,29,29],[46,41,41],[46,47,47],[46,53,53],[46,59,59],[46,65,65],[46,71,71],[46,77,77],[46,83,83],[47,11,11],[47,17,17],[47,23,23],[47,29,29],[47,41,41],[47,47,47],[47,53,53],[47,59,59],[47,65,65],[47,71,71],[47,77,77],[47,83,83],[52,11,11],[52,17,17],[52,23,23],[52,29,29],[52,41,41],[52,47,47],[52,53,53],[52,59,59],[52,65,65],[52,71,71],[52,77,77],[52,83,83],[53,11,11],[53,17,17],[53,23,23],[53,29,29],[53,41,41],[53,47,47],[53,53,53],[53,59,59],[53,65,65],[53,71,71],[53,77,77],[53,83,83],[58,3,3],[58,11,11],[58,17,17],[59,11,11],[59,17,17],[64,3,3],[70,4,4],[70,10,10],[70,16,16]],"gate":[[22,3,3],[59,23,28]],"rects":[{"label":"J1","c0":25,"c1":25,"r0":4,"r1":7,"lat0":-6.5,"lat1":-6.0,"d0":23.0,"d1":25.0},{"label":"J2","c0":27,"c1":27,"r0":4,"r1":7,"lat0":-5.5,"lat1":-5.0,"d0":23.0,"d1":25.0},{"label":"J3","c0":28,"c1":28,"r0":4,"r1":7,"lat0":-5.0,"lat1":-4.5,"d0":23.0,"d1":25.0},{"label":"J4","c0":30,"c1":30,"r0":4,"r1":7,"lat0":-4.0,"lat1":-3.5,"d0":23.0,"d1":25.0},{"label":"J5","c0":31,"c1":31,"r0":4,"r1":7,"lat0":-3.5,"lat1":-3.0,"d0":23.0,"d1":25.0},{"label":"J6","c0":33,"c1":33,"r0":4,"r1":7,"lat0":-2.5,"lat1":-2.0,"d0":23.0,"d1":25.0},{"label":"S1","c0":41,"c1":46,"r0":5,"r1":5,"lat0":1.5,"lat1":4.5,"d0":24.0,"d1":24.5},{"label":"","c0":47,"c1":52,"r0":5,"r1":5,"lat0":4.5,"lat1":7.5,"d0":24.0,"d1":24.5},{"label":"","c0":53,"c1":58,"r0":5,"r1":5,"lat0":7.5,"lat1":10.5,"d0":24.0,"d1":24.5},{"label":"","c0":59,"c1":64,"r0":5,"r1":5,"lat0":10.5,"lat1":13.5,"d0":24.0,"d1":24.5},{"label":"","c0":65,"c1":70,"r0":5,"r1":5,"lat0":13.5,"lat1":16.5,"d0":24.0,"d1":24.5},{"label":"","c0":71,"c1":76,"r0":5,"r1":5,"lat0":16.5,"lat1":19.5,"d0":24.0,"d1":24.5},{"label":"`","c0":77,"c1":82,"r0":5,"r1":5,"lat0":19.5,"lat1":22.5,"d0":24.0,"d1":24.5},{"label":"","c0":83,"c1":88,"r0":5,"r1":5,"lat0":22.5,"lat1":25.5,"d0":24.0,"d1":24.5},{"label":"","c0":89,"c1":94,"r0":5,"r1":5,"lat0":25.5,"lat1":28.5,"d0":24.0,"d1":24.5},{"label":"Y区域","c0":96,"c1":131,"r0":5,"r1":47,"lat0":29.0,"lat1":47.0,"d0":3.0,"d1":24.5},{"label":"J1","c0":25,"c1":25,"r0":8,"r1":11,"lat0":-6.5,"lat1":-6.0,"d0":21.0,"d1":23.0},{"label":"J2","c0":27,"c1":27,"r0":8,"r1":11,"lat0":-5.5,"lat1":-5.0,"d0":21.0,"d1":23.0},{"label":"J3","c0":28,"c1":28,"r0":8,"r1":11,"lat0":-5.0,"lat1":-4.5,"d0":21.0,"d1":23.0},{"label":"J4","c0":30,"c1":30,"r0":8,"r1":11,"lat0":-4.0,"lat1":-3.5,"d0":21.0,"d1":23.0},{"label":"J5","c0":31,"c1":31,"r0":8,"r1":11,"lat0":-3.5,"lat1":-3.0,"d0":21.0,"d1":23.0},{"label":"J6","c0":33,"c1":33,"r0":8,"r1":11,"lat0":-2.5,"lat1":-2.0,"d0":21.0,"d1":23.0},{"label":"S2","c0":41,"c1":46,"r0":10,"r1":10,"lat0":1.5,"lat1":4.5,"d0":21.5,"d1":22.0},{"label":"","c0":47,"c1":52,"r0":10,"r1":10,"lat0":4.5,"lat1":7.5,"d0":21.5,"d1":22.0},{"label":"","c0":53,"c1":58,"r0":10,"r1":10,"lat0":7.5,"lat1":10.5,"d0":21.5,"d1":22.0},{"label":"","c0":59,"c1":64,"r0":10,"r1":10,"lat0":10.5,"lat1":13.5,"d0":21.5,"d1":22.0},{"label":"","c0":65,"c1":70,"r0":10,"r1":10,"lat0":13.5,"lat1":16.5,"d0":21.5,"d1":22.0},{"label":"","c0":71,"c1":76,"r0":10,"r1":10,"lat0":16.5,"lat1":19.5,"d0":21.5,"d1":22.0},{"label":"","c0":77,"c1":82,"r0":10,"r1":10,"lat0":19.5,"lat1":22.5,"d0":21.5,"d1":22.0},{"label":"","c0":83,"c1":88,"r0":10,"r1":10,"lat0":22.5,"lat1":25.5,"d0":21.5,"d1":22.0},{"label":"S3","c0":41,"c1":46,"r0":11,"r1":11,"lat0":1.5,"lat1":4.5,"d0":21.0,"d1":21.5},{"label":"","c0":47,"c1":52,"r0":11,"r1":11,"lat0":4.5,"lat1":7.5,"d0":21.0,"d1":21.5},{"label":"","c0":53,"c1":58,"r0":11,"r1":11,"lat0":7.5,"lat1":10.5,"d0":21.0,"d1":21.5},{"label":"","c0":59,"c1":64,"r0":11,"r1":11,"lat0":10.5,"lat1":13.5,"d0":21.0,"d1":21.5},{"label":"","c0":65,"c1":70,"r0":11,"r1":11,"lat0":13.5,"lat1":16.5,"d0":21.0,"d1":21.5},{"label":"","c0":71,"c1":76,"r0":11,"r1":11,"lat0":16.5,"lat1":19.5,"d0":21.0,"d1":21.5},{"label":"","c0":77,"c1":82,"r0":11,"r1":11,"lat0":19.5,"lat1":22.5,"d0":21.0,"d1":21.5},{"label":"","c0":83,"c1":88,"r0":11,"r1":11,"lat0":22.5,"lat1":25.5,"d0":21.0,"d1":21.5},{"label":"顺丰和无快递出口","c0":3,"c1":5,"r0":12,"r1":16,"lat0":-17.5,"lat1":-16.0,"d0":18.5,"d1":21.0},{"label":"Q1","c0":11,"c1":16,"r0":16,"r1":16,"lat0":-13.5,"lat1":-10.5,"d0":18.5,"d1":19.0},{"label":"Q2","c0":17,"c1":22,"r0":16,"r1":16,"lat0":-10.5,"lat1":-7.5,"d0":18.5,"d1":19.0},{"label":"Q3","c0":23,"c1":28,"r0":16,"r1":16,"lat0":-7.5,"lat1":-4.5,"d0":18.5,"d1":19.0},{"label":"Q4","c0":29,"c1":34,"r0":16,"r1":16,"lat0":-4.5,"lat1":-1.5,"d0":18.5,"d1":19.0},{"label":"R5","c0":41,"c1":46,"r0":16,"r1":16,"lat0":1.5,"lat1":4.5,"d0":18.5,"d1":19.0},{"label":"R6","c0":47,"c1":52,"r0":16,"r1":16,"lat0":4.5,"lat1":7.5,"d0":18.5,"d1":19.0},{"label":"R7","c0":53,"c1":58,"r0":16,"r1":16,"lat0":7.5,"lat1":10.5,"d0":18.5,"d1":19.0},{"label":"R8","c0":59,"c1":64,"r0":16,"r1":16,"lat0":10.5,"lat1":13.5,"d0":18.5,"d1":19.0},{"label":"R9","c0":65,"c1":70,"r0":16,"r1":16,"lat0":13.5,"lat1":16.5,"d0":18.5,"d1":19.0},{"label":"R10","c0":71,"c1":76,"r0":16,"r1":16,"lat0":16.5,"lat1":19.5,"d0":18.5,"d1":19.0},{"label":"R11","c0":77,"c1":82,"r0":16,"r1":16,"lat0":19.5,"lat1":22.5,"d0":18.5,"d1":19.0},{"label":"R12","c0":83,"c1":88,"r0":16,"r1":16,"lat0":22.5,"lat1":25.5,"d0":18.5,"d1":19.0},{"label":"顺丰专用闸机","c0":3,"c1":5,"r0":17,"r1":21,"lat0":-17.5,"lat1":-16.0,"d0":16.0,"d1":18.5},{"label":"R1","c0":11,"c1":16,"r0":17,"r1":17,"lat0":-13.5,"lat1":-10.5,"d0":18.0,"d1":18.5},{"label":"R2","c0":17,"c1":22,"r0":17,"r1":17,"lat0":-10.5,"lat1":-7.5,"d0":18.0,"d1":18.5},{"label":"R3","c0":23,"c1":28,"r0":17,"r1":17,"lat0":-7.5,"lat1":-4.5,"d0":18.0,"d1":18.5},{"label":"R4","c0":29,"c1":34,"r0":17,"r1":17,"lat0":-4.5,"lat1":-1.5,"d0":18.0,"d1":18.5},{"label":"Q5","c0":41,"c1":46,"r0":17,"r1":17,"lat0":1.5,"lat1":4.5,"d0":18.0,"d1":18.5},{"label":"Q6","c0":47,"c1":52,"r0":17,"r1":17,"lat0":4.5,"lat1":7.5,"d0":18.0,"d1":18.5},{"label":"Q7","c0":53,"c1":58,"r0":17,"r1":17,"lat0":7.5,"lat1":10.5,"d0":18.0,"d1":18.5},{"label":"Q8","c0":59,"c1":64,"r0":17,"r1":17,"lat0":10.5,"lat1":13.5,"d0":18.0,"d1":18.5},{"label":"Q9","c0":65,"c1":70,"r0":17,"r1":17,"lat0":13.5,"lat1":16.5,"d0":18.0,"d1":18.5},{"label":"Q10","c0":71,"c1":76,"r0":17,"r1":17,"lat0":16.5,"lat1":19.5,"d0":18.0,"d1":18.5},{"label":"Q11","c0":77,"c1":82,"r0":17,"r1":17,"lat0":19.5,"lat1":22.5,"d0":18.0,"d1":18.5},{"label":"Q12","c0":83,"c1":88,"r0":17,"r1":17,"lat0":22.5,"lat1":25.5,"d0":18.0,"d1":18.5},{"label":"7个普通闸机","c0":3,"c1":5,"r0":22,"r1":57,"lat0":-17.5,"lat1":-16.0,"d0":-2.0,"d1":16.0},{"label":"P1","c0":11,"c1":16,"r0":22,"r1":22,"lat0":-13.5,"lat1":-10.5,"d0":15.5,"d1":16.0},{"label":"P2","c0":17,"c1":22,"r0":22,"r1":22,"lat0":-10.5,"lat1":-7.5,"d0":15.5,"d1":16.0},{"label":"P3","c0":23,"c1":28,"r0":22,"r1":22,"lat0":-7.5,"lat1":-4.5,"d0":15.5,"d1":16.0},{"label":"P4","c0":29,"c1":34,"r0":22,"r1":22,"lat0":-4.5,"lat1":-1.5,"d0":15.5,"d1":16.0},{"label":"P5","c0":41,"c1":46,"r0":22,"r1":22,"lat0":1.5,"lat1":4.5,"d0":15.5,"d1":16.0},{"label":"P6","c0":47,"c1":52,"r0":22,"r1":22,"lat0":4.5,"lat1":7.5,"d0":15.5,"d1":16.0},{"label":"P7","c0":53,"c1":58,"r0":22,"r1":22,"lat0":7.5,"lat1":10.5,"d0":15.5,"d1":16.0},{"label":"P8","c0":59,"c1":64,"r0":22,"r1":22,"lat0":10.5,"lat1":13.5,"d0":15.5,"d1":16.0},{"label":"P9","c0":65,"c1":70,"r0":22,"r1":22,"lat0":13.5,"lat1":16.5,"d0":15.5,"d1":16.0},{"label":"P10","c0":71,"c1":76,"r0":22,"r1":22,"lat0":16.5,"lat1":19.5,"d0":15.5,"d1":16.0},{"label":"P11","c0":77,"c1":82,"r0":22,"r1":22,"lat0":19.5,"lat1":22.5,"d0":15.5,"d1":16.0},{"label":"P12","c0":83,"c1":88,"r0":22,"r1":22,"lat0":22.5,"lat1":25.5,"d0":15.5,"d1":16.0},{"label":"N1","c0":11,"c1":16,"r0":23,"r1":23,"lat0":-13.5,"lat1":-10.5,"d0":15.0,"d1":15.5},{"label":"N2","c0":17,"c1":22,"r0":23,"r1":23,"lat0":-10.5,"lat1":-7.5,"d0":15.0,"d1":15.5},{"label":"N3","c0":23,"c1":28,"r0":23,"r1":23,"lat0":-7.5,"lat1":-4.5,"d0":15.0,"d1":15.5},{"label":"N4","c0":29,"c1":34,"r0":23,"r1":23,"lat0":-4.5,"lat1":-1.5,"d0":15.0,"d1":15.5},{"label":"N5","c0":41,"c1":46,"r0":23,"r1":23,"lat0":1.5,"lat1":4.5,"d0":15.0,"d1":15.5},{"label":"N6","c0":47,"c1":52,"r0":23,"r1":23,"lat0":4.5,"lat1":7.5,"d0":15.0,"d1":15.5},{"label":"N7","c0":53,"c1":58,"r0":23,"r1":23,"lat0":7.5,"lat1":10.5,"d0":15.0,"d1":15.5},{"label":"N8","c0":59,"c1":64,"r0":23,"r1":23,"lat0":10.5,"lat1":13.5,"d0":15.0,"d1":15.5},{"label":"N9","c0":65,"c1":70,"r0":23,"r1":23,"lat0":13.5,"lat1":16.5,"d0":15.0,"d1":15.5},{"label":"N10","c0":71,"c1":76,"r0":23,"r1":23,"lat0":16.5,"lat1":19.5,"d0":15.0,"d1":15.5},{"label":"N11","c0":77,"c1":82,"r0":23,"r1":23,"lat0":19.5,"lat1":22.5,"d0":15.0,"d1":15.5},{"label":"N12","c0":83,"c1":88,"r0":23,"r1":23,"lat0":22.5,"lat1":25.5,"d0":15.0,"d1":15.5},{"label":"M1","c0":11,"c1":16,"r0":28,"r1":28,"lat0":-13.5,"lat1":-10.5,"d0":12.5,"d1":13.0},{"label":"M2","c0":17,"c1":22,"r0":28,"r1":28,"lat0":-10.5,"lat1":-7.5,"d0":12.5,"d1":13.0},{"label":"M3","c0":23,"c1":28,"r0":28,"r1":28,"lat0":-7.5,"lat1":-4.5,"d0":12.5,"d1":13.0},{"label":"M4","c0":29,"c1":34,"r0":28,"r1":28,"lat0":-4.5,"lat1":-1.5,"d0":12.5,"d1":13.0},{"label":"M5","c0":41,"c1":46,"r0":28,"r1":28,"lat0":1.5,"lat1":4.5,"d0":12.5,"d1":13.0},{"label":"M6","c0":47,"c1":52,"r0":28,"r1":28,"lat0":4.5,"lat1":7.5,"d0":12.5,"d1":13.0},{"label":"M7","c0":53,"c1":58,"r0":28,"r1":28,"lat0":7.5,"lat1":10.5,"d0":12.5,"d1":13.0},{"label":"M8","c0":59,"c1":64,"r0":28,"r1":28,"lat0":10.5,"lat1":13.5,"d0":12.5,"d1":13.0},{"label":"M9","c0":65,"c1":70,"r0":28,"r1":28,"lat0":13.5,"lat1":16.5,"d0":12.5,"d1":13.0},{"label":"M10","c0":71,"c1":76,"r0":28,"r1":28,"lat0":16.5,"lat1":19.5,"d0":12.5,"d1":13.0},{"label":"M11","c0":77,"c1":82,"r0":28,"r1":28,"lat0":19.5,"lat1":22.5,"d0":12.5,"d1":13.0},{"label":"M12","c0":83,"c1":88,"r0":28,"r1":28,"lat0":22.5,"lat1":25.5,"d0":12.5,"d1":13.0},{"label":"L1","c0":11,"c1":16,"r0":29,"r1":29,"lat0":-13.5,"lat1":-10.5,"d0":12.0,"d1":12.5},{"label":"L2","c0":17,"c1":22,"r0":29,"r1":29,"lat0":-10.5,"lat1":-7.5,"d0":12.0,"d1":12.5},{"label":"L3","c0":23,"c1":28,"r0":29,"r1":29,"lat0":-7.5,"lat1":-4.5,"d0":12.0,"d1":12.5},{"label":"L4","c0":29,"c1":34,"r0":29,"r1":29,"lat0":-4.5,"lat1":-1.5,"d0":12.0,"d1":12.5},{"label":"L5","c0":41,"c1":46,"r0":29,"r1":29,"lat0":1.5,"lat1":4.5,"d0":12.0,"d1":12.5},{"label":"L6","c0":47,"c1":52,"r0":29,"r1":29,"lat0":4.5,"lat1":7.5,"d0":12.0,"d1":12.5},{"label":"L7","c0":53,"c1":58,"r0":29,"r1":29,"lat0":7.5,"lat1":10.5,"d0":12.0,"d1":12.5},{"label":"L8","c0":59,"c1":64,"r0":29,"r1":29,"lat0":10.5,"lat1":13.5,"d0":12.0,"d1":12.5},{"label":"L9","c0":65,"c1":70,"r0":29,"r1":29,"lat0":13.5,"lat1":16.5,"d0":12.0,"d1":12.5},{"label":"L10","c0":71,"c1":76,"r0":29,"r1":29,"lat0":16.5,"lat1":19.5,"d0":12.0,"d1":12.5},{"label":"L11","c0":77,"c1":82,"r0":29,"r1":29,"lat0":19.5,"lat1":22.5,"d0":12.0,"d1":12.5},{"label":"L12","c0":83,"c1":88,"r0":29,"r1":29,"lat0":22.5,"lat1":25.5,"d0":12.0,"d1":12.5},{"label":"K1","c0":11,"c1":16,"r0":34,"r1":34,"lat0":-13.5,"lat1":-10.5,"d0":9.5,"d1":10.0},{"label":"K2","c0":17,"c1":22,"r0":34,"r1":34,"lat0":-10.5,"lat1":-7.5,"d0":9.5,"d1":10.0},{"label":"K3","c0":23,"c1":28,"r0":34,"r1":34,"lat0":-7.5,"lat1":-4.5,"d0":9.5,"d1":10.0},{"label":"K4","c0":29,"c1":34,"r0":34,"r1":34,"lat0":-4.5,"lat1":-1.5,"d0":9.5,"d1":10.0},{"label":"K5","c0":41,"c1":46,"r0":34,"r1":34,"lat0":1.5,"lat1":4.5,"d0":9.5,"d1":10.0},{"label":"K6","c0":47,"c1":52,"r0":34,"r1":34,"lat0":4.5,"lat1":7.5,"d0":9.5,"d1":10.0},{"label":"K7","c0":53,"c1":58,"r0":34,"r1":34,"lat0":7.5,"lat1":10.5,"d0":9.5,"d1":10.0},{"label":"K8","c0":59,"c1":64,"r0":34,"r1":34,"lat0":10.5,"lat1":13.5,"d0":9.5,"d1":10.0},{"label":"K9","c0":65,"c1":70,"r0":34,"r1":34,"lat0":13.5,"lat1":16.5,"d0":9.5,"d1":10.0},{"label":"K10","c0":71,"c1":76,"r0":34,"r1":34,"lat0":16.5,"lat1":19.5,"d0":9.5,"d1":10.0},{"label":"K11","c0":77,"c1":82,"r0":34,"r1":34,"lat0":19.5,"lat1":22.5,"d0":9.5,"d1":10.0},{"label":"K12","c0":83,"c1":88,"r0":34,"r1":34,"lat0":22.5,"lat1":25.5,"d0":9.5,"d1":10.0},{"label":"H1","c0":11,"c1":16,"r0":35,"r1":35,"lat0":-13.5,"lat1":-10.5,"d0":9.0,"d1":9.5},{"label":"H2","c0":17,"c1":22,"r0":35,"r1":35,"lat0":-10.5,"lat1":-7.5,"d0":9.0,"d1":9.5},{"label":"H3","c0":23,"c1":28,"r0":35,"r1":35,"lat0":-7.5,"lat1":-4.5,"d0":9.0,"d1":9.5},{"label":"H4","c0":29,"c1":34,"r0":35,"r1":35,"lat0":-4.5,"lat1":-1.5,"d0":9.0,"d1":9.5},{"label":"H5","c0":41,"c1":46,"r0":35,"r1":35,"lat0":1.5,"lat1":4.5,"d0":9.0,"d1":9.5},{"label":"H6","c0":47,"c1":52,"r0":35,"r1":35,"lat0":4.5,"lat1":7.5,"d0":9.0,"d1":9.5},{"label":"H7","c0":53,"c1":58,"r0":35,"r1":35,"lat0":7.5,"lat1":10.5,"d0":9.0,"d1":9.5},{"label":"H8","c0":59,"c1":64,"r0":35,"r1":35,"lat0":10.5,"lat1":13.5,"d0":9.0,"d1":9.5},{"label":"H9","c0":65,"c1":70,"r0":35,"r1":35,"lat0":13.5,"lat1":16.5,"d0":9.0,"d1":9.5},{"label":"H10","c0":71,"c1":76,"r0":35,"r1":35,"lat0":16.5,"lat1":19.5,"d0":9.0,"d1":9.5},{"label":"H11","c0":77,"c1":82,"r0":35,"r1":35,"lat0":19.5,"lat1":22.5,"d0":9.0,"d1":9.5},{"label":"H12","c0":83,"c1":88,"r0":35,"r1":35,"lat0":22.5,"lat1":25.5,"d0":9.0,"d1":9.5},{"label":"G1","c0":11,"c1":16,"r0":40,"r1":40,"lat0":-13.5,"lat1":-10.5,"d0":6.5,"d1":7.0},{"label":"G2","c0":17,"c1":22,"r0":40,"r1":40,"lat0":-10.5,"lat1":-7.5,"d0":6.5,"d1":7.0},{"label":"G3","c0":23,"c1":28,"r0":40,"r1":40,"lat0":-7.5,"lat1":-4.5,"d0":6.5,"d1":7.0},{"label":"G4","c0":29,"c1":34,"r0":40,"r1":40,"lat0":-4.5,"lat1":-1.5,"d0":6.5,"d1":7.0},{"label":"G5","c0":41,"c1":46,"r0":40,"r1":40,"lat0":1.5,"lat1":4.5,"d0":6.5,"d1":7.0},{"label":"G6","c0":47,"c1":52,"r0":40,"r1":40,"lat0":4.5,"lat1":7.5,"d0":6.5,"d1":7.0},{"label":"G7","c0":53,"c1":58,"r0":40,"r1":40,"lat0":7.5,"lat1":10.5,"d0":6.5,"d1":7.0},{"label":"G8","c0":59,"c1":64,"r0":40,"r1":40,"lat0":10.5,"lat1":13.5,"d0":6.5,"d1":7.0},{"label":"G9","c0":65,"c1":70,"r0":40,"r1":40,"lat0":13.5,"lat1":16.5,"d0":6.5,"d1":7.0},{"label":"G10","c0":71,"c1":76,"r0":40,"r1":40,"lat0":16.5,"lat1":19.5,"d0":6.5,"d1":7.0},{"label":"G11","c0":77,"c1":82,"r0":40,"r1":40,"lat0":19.5,"lat1":22.5,"d0":6.5,"d1":7.0},{"label":"G12","c0":83,"c1":88,"r0":40,"r1":40,"lat0":22.5,"lat1":25.5,"d0":6.5,"d1":7.0},{"label":"F1","c0":11,"c1":16,"r0":41,"r1":41,"lat0":-13.5,"lat1":-10.5,"d0":6.0,"d1":6.5},{"label":"F2","c0":17,"c1":22,"r0":41,"r1":41,"lat0":-10.5,"lat1":-7.5,"d0":6.0,"d1":6.5},{"label":"F3","c0":23,"c1":28,"r0":41,"r1":41,"lat0":-7.5,"lat1":-4.5,"d0":6.0,"d1":6.5},{"label":"F4","c0":29,"c1":34,"r0":41,"r1":41,"lat0":-4.5,"lat1":-1.5,"d0":6.0,"d1":6.5},{"label":"F5","c0":41,"c1":46,"r0":41,"r1":41,"lat0":1.5,"lat1":4.5,"d0":6.0,"d1":6.5},{"label":"F6","c0":47,"c1":52,"r0":41,"r1":41,"lat0":4.5,"lat1":7.5,"d0":6.0,"d1":6.5},{"label":"F7","c0":53,"c1":58,"r0":41,"r1":41,"lat0":7.5,"lat1":10.5,"d0":6.0,"d1":6.5},{"label":"F8","c0":59,"c1":64,"r0":41,"r1":41,"lat0":10.5,"lat1":13.5,"d0":6.0,"d1":6.5},{"label":"F9","c0":65,"c1":70,"r0":41,"r1":41,"lat0":13.5,"lat1":16.5,"d0":6.0,"d1":6.5},{"label":"F10","c0":71,"c1":76,"r0":41,"r1":41,"lat0":16.5,"lat1":19.5,"d0":6.0,"d1":6.5},{"label":"F11","c0":77,"c1":82,"r0":41,"r1":41,"lat0":19.5,"lat1":22.5,"d0":6.0,"d1":6.5},{"label":"F12","c0":83,"c1":88,"r0":41,"r1":41,"lat0":22.5,"lat1":25.5,"d0":6.0,"d1":6.5},{"label":"E1","c0":11,"c1":16,"r0":46,"r1":46,"lat0":-13.5,"lat1":-10.5,"d0":3.5,"d1":4.0},{"label":"E2","c0":17,"c1":22,"r0":46,"r1":46,"lat0":-10.5,"lat1":-7.5,"d0":3.5,"d1":4.0},{"label":"E3","c0":23,"c1":28,"r0":46,"r1":46,"lat0":-7.5,"lat1":-4.5,"d0":3.5,"d1":4.0},{"label":"E4","c0":29,"c1":34,"r0":46,"r1":46,"lat0":-4.5,"lat1":-1.5,"d0":3.5,"d1":4.0},{"label":"E5","c0":41,"c1":46,"r0":46,"r1":46,"lat0":1.5,"lat1":4.5,"d0":3.5,"d1":4.0},{"label":"E6","c0":47,"c1":52,"r0":46,"r1":46,"lat0":4.5,"lat1":7.5,"d0":3.5,"d1":4.0},{"label":"E7","c0":53,"c1":58,"r0":46,"r1":46,"lat0":7.5,"lat1":10.5,"d0":3.5,"d1":4.0},{"label":"E8","c0":59,"c1":64,"r0":46,"r1":46,"lat0":10.5,"lat1":13.5,"d0":3.5,"d1":4.0},{"label":"E9","c0":65,"c1":70,"r0":46,"r1":46,"lat0":13.5,"lat1":16.5,"d0":3.5,"d1":4.0},{"label":"E10","c0":71,"c1":76,"r0":46,"r1":46,"lat0":16.5,"lat1":19.5,"d0":3.5,"d1":4.0},{"label":"E11","c0":77,"c1":82,"r0":46,"r1":46,"lat0":19.5,"lat1":22.5,"d0":3.5,"d1":4.0},{"label":"E12","c0":83,"c1":88,"r0":46,"r1":46,"lat0":22.5,"lat1":25.5,"d0":3.5,"d1":4.0},{"label":"D1","c0":11,"c1":16,"r0":47,"r1":47,"lat0":-13.5,"lat1":-10.5,"d0":3.0,"d1":3.5},{"label":"D2","c0":17,"c1":22,"r0":47,"r1":47,"lat0":-10.5,"lat1":-7.5,"d0":3.0,"d1":3.5},{"label":"D3","c0":23,"c1":28,"r0":47,"r1":47,"lat0":-7.5,"lat1":-4.5,"d0":3.0,"d1":3.5},{"label":"D4","c0":29,"c1":34,"r0":47,"r1":47,"lat0":-4.5,"lat1":-1.5,"d0":3.0,"d1":3.5},{"label":"D5","c0":41,"c1":46,"r0":47,"r1":47,"lat0":1.5,"lat1":4.5,"d0":3.0,"d1":3.5},{"label":"D6","c0":47,"c1":52,"r0":47,"r1":47,"lat0":4.5,"lat1":7.5,"d0":3.0,"d1":3.5},{"label":"D7","c0":53,"c1":58,"r0":47,"r1":47,"lat0":7.5,"lat1":10.5,"d0":3.0,"d1":3.5},{"label":"D8","c0":59,"c1":64,"r0":47,"r1":47,"lat0":10.5,"lat1":13.5,"d0":3.0,"d1":3.5},{"label":"D9","c0":65,"c1":70,"r0":47,"r1":47,"lat0":13.5,"lat1":16.5,"d0":3.0,"d1":3.5},{"label":"D10","c0":71,"c1":76,"r0":47,"r1":47,"lat0":16.5,"lat1":19.5,"d0":3.0,"d1":3.5},{"label":"D11","c0":77,"c1":82,"r0":47,"r1":47,"lat0":19.5,"lat1":22.5,"d0":3.0,"d1":3.5},{"label":"D12","c0":83,"c1":88,"r0":47,"r1":47,"lat0":22.5,"lat1":25.5,"d0":3.0,"d1":3.5},{"label":"C1","c0":11,"c1":16,"r0":52,"r1":52,"lat0":-13.5,"lat1":-10.5,"d0":0.5,"d1":1.0},{"label":"C2","c0":17,"c1":22,"r0":52,"r1":52,"lat0":-10.5,"lat1":-7.5,"d0":0.5,"d1":1.0},{"label":"C3","c0":23,"c1":28,"r0":52,"r1":52,"lat0":-7.5,"lat1":-4.5,"d0":0.5,"d1":1.0},{"label":"C4","c0":29,"c1":34,"r0":52,"r1":52,"lat0":-4.5,"lat1":-1.5,"d0":0.5,"d1":1.0},{"label":"C5","c0":41,"c1":46,"r0":52,"r1":52,"lat0":1.5,"lat1":4.5,"d0":0.5,"d1":1.0},{"label":"C6","c0":47,"c1":52,"r0":52,"r1":52,"lat0":4.5,"lat1":7.5,"d0":0.5,"d1":1.0},{"label":"C7","c0":53,"c1":58,"r0":52,"r1":52,"lat0":7.5,"lat1":10.5,"d0":0.5,"d1":1.0},{"label":"C8","c0":59,"c1":64,"r0":52,"r1":52,"lat0":10.5,"lat1":13.5,"d0":0.5,"d1":1.0},{"label":"C9","c0":65,"c1":70,"r0":52,"r1":52,"lat0":13.5,"lat1":16.5,"d0":0.5,"d1":1.0},{"label":"C10","c0":71,"c1":76,"r0":52,"r1":52,"lat0":16.5,"lat1":19.5,"d0":0.5,"d1":1.0},{"label":"C11","c0":77,"c1":82,"r0":52,"r1":52,"lat0":19.5,"lat1":22.5,"d0":0.5,"d1":1.0},{"label":"C12","c0":83,"c1":88,"r0":52,"r1":52,"lat0":22.5,"lat1":25.5,"d0":0.5,"d1":1.0},{"label":"B1","c0":11,"c1":16,"r0":53,"r1":53,"lat0":-13.5,"lat1":-10.5,"d0":0.0,"d1":0.5},{"label":"B2","c0":17,"c1":22,"r0":53,"r1":53,"lat0":-10.5,"lat1":-7.5,"d0":0.0,"d1":0.5},{"label":"B3","c0":23,"c1":28,"r0":53,"r1":53,"lat0":-7.5,"lat1":-4.5,"d0":0.0,"d1":0.5},{"label":"B4","c0":29,"c1":34,"r0":53,"r1":53,"lat0":-4.5,"lat1":-1.5,"d0":0.0,"d1":0.5},{"label":"B5","c0":41,"c1":46,"r0":53,"r1":53,"lat0":1.5,"lat1":4.5,"d0":0.0,"d1":0.5},{"label":"B6","c0":47,"c1":52,"r0":53,"r1":53,"lat0":4.5,"lat1":7.5,"d0":0.0,"d1":0.5},{"label":"B7","c0":53,"c1":58,"r0":53,"r1":53,"lat0":7.5,"lat1":10.5,"d0":0.0,"d1":0.5},{"label":"B8","c0":59,"c1":64,"r0":53,"r1":53,"lat0":10.5,"lat1":13.5,"d0":0.0,"d1":0.5},{"label":"B9","c0":65,"c1":70,"r0":53,"r1":53,"lat0":13.5,"lat1":16.5,"d0":0.0,"d1":0.5},{"label":"B10","c0":71,"c1":76,"r0":53,"r1":53,"lat0":16.5,"lat1":19.5,"d0":0.0,"d1":0.5},{"label":"B11","c0":77,"c1":82,"r0":53,"r1":53,"lat0":19.5,"lat1":22.5,"d0":0.0,"d1":0.5},{"label":"B12","c0":83,"c1":88,"r0":53,"r1":53,"lat0":22.5,"lat1":25.5,"d0":0.0,"d1":0.5},{"label":"A7","c0":3,"c1":3,"r0":58,"r1":63,"lat0":-17.5,"lat1":-17.0,"d0":-5.0,"d1":-2.0},{"label":"A8","c0":11,"c1":16,"r0":58,"r1":58,"lat0":-13.5,"lat1":-10.5,"d0":-2.5,"d1":-2.0},{"label":"A9","c0":17,"c1":22,"r0":58,"r1":58,"lat0":-10.5,"lat1":-7.5,"d0":-2.5,"d1":-2.0},{"label":"A4","c0":11,"c1":16,"r0":59,"r1":59,"lat0":-13.5,"lat1":-10.5,"d0":-3.0,"d1":-2.5},{"label":"A5","c0":17,"c1":22,"r0":59,"r1":59,"lat0":-10.5,"lat1":-7.5,"d0":-3.0,"d1":-2.5},{"label":"A6","c0":3,"c1":3,"r0":64,"r1":69,"lat0":-17.5,"lat1":-17.0,"d0":-8.0,"d1":-5.0},{"label":"A3","c0":4,"c1":9,"r0":70,"r1":70,"lat0":-17.0,"lat1":-14.0,"d0":-8.5,"d1":-8.0},{"label":"A2","c0":10,"c1":15,"r0":70,"r1":70,"lat0":-14.0,"lat1":-11.0,"d0":-8.5,"d1":-8.0},{"label":"A1","c0":16,"c1":21,"r0":70,"r1":70,"lat0":-11.0,"lat1":-8.0,"d0":-8.5,"d1":-8.0}],"stats":{"walkCells":3362,"wallCells":455,"shelfmarkCells":214,"gateCells":7}};
 const GATE_SPANS=COR.rects.filter(r=>r.label&&/(闸机|出口)/.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
 const model=RouteCore.buildModel(COR,{gateSpans:GATE_SPANS,shelfRects:COR.rects});
-const locate=RouteCore.makeLocator(COR,model);
+const locate=RouteCore.makeLocator(COR,model,{jCells:21});
 const LANES=RouteCore.analyze(model);
 
-/* 出口闸机按件分工（依据 Excel 的三处闸机标签）：普通件走 7 号普通闸机；S 顺丰件走顺丰两处 */
+/* 出口闸机（依据 Excel 的合并区标签）：
+   普通件 → 「7 号普通闸机」C22:E57（多格，作为集合用：就近出）
+   顺丰件 → 「顺丰专用闸机」C17:E21 / 「顺丰自取快递出口」C12:E16
+   ⚠️ 顺丰出库是路线的**中间停靠点**，必须是一个确定的格：
+      取两处顺丰闸机带的中心格（两处相差 1 格，距离影响 ≤0.5 瓷砖）。若你实际固定走某一道，告诉我我再收紧。 */
 const cellsIn=sp=>model.gates.filter(([r,c])=>r>=sp[0]&&r<=sp[1]&&c>=sp[2]&&c<=sp[3]);
 const rectSpans=re=>COR.rects.filter(r=>r.label&&re.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
 const generalGates=(()=>{const g=rectSpans(/7号|普通闸机/).flatMap(cellsIn);return g.length?g:model.gates;})();
-const sfGates=(()=>{const g=rectSpans(/顺丰/).flatMap(cellsIn);return g.length?g:model.gates;})();
-const gatesOf=p=>(p.sf?sfGates:generalGates);
+const sfSpansAll=rectSpans(/顺丰/);
+const sfAll=sfSpansAll.flatMap(cellsIn);
+const sfCell=(()=>{
+ const r0=Math.min(...sfSpansAll.map(s=>s[0])),r1=Math.max(...sfSpansAll.map(s=>s[1]));
+ const c0=Math.min(...sfSpansAll.map(s=>s[2])),c1=Math.max(...sfSpansAll.map(s=>s[3]));
+ const cr=(r0+r1+1)/2,cc=(c0+c1+1)/2;
+ let best=null,bd=Infinity;
+ sfAll.forEach(c=>{const d=(c[0]-cr)*(c[0]-cr)+(c[1]-cc)*(c[1]-cc);if(d<bd){bd=d;best=c;}});
+ return best;
+})();
+const sfGates=[sfCell];          // 传给求解器的顺丰出库节点（单格）
 /* 入口：Excel 的入口闸机（theme5 那条）→ 绕开墙与货架投到最近通道格 */
 const entRun=COR.gate.find(g=>g[2]-g[1]>=2);
 const entCells=[];for(let c=entRun[1];c<=entRun[2];c++)entCells.push([entRun[0],c]);
@@ -527,20 +731,32 @@ function draw(){
   ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.stroke();
  }
  /* 取件点：序号 = 建议取件顺序 */
+ /* 取件点：序号 = 建议取件顺序；点在**精确格位**上（J 柜列会落在柜列纵深里，并画出区内走位） */
  const no=new Map();lastOrder.forEach((it,i)=>no.set(it.code,i+1));
  items.forEach(it=>{
-  const x=cx(it.pos.cellPos.col),y=cy(it.pos.cellPos.row);
+  const px0=cx(it.pos.cellPos.col),py0=cy(it.pos.cellPos.row);
+  const x=PX(it.pos.lat+0.25),y=PY(it.pos.depth-0.25);
+  if((it.pos.stub||0)>0.01){
+   ctx.save();ctx.strokeStyle='rgba(31,111,235,.8)';ctx.lineWidth=3;
+   ctx.beginPath();ctx.moveTo(px0,py0);ctx.lineTo(x,y);ctx.stroke();ctx.restore();
+  }
   ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.fillStyle='rgba(31,111,235,.98)';ctx.fill();
   ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();ctx.lineWidth=1;
   ctx.fillStyle='#fff';ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText(String(no.get(it.code)||'?'),x,y+.5);
  });
- /* 入口 / 出口 */
+ /* 入口 / 顺丰出库 / 最终出库 */
  const ex=cx(entrance.col),ey=cy(entrance.row);
  ctx.beginPath();ctx.arc(ex,ey,12,0,Math.PI*2);ctx.fillStyle='rgba(21,128,61,.98)';ctx.fill();
  ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
  ctx.fillStyle='#fff';ctx.font='bold 13px sans-serif';ctx.fillText('入',ex,ey+.5);
- if(lastGate){
+ if(lastRes&&lastRes.sfGate){
+  const sx=cx(lastRes.sfGate[1]),sy=cy(lastRes.sfGate[0]);
+  ctx.beginPath();ctx.arc(sx,sy,12,0,Math.PI*2);ctx.fillStyle='rgba(234,88,12,.97)';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 11px sans-serif';ctx.fillText('SF',sx,sy+.5);
+ }
+ if(lastGate&&lastRes&&lastRes.exitKind==='normal'){
   const gx=cx(lastGate[1]),gy=cy(lastGate[0]);
   ctx.beginPath();ctx.arc(gx,gy,12,0,Math.PI*2);ctx.fillStyle='rgba(185,28,28,.95)';ctx.fill();
   ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
@@ -563,8 +779,8 @@ function run(){
   document.getElementById('seq').innerHTML='';document.getElementById('totalBadge').textContent='—';
   document.getElementById('exactBadge').textContent='';
   document.getElementById('runInfo').textContent=badTxt;draw();return;}
- const res=RouteCore.solve(items.map(i=>({label:i.code,cell:i.pos.cellPos,sf:/^S/i.test(i.code)})),
-   {model:model,entranceCell:entrance,gatesOf:gatesOf});
+ const res=RouteCore.solve(items.map(i=>({label:i.code,cell:i.pos.cellPos,sf:/^S/i.test(i.code),stub:i.pos.stub||0})),
+   {model:model,entranceCell:entrance,sfGateCells:sfGates,normalGateCells:generalGates});
  lastOrder=res.order.map(i=>items[i]);lastGate=res.gateExit;lastRes=res;
  /* 交付前断言：每段都必须落在通道格上、每步相邻 */
  let errs=[];
@@ -576,20 +792,36 @@ function run(){
    const p=[cx(c),cy(r)],q=pts[pts.length-1];
    if(!q||Math.abs(q[0]-p[0])>1e-6||Math.abs(q[1]-p[1])>1e-6)pts.push(p);});});
  lastPlan=pts;
- /* 列表 */
+ /* 列表：把「顺丰出库」当成一个显式停靠点插进去 */
  const seqEl=document.getElementById('seq');seqEl.innerHTML='';
- lastOrder.forEach((it,i)=>{
+ const afterSf=i=>(res.sfAfter>=0&&i>=res.sfAfter)?1:0;      // 顺丰停靠点插在停靠序列里 ⇒ 段号要 +1
+ const rows=[];
+ lastOrder.forEach((it,i)=>{rows.push({t:'pick',it:it,i:i});if(res.sfAfter===i+1)rows.push({t:'sf'});});
+ rows.push({t:'exit'});
+ rows.forEach(r=>{
   const li=document.createElement('li');
-  li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+it.code+'</span><br>'+
-   '<span class="hint">'+it.pos.label+(i>0?'　上一件→本件 '+res.legs[i].tiles.toFixed(1)+' 格':'　入口→本件 '+res.legs[0].tiles.toFixed(1)+' 格')+'</span></span>'+
-   (i===lastOrder.length-1?'<span class="leg">出闸机 '+res.legs[res.legs.length-1].tiles.toFixed(1)+' 格</span>':'');
+  if(r.t==='pick'){
+   const i=r.i,leg=res.legs[i+afterSf(i)];
+   li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+r.it.code+'</span><br>'+
+    '<span class="hint">'+r.it.pos.label+'　'+(i===0?'入口':'上一件')+'→本件 '+(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
+  }else if(r.t==='sf'){
+   const leg=res.legs[res.sfAfter];
+   li.innerHTML='<span class="n" style="background:#ea580c">SF</span><span><span class="code">顺丰出库（顺丰专用闸机）</span><br>'+
+    '<span class="hint">取了 S 件必须先在这里出库　'+(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
+  }else{
+   const leg=res.legs[res.legs.length-1];
+   li.innerHTML='<span class="n" style="background:#b91c1c">出</span><span><span class="code">'+
+    (res.exitKind==='normal'?'普通闸机出库（7 号闸机）':'顺丰出库后离场')+'</span><br>'+
+    '<span class="hint">'+((res.exitKind==='normal'&&res.sfAfter>=0)?'出库后直接走人　':'')+(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
+  }
   seqEl.appendChild(li);});
  document.getElementById('totalBadge').textContent='共 '+res.total.toFixed(1)+' 格';
  document.getElementById('exactBadge').textContent=res.exact?'精确最优':'非精确（件数>13）';
  document.getElementById('exactBadge').className='badge '+(res.exact?'ok':'warn');
  document.getElementById('runInfo').textContent=(badTxt?badTxt+'　':'')
-   +'终点：'+(lastOrder[lastOrder.length-1].sf?'顺丰闸机':'7 号普通闸机')
-   +'（行'+res.gateExit[0]+' 列'+res.gateExit[1]+'）';
+   +'终点：'+(res.exitKind==='normal'?'7 号普通闸机':'顺丰出库闸机')
+   +'（行'+res.gateExit[0]+' 列'+res.gateExit[1]+'）'
+   +(res.sfAfter>=0?('　｜　顺丰出库插在第 '+res.sfAfter+' 件之后'):'');
  draw();
 }
 /* ---------- 模型自检面板 ---------- */
@@ -605,14 +837,15 @@ function run(){
    'lat '+model.latOf(t.c0-0.5).toFixed(1)+'~'+model.latOf(t.c1+0.5).toFixed(1)+'（行'+t.r0+'~'+t.r1+'）').join('；'));
  html+=li('横向走廊 <b>'+cors.length+'</b> 条：'+cors.map(t=>
    '深 '+model.depOf(t.r1+0.5).toFixed(1)+'~'+model.depOf(t.r0-0.5).toFixed(1)).join('，'));
- html+=li('闸机带可通行格：<b>'+model.gates.length+'</b> 格（只用于出行）—— 普通出口 '+generalGates.length+' 格 / 顺丰 '+(sfGates.length)+' 格');
+ html+=li('闸机带可通行格：<b>'+model.gates.length+'</b> 格（只用于出行）—— 普通出口 '+generalGates.length+' 格；顺丰 '+sfAll.length+' 格');
+ html+=li('顺丰出库节点（单一格）：行'+sfCell[0]+' 列'+sfCell[1]+'（两处顺丰闸机带的中心）');
  html+=li('入口：Excel 入口闸机 → 通道格 ('+entrance.row+','+entrance.col+')');
  ul.innerHTML=html;
 })();
 document.getElementById('btnRun').onclick=run;
 document.getElementById('btnClear').onclick=()=>{codesEl.value='';run();};
 document.getElementById('ckGrid').onchange=draw;
-document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, Q1-3, D8-6, F12-32';run();};
+document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, Q1-3, S3-2-2628, D8-6';run();};
 /* 随机：从 Excel 合并区里挑普通排货架 */
 const SHELF_CODES=COR.rects.filter(r=>/^[A-R]\d{1,2}$/.test(r.label||'')).map(r=>r.label);
 function rand(n){const a=new Set();while(a.size<n)a.add(SHELF_CODES[Math.floor(Math.random()*SHELF_CODES.length)]+'-1');
