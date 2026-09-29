@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>海大取件码 · 站点俯视图（v2 修正模型）</title>
+<style>
+  :root{--ink:#141416;--muted:#6b7280;--line:#d7dbe0;--accent:#1f6feb;--road:#dbeafe;}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:#f4f5f7;color:var(--ink)}
+  header{padding:12px 18px;background:#fff;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 3px;font-size:17px}
+  .sub{color:var(--muted);font-size:12.5px}
+  main{display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px;align-items:start}
+  @media(max-width:1150px){main{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{margin:0 0 8px;font-size:14px}
+  canvas{width:100%;height:auto;display:block;background:#fff;border:1px solid var(--line);border-radius:8px;cursor:crosshair}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12.5px;margin:0;padding:0;list-style:none}
+  .legend i{display:inline-block;width:14px;height:11px;border:1px solid #94a3b8;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  label{display:block;font-size:12.5px;color:var(--muted);margin:7px 0 2px}
+  input[type=text],input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  button{padding:7px 10px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font:inherit}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .seq{list-style:none;padding:0;margin:0;max-height:360px;overflow:auto}
+  .seq li{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--line);font-size:13px}
+  .seq .n{flex:0 0 22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700}
+  .seq .code{font-family:ui-monospace,Consolas,monospace;font-weight:700}
+  .seq .leg{margin-left:auto;color:var(--muted);white-space:nowrap}
+  .hint{color:var(--muted);font-size:12px}
+  .badge{display:inline-block;padding:1px 7px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11.5px}
+  .todo{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 10px;font-size:12.5px;color:#7c2d12}
+</style>
+</head>
+<body>
+<header>
+  <h1>海大快递站 · 俯视图 v2（按你 2026-09-29 的更正重画）</h1>
+  <div class="sub">蓝底=道路（只能走这里）｜黄/绿=货架（写架号）｜<b>15 排 B~R</b>（A 是独立区）｜一块格子 = 一块瓷砖</div>
+</header>
+<main>
+  <div>
+    <div class="card">
+      <canvas id="map" width="1560" height="780"></canvas>
+      <div class="row">
+        <button id="btnFit" class="primary">重画</button>
+        <button id="btnClear">清空点</button>
+        <button id="btnRandom5">随机 5 件</button>
+        <button id="btnRandom10">随机 10 件</button>
+        <button id="btnDemo">示例：B 排东西两侧</button>
+      </div>
+      <div class="hint">点货架可直接加一个取件点（吸附最近货架）。路线只沿通道走，不穿货架。</div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>图例</h2>
+      <ul class="legend">
+        <li><i style="background:var(--road)"></i>横向/纵向通道</li>
+        <li><i style="background:#fde68a"></i>货架·西侧 1~4</li>
+        <li><i style="background:#bbf7d0"></i>货架·东侧 5~12</li>
+        <li><i style="background:#fecdd3"></i>J 柜列 j1~j6（竖）</li>
+        <li><i style="background:#bae6fd"></i>S 顺丰 s1~s3</li>
+        <li><i style="background:#e9d5ff"></i>Y 大件 y1~y8</li>
+        <li><i style="background:#fef3c7;border-color:#b45309"></i>A 区 a1~a9（独立区）</li>
+        <li><i style="background:#16a34a"></i>入口大门</li>
+        <li><i style="background:#dc2626"></i>出口大门 / 闸机</li>
+      </ul>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>取件码</h2>
+      <input type="text" id="codes" value="B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1">
+      <div class="row"><button id="btnRun" class="primary">算最优顺序</button><span class="hint" id="runInfo"></span></div>
+      <div class="hint" style="margin-top:6px">支持 <code>B12-18</code>、<code>Q5-3</code>、<code>J5-21</code>、<code>S3-2-2628</code>、<code>Y5-7-1</code>、<code>Y8-1-3</code>、<code>A4-1</code>。</div>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>建议顺序 <span class="badge" id="totalBadge">—</span></h2>
+      <ol class="seq" id="seq"></ol>
+      <div class="hint" id="wayHint"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>v2 改了什么（相对上一版）</h2>
+      <ul class="hint" style="padding-left:18px;margin:0">
+        <li><b>15 排</b> B C D E F G H K L M N O P Q R（A 不再是排）</li>
+        <li>走廊归属改为 <b>(i+1)/2</b>：B 独占最南走廊；<b>C｜D、E｜F、G｜H、K｜L、M｜N、O｜P、Q｜R</b> 各自共用一条；R 上方是第 8 条（J 柜列前）</li>
+        <li>背靠背（B／C、D／E…）**天然分属不同走廊** ⇒ 不能穿越，无需特例</li>
+        <li><b>A 区</b>独立建区（a1~a9，横竖混合，位置示意待确认）</li>
+        <li>最北一对 <b>Q／R 左右镜像</b>：西侧 Q 在北、东侧 R 在北</li>
+        <li>S 区：s1 贴墙单独一条，s2｜s3 背靠背，s3 南侧是走廊；宽度 = 货架 5~12 的跨度</li>
+        <li>闸机：入口（南 J39:M40）／出口大门（西 A15:A30，跨 o~d）／出站闸机 C12／顺丰闸机 C13</li>
+      </ul>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>模型参数</h2>
+      <div class="g2">
+        <div><label>货架宽（格）</label><input type="number" id="p_shelfW" value="3"></div>
+        <div><label>横向通道宽（格）</label><input type="number" id="p_aisleW" value="2"></div>
+        <div><label>背靠背深（格）</label><input type="number" id="p_pairD" value="1"></div>
+        <div><label>纵向通道宽（格）</label><input type="number" id="p_spineW" value="3"></div>
+        <div><label>每排货架数</label><input type="number" id="p_shelves" value="12"></div>
+        <div><label>西侧货架上界</label><input type="number" id="p_left" value="4"></div>
+        <div><label>入闸机→主通道（格）</label><input type="number" id="p_door" value="4"></div>
+        <div><label>出口大门中心深度（格）</label><input type="number" id="p_exitD" value="10"></div>
+        <div><label>出口横向（格）</label><input type="number" id="p_exitL" value="15"></div>
+      </div>
+      <div class="row"><button id="btnApply" class="primary">按参数重画</button></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="todo"><b>仍待你确认：</b>① A 区 9 个货架的相对位置（我按你的图摆成示意）② Q／R 镜像只在最北一对吗 ③ 东侧是否也有和西侧对称的横向通道（原图只标了 D~M 的西半段）</div>
+    </div>
+  </div>
+</main>
+<script>
+/* ===== v2 模型 ===== */
+const ROWS=['B','C','D','E','F','G','H','K','L','M','N','O','P','Q','R'];  // 15 排，A 独立
+const N_CORR=9;                     // 走廊 0..8（0 最南、8 最北＝J 柜列前）
+const P=()=>({
+  shelfW:+document.getElementById('p_shelfW').value||3,
+  aisleW:+document.getElementById('p_aisleW').value||2,
+  pairD:+document.getElementById('p_pairD').value||1,
+  spineW:+document.getElementById('p_spineW').value||3,
+  shelves:+document.getElementById('p_shelves').value||12,
+  left:+document.getElementById('p_left').value||4,
+  door:+document.getElementById('p_door').value||4,
+  exitD:+document.getElementById('p_exitD').value||10,
+  exitL:+document.getElementById('p_exitL').value||15,
+});
+const sp=p=>p.aisleW+p.pairD;          // 3
+const lb=p=>(p.spineW+p.shelfW)/2;     // 3
+const aisleOf=i=>(i+1)>>1;             // B0 C1 D1 E2 F2 G3 H3 K4 L4 M5 N5 O6 P6 Q7 R7
+const sideOf=i=>(i%2===1)?'S':'N';     // 奇数在南侧、偶数在北侧
+const corrDepth=(p,a)=>a*sp(p);
+const acDepth=(p,a)=>corrDepth(p,a)+p.aisleW/2;   // 通道中心线
+const shelfLat=(p,s)=>lb(p)+(s<=p.left?(p.left-s):(s-p.left-1))*p.shelfW;
+
+/* 特殊区：J 竖列 / S 三排 / Y 大件 / A 独立区 */
+function special(p){
+  const sw=p.shelfW,b=lb(p),s=sp(p),o={};
+  // J：自西向东 j1 │通道│ j2 j3 │通道│ j4 j5 │通道│ j6（j6 紧邻主通道）
+  const jl={6:b};
+  let x=b+sw/2+s+sw/2; jl[5]=x; jl[4]=x+sw;
+  x=jl[4]+sw/2+s+sw/2; jl[3]=x; jl[2]=x+sw;
+  x=jl[2]+sw/2+s+sw/2; jl[1]=x;
+  for(let i=1;i<=6;i++) o['J'+i]={lat:jl[i],depth:corrDepth(p,8)+1,side:'W'};
+  // S：s1（贴墙、单独）在 s2 之北；s2｜s3 背靠背；s3 南侧是第 8 条走廊
+  const d8=corrDepth(p,8);
+  o['S3']={lat:b,depth:d8+1,side:'E',wide:true};
+  o['S2']={lat:b,depth:d8+2,side:'E',wide:true};
+  o['S1']={lat:b,depth:d8+2+s+1,side:'E',wide:true};
+  // Y：纵向通道 V 之东
+  const lastShelf=lb(p)+(p.shelves-p.left-1)*p.shelfW, yl=lastShelf+sw/2+s+sw/2, yd=d8+4;
+  for(const k of [1,2,3,4,5,6,7]) o['Y'+k]={lat:yl,depth:yd,side:'E',rev:(k===2?4:k===4?4:k===5?7:k===7?8:0)};
+  o['Y8']={lat:yl,depth:yd,side:'E',rows:[0,3,4,5,6,7,8,9]};
+  // A 区（9 个，横竖混合；位置按用户示意图摆放，**待确认**）
+  const A=[['A7',b,-1,true],['A6',b,-4,true],['A8',b+5,-1,false],['A4',b+5,-4,false],
+           ['A3',b+5,-7,false],['A2',b+9,-7,false],['A1',b+13,-7,false],
+           ['A9',b+9,-1,false],['A5',b+9,-4,false]];
+  A.forEach(([k,lat,dep,vert])=>o[k]={lat,depth:dep,side:'W',vert,zoneA:true});
+  return o;
+}
+
+function locate(raw,p){
+  const t=String(raw).trim().toUpperCase();
+  const m=t.match(/^([A-Z])\s*(\d{1,2})(?:\s*[-－–—]\s*(\d{1,3}))?(?:\s*[-－–—]\s*(\d{1,4}))?$/);
+  if(!m) return null;
+  const row=m[1],shelf=+m[2],cell=m[3]?+m[3]:null,sub=m[4]?+m[4]:null;
+  if('JSYA'.includes(row)){
+    const e=special(p)[row+shelf]; if(!e) return null;
+    const c=cell||1;
+    if(e.rows){const k=Math.min(Math.max(c,1),e.rows.length),idx=Math.min(Math.max(sub||1,1),3);
+      return{depth:e.depth+e.rows[k-1],lat:e.lat+idx-1,side:e.side,aisle:8,zone:row,label:'Y 区 y8-'+k+' 第'+idx+'子位'};}
+    if(row==='J') return{depth:e.depth+c-1,lat:e.lat,side:'W',aisle:8,zone:row,label:'J 区 j'+shelf+' 第'+c+'格'};
+    if(row==='A') return{depth:e.depth,lat:e.lat,side:'W',aisle:-1,zone:'A',label:'A 区 a'+shelf+(e.vert?'（竖排）':'（横排）')};
+    if(row==='S') return{depth:e.depth,lat:e.lat+(c-1)*p.shelfW*(p.shelves-p.left-1)/9,side:'E',aisle:8,zone:'S',
+                         label:'S 区 s'+shelf+' 第'+c+'格'};
+    const lat=e.rev?(e.lat+e.rev-c):(e.lat+c-1);
+    return{depth:e.depth,lat,side:'E',aisle:8,zone:'Y',label:'Y 区 y'+shelf+' 第'+c+'格'+(e.rev?'（反向）':'')};
+  }
+  const i=ROWS.indexOf(row); if(i<0) return null;
+  if(shelf<1||shelf>p.shelves) return null;
+  const a=aisleOf(i), side=shelf<=p.left?'W':'E';
+  let depth=corrDepth(p,a);
+  // 最北一对 Q／R 左右镜像：西侧 Q 在北、东侧 R 在北
+  if((row==='Q'||row==='R')&&a===7){
+    const north=corrDepth(p,7)+p.aisleW+p.pairD, south=corrDepth(p,7)-p.pairD;
+    const northRow=(side==='W')?'Q':'R';
+    depth=(row===northRow)?north:south;
+  }
+  return{depth,lat:shelfLat(p,shelf),side,aisle:a,row,label:row+' 排 '+shelf+' 号货架'+(cell?' 第'+cell+'格':'')+
+         '（'+(side==='W'?'西侧':'东侧')+'，'+(row==='Q'||row==='R'?'最北一对'+(side==='W'?'：Q 在北':'：R 在北'):'走廊'+a)+'）'};
+}
+
+/* 距离：只在「走廊 + 主通道」上走；同走廊可直接换位，不同走廊必须回主通道 */
+function walk(a,b,p){
+  const gap=Math.abs(a.depth-b.depth);
+  if(a.aisle>=0&&a.aisle===b.aisle){
+    // 同走廊：同一侧沿走廊直接走；跨主通道东西两侧必须「各自走到主通道口」= 横向相加
+    return (a.side===b.side?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap;
+  }
+  return a.lat+gap+b.lat;
+}
+const entranceTo=(a,p)=>p.door+a.depth+a.lat;
+const exitFrom=(a,p)=>a.lat+Math.abs(a.depth-p.exitD)+p.exitL;
+
+function plan(items,p){
+  const n=items.length; if(!n) return{order:[],legs:[],total:0};
+  if(n>13) return heuristic(items,p);
+  const full=1<<n,INF=1e9;
+  const from=items.map(a=>entranceTo(a,p)),toEx=items.map(a=>exitFrom(a,p));
+  const d=items.map(a=>items.map(b=>walk(a,b,p)));
+  const dp=Array.from({length:full},()=>new Array(n).fill(INF)),par=Array.from({length:full},()=>new Array(n).fill(-1));
+  for(let i=0;i<n;i++) dp[1<<i][i]=from[i];
+  for(let mask=1;mask<full;mask++)for(let last=0;last<n;last++){
+    const cur=dp[mask][last]; if(cur>=INF) continue;
+    for(let nx=0;nx<n;nx++){ if(mask&(1<<nx)) continue;
+      const nm=mask|(1<<nx),v=cur+d[last][nx];
+      if(v<dp[nm][nx]){dp[nm][nx]=v;par[nm][nx]=last;} } }
+  let best=INF,bl=0;
+  for(let i=0;i<n;i++){const v=dp[full-1][i]+toEx[i]; if(v<best){best=v;bl=i;}}
+  const rev=[];let mask=full-1,cur=bl;
+  while(cur>=0){rev.push(cur);const pv=par[mask][cur];mask&=~(1<<cur);cur=pv;}
+  rev.reverse();
+  const legs=[from[rev[0]]];
+  for(let i=0;i+1<rev.length;i++) legs.push(walk(items[rev[i]],items[rev[i+1]],p));
+  legs.push(exitFrom(items[rev[rev.length-1]],p));
+  return{order:rev.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};
+}
+function heuristic(items,p){
+  const left=items.map((_,i)=>i),order=[];let cur=null;
+  while(left.length){let bi=0,bv=Infinity;
+    left.forEach((i,k)=>{const v=cur===null?entranceTo(items[i],p):walk(cur,items[i],p);if(v<bv){bv=v;bi=k;}});
+    order.push(left[bi]);cur=items[left[bi]];left.splice(bi,1);}
+  const legs=[entranceTo(items[order[0]],p)];
+  for(let i=0;i+1<order.length;i++) legs.push(walk(items[order[i]],items[order[i+1]],p));
+  legs.push(exitFrom(items[order[order.length-1]],p));
+  return{order:order.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};
+}
+
+/* ===== 绘制 ===== */
+const cv=document.getElementById('map'),ctx=cv.getContext('2d');
+let S=14,G=null,items=[],lastPlan=null;
+function geom(p){
+  const sw=p.shelfW,s=sp(p);
+  const maxLatW=lb(p)+(p.left-1)*sw+sw/2;
+  const lastShelf=lb(p)+(p.shelves-p.left-1)*sw;
+  const maxLatE=lastShelf+sw/2+s+sw*2;
+  return{p,s,lb:lb(p),maxLatW,maxLatE,lastShelf,maxDepth:corrDepth(p,8)+p.aisleW+8,minDepth:-11,yLat:lastShelf+sw/2+s+sw/2};
+}
+function draw(){
+  const p=P(),g=geom(p);G=g;
+  const W=g.maxLatW+g.maxLatE+16,H=g.maxDepth-g.minDepth+8;
+  S=Math.max(7,Math.min(cv.width/W,cv.height/H));
+  const ox=(g.maxLatW+10)*S, oy=cv.height-30+g.minDepth*S;
+  const X=l=>ox+l*S, Y=d=>oy-d*S;
+  Object.assign(g,{X,Y,ox,oy});
+  ctx.clearRect(0,0,cv.width,cv.height);ctx.textAlign='center';ctx.textBaseline='middle';
+  const f=(k)=>Math.max(7,k);
+
+  // 走廊 0..8
+  for(let a=0;a<=8;a++){
+    const d0=corrDepth(p,a);
+    ctx.fillStyle='#dbeafe';
+    ctx.fillRect(X(-g.maxLatW-2),Y(d0+p.aisleW),(g.maxLatW+g.maxLatE+4)*S,p.aisleW*S);
+    ctx.strokeStyle='#93c5fd';ctx.strokeRect(X(-g.maxLatW-2)+.5,Y(d0+p.aisleW)+.5,(g.maxLatW+g.maxLatE+4)*S-1,p.aisleW*S-1);
+    const cn=a===0?'B':a===8?'J 柜列前':ROWS[2*a-1]+'｜'+ROWS[2*a];
+    ctx.fillStyle='#1d4ed8';ctx.font='bold '+f(S*0.6)+'px sans-serif';
+    ctx.fillText('走廊'+a+'（'+cn+'）',X(-g.maxLatW-3.4),Y(d0+p.aisleW/2));
+  }
+  // 主纵向通道
+  ctx.fillStyle='#dbeafe';ctx.fillRect(X(-p.spineW/2),Y(g.maxDepth),p.spineW*S,(g.maxDepth-g.minDepth)*S);
+  ctx.save();ctx.translate(X(0),Y(g.maxDepth-2));ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='#1d4ed8';ctx.font='bold '+f(S*0.7)+'px sans-serif';
+  ctx.fillText('主纵向通道（货架 4｜5 之间）',0,0);ctx.restore();
+  // 纵向通道 V
+  const vL=g.lastShelf+p.shelfW/2;
+  ctx.fillStyle='#dbeafe';ctx.fillRect(X(vL),Y(g.maxDepth),p.spineW*S,(g.maxDepth-g.minDepth)*S);
+
+  // 15 排货架
+  const sf=f(Math.min(S*p.shelfW*0.5,13));
+  ROWS.forEach((row,i)=>{
+    const a=aisleOf(i), south=sideOf(i)==='S';
+    const d0=corrDepth(p,a);
+    const dTop=south?d0-p.pairD:d0+p.aisleW+p.pairD;
+    let dep=dTop;
+    if((row==='Q'||row==='R')&&a===7){ dep=(row==='Q')?d0+p.aisleW+p.pairD:d0-p.pairD; } // 西侧 Q 在北（镜像，东西分开画）
+    for(let sNo=1;sNo<=p.shelves;sNo++){
+      const lat=shelfLat(p,sNo),isW=sNo<=p.left;
+      // 最北一对镜像：同一对里，西半段与东半段的南北顺序相反
+      let dd=dep;
+      if((row==='Q'||row==='R')&&a===7){
+        dd = isW ? (row==='Q'?d0+p.aisleW+p.pairD:d0-p.pairD) : (row==='R'?d0+p.aisleW+p.pairD:d0-p.pairD);
+      }
+      const x0=X(lat-p.shelfW/2),y0=Y(dd+p.pairD);
+      ctx.fillStyle=isW?'#fde68a':'#bbf7d0';ctx.fillRect(x0,y0,p.shelfW*S,p.pairD*S);
+      ctx.strokeStyle=(sNo===p.left||sNo===p.left+1)?'#b45309':'#a3a3a3';
+      ctx.lineWidth=(sNo===p.left||sNo===p.left+1)?1.6:.7;ctx.strokeRect(x0+.5,y0+.5,p.shelfW*S-1,Math.max(2,p.pairD*S-1));ctx.lineWidth=1;
+      if(p.pairD*S>=9){ctx.fillStyle='#3f3f46';ctx.font='bold '+sf+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(String(sNo),x0+p.shelfW*S/2,y0+p.pairD*S/2);}
+    }
+    ctx.fillStyle='#111827';ctx.font='bold '+f(S*0.8)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(row,X(-g.maxLatW-1.1),Y(dep+p.pairD/2));
+    ctx.fillStyle='#6b7280';ctx.font=f(S*0.55)+'px sans-serif';
+    ctx.fillText('走廊'+a,X(-g.maxLatW-1.1),Y(dep+p.pairD/2)-S*0.95);
+  });
+
+  // 特殊区
+  const t=special(p);
+  for(let i=1;i<=6;i++){const e=t['J'+i];
+    ctx.fillStyle='#fecdd3';ctx.fillRect(X(-e.lat-p.shelfW/2),Y(e.depth+9),p.shelfW*S,9*S);
+    ctx.strokeStyle='#9f1239';ctx.strokeRect(X(-e.lat-p.shelfW/2)+.5,Y(e.depth+9)+.5,p.shelfW*S-1,9*S-1);
+    ctx.fillStyle='#7f1d1d';ctx.font='bold '+f(S*1.2)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('j'+i,X(-e.lat),Y(e.depth+4.5));}
+  ['S1','S2','S3'].forEach(k=>{const e=t[k];
+    ctx.fillStyle='#bae6fd';ctx.fillRect(X(e.lat-p.shelfW/2),Y(e.depth+p.pairD),g.lastShelf-lb(p)+p.shelfW*1.5,p.pairD*S);
+    ctx.strokeStyle='#075985';ctx.strokeRect(X(e.lat-p.shelfW/2)+.5,Y(e.depth+p.pairD)+.5,g.lastShelf-lb(p)+p.shelfW*1.5-1,p.pairD*S-1);
+    ctx.fillStyle='#0c4a6e';ctx.font='bold '+f(S*0.7)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(k.toLowerCase()+'（1~'+(k==='S1'?10:8)+'）',X(e.lat+8),Y(e.depth+p.pairD/2));});
+  [1,2,3,4,5,6,7].forEach(k=>{const e=t['Y'+k];
+    ctx.fillStyle='#e9d5ff';ctx.fillRect(X(e.lat-p.shelfW/2),Y(e.depth+p.pairD),p.shelfW*2*S,p.pairD*S);
+    ctx.strokeStyle='#6b21a8';ctx.strokeRect(X(e.lat-p.shelfW/2)+.5,Y(e.depth+p.pairD)+.5,p.shelfW*2*S-1,p.pairD*S-1);
+    ctx.fillStyle='#581c87';ctx.font='bold '+f(S*0.7)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('y'+k,X(e.lat),Y(e.depth+p.pairD/2));});
+  {const e=t['Y8'];
+   e.rows.forEach((d,i)=>{ctx.fillStyle='#e9d5ff';ctx.fillRect(X(e.lat-p.shelfW/2),Y(e.depth+d+p.pairD),p.shelfW*3*S,p.pairD*S);
+     ctx.strokeStyle='#6b21a8';ctx.strokeRect(X(e.lat-p.shelfW/2)+.5,Y(e.depth+d+p.pairD)+.5,p.shelfW*3*S-1,p.pairD*S-1);
+     ctx.fillStyle='#581c87';ctx.font=f(S*0.6)+'px monospace';ctx.fillText('y8-'+(i+1),X(e.lat),Y(e.depth+d+p.pairD/2));});}
+
+  // A 区（示意）
+  ctx.strokeStyle='#b45309';ctx.setLineDash([4,3]);
+  ctx.strokeRect(X(lb(p)-2.5),Y(0),19*S,9*S);ctx.setLineDash([]);
+  ctx.fillStyle='#b45309';ctx.font='bold '+f(S*0.75)+'px sans-serif';
+  ctx.fillText('A 区（独立区，位置示意待确认）',X(lb(p)+6),Y(0)-S*0.8);
+  ['A1','A2','A3','A4','A5','A6','A7','A8','A9'].forEach(k=>{const e=t[k];
+    const w=e.vert?p.shelfW:3, h=e.vert?3:p.shelfW;
+    ctx.fillStyle='#fef3c7';ctx.fillRect(X(e.lat-w/2),Y(e.depth+h),w*S,h*S);
+    ctx.strokeStyle='#b45309';ctx.strokeRect(X(e.lat-w/2)+.5,Y(e.depth+h)+.5,w*S-1,h*S-1);
+    ctx.fillStyle='#78350f';ctx.font='bold '+f(S*0.7)+'px monospace';
+    ctx.fillText(k.toLowerCase(),X(e.lat),Y(e.depth+h/2));});
+
+  // 闸机：入口（南 J39:M40）、出口大门（西 A15:A30）、出站闸机 C12、顺丰闸机 C13
+  ctx.fillStyle='#16a34a';ctx.fillRect(X(4),Y(0)+8,7*S,10);
+  ctx.fillStyle='#166534';ctx.font='bold '+f(S*0.7)+'px sans-serif';
+  ctx.fillText('入口大门 J39:M40 ＋3 个刷码闸机',X(7.5),Y(0)+24);
+  ctx.fillStyle='#dc2626';ctx.fillRect(X(-p.exitL-1.5),Y(corrDepth(p,6)),2.5*S,(corrDepth(p,6)-corrDepth(p,1))*S);
+  ctx.fillStyle='#991b1b';ctx.font='bold '+f(S*0.65)+'px sans-serif';
+  ctx.save();ctx.translate(X(-p.exitL-3.4),Y(11));ctx.rotate(-Math.PI/2);
+  ctx.fillText('出口大门 A15:A30（7 个闸机，跨 o~d）',0,0);ctx.restore();
+  ctx.fillStyle='#b91c1c';
+  ctx.fillRect(X(-p.exitL-1.5),Y(corrDepth(p,7)+1),2.5*S,2.5*S);
+  ctx.fillText('出站闸机 C12',X(-p.exitL-6),Y(corrDepth(p,7)+2));
+  ctx.fillText('顺丰闸机 C13',X(-p.exitL-6),Y(corrDepth(p,7)-1));
+
+  drawPoints();
+}
+/* 路线只走通道：横向沿目标走廊、纵向沿主通道；换走廊必回主通道 */
+function routePath(p,g){
+  const pts=[[g.X(0),g.Y(0)]];            // 从南门内侧的主通道南端起步
+  let cur=null;
+  items.forEach(it=>{
+    const a=it.pos, ai=Math.max(a.aisle,0), ac=acDepth(p,ai);
+    if(!cur||cur.ai!==ai){ if(cur) pts.push([g.X(0),g.Y(cur.ac)]);
+      pts.push([g.X(0),g.Y(ac)]); }
+    pts.push([g.X(a.side==='W'?-a.lat:a.lat),g.Y(ac)]);
+    cur={ai,ac};
+  });
+  if(cur) pts.push([g.X(0),g.Y(cur.ac)]);
+  pts.push([g.X(0),g.Y(p.exitD)]);
+  pts.push([g.X(-p.exitL),g.Y(p.exitD)]);
+  const out=[];pts.forEach(q=>{const l=out[out.length-1];
+    if(!l||Math.abs(l[0]-q[0])>1e-6||Math.abs(l[1]-q[1])>1e-6) out.push(q);});
+  return out;
+}
+function drawPoints(){
+  items.forEach((it,i)=>{const a=it.pos;
+    const x=G.X(a.side==='W'?-a.lat:a.lat),y=G.Y(acDepth(G.p,Math.max(a.aisle,0)));
+    ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.fillStyle='#1f6feb';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
+    ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.fillText(String(i+1),x,y+.5);});
+  if(lastPlan){ctx.strokeStyle='rgba(220,38,38,.9)';ctx.lineWidth=2.6;ctx.setLineDash([7,4]);
+    ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.stroke();ctx.setLineDash([]);}
+}
+/* ===== 交互 ===== */
+const codesEl=document.getElementById('codes');
+const currentCodes=()=>codesEl.value.split(/[,，、\s]+/).map(s=>s.trim()).filter(Boolean);
+function run(){
+  const p=P(),bad=[];items=[];
+  currentCodes().forEach(c=>{const pos=locate(c,p);pos?items.push({code:c,pos}):bad.push(c);});
+  const res=plan(items.map(i=>i.pos),p);
+  const byPos=new Map(items.map(i=>[JSON.stringify(i.pos),i]));
+  const ordered=res.order.map(q=>byPos.get(JSON.stringify(q)));
+  lastPlan=routePath(p,G);
+  const seqEl=document.getElementById('seq');seqEl.innerHTML='';
+  ordered.forEach((it,i)=>{const li=document.createElement('li');
+    li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+it.code+'</span><br><span class="hint">'+
+      it.pos.label+(i>0?'　上一件→本件 '+res.legs[i]+' 格':'')+'</span></span>'+
+      (i===ordered.length-1?'<span class="leg">出西门 '+res.legs[ordered.length]+' 格</span>':'');
+    seqEl.appendChild(li);});
+  document.getElementById('totalBadge').textContent='共 '+res.total+' 格 · 入口段 '+res.legs[0]+' 格';
+  document.getElementById('runInfo').textContent=bad.length?('无法定位：'+bad.join('、')):'';
+  document.getElementById('wayHint').textContent='顺序 = 南门进 → 逐件取 → 西门出 的最短总步数（精确解）；红线只沿通道走。';
+  drawPoints();
+}
+document.getElementById('btnApply').onclick=()=>{draw();run();};
+document.getElementById('btnFit').onclick=()=>{draw();run();};
+document.getElementById('btnRun').onclick=run;
+document.getElementById('btnClear').onclick=()=>{items=[];lastPlan=null;draw();};
+document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1';run();};
+function randomN(n){const p=P(),a=[];
+  for(let i=0;i<n;i++)a.push(ROWS[Math.floor(Math.random()*ROWS.length)]+(1+Math.floor(Math.random()*p.shelves))+'-'+(1+Math.floor(Math.random()*32)));
+  codesEl.value=a.join(', ');run();}
+document.getElementById('btnRandom5').onclick=()=>randomN(5);
+document.getElementById('btnRandom10').onclick=()=>randomN(10);
+cv.addEventListener('click',ev=>{
+  const r=cv.getBoundingClientRect();
+  const mx=(ev.clientX-r.left)*(cv.width/r.width),my=(ev.clientY-r.top)*(cv.height/r.height);
+  const p=P();let best=null,bd=Infinity;
+  ROWS.forEach((row,i)=>{const a=aisleOf(i),south=sideOf(i)==='S';
+    const d=corrDepth(p,a)+(south?-p.pairD/2:p.aisleW+p.pairD*1.5);
+    for(let s=1;s<=p.shelves;s++){
+      const dist=Math.hypot(d*S-(G.oy-my),shelfLat(p,s)*S-(mx-G.ox));
+      if(dist<bd){bd=dist;best=row+s+'-1';}}});
+  if(best&&bd<50){codesEl.value=currentCodes().concat(best).join(', ');run();}
+});
+draw();run();
+</script>
+</body>
+</html>
