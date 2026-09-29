@@ -50,8 +50,10 @@ import com.xxxx.parcel.util.decodeBarcodeFromUri
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
 import com.xxxx.parcel.util.getBarcodeUpdatedAt
+import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
+import com.xxxx.parcel.util.saveBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomEnabled
 import com.xxxx.parcel.util.saveBarcodePayload
 import com.xxxx.parcel.util.saveBarcodeStripEnabled
@@ -76,6 +78,7 @@ fun BarcodeScreen(
     var symbology by remember { mutableStateOf(getBarcodeSymbology(context)) }
     var stripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var bottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
+    var backgroundEnabled by remember { mutableStateOf(isBarcodeBackgroundEnabled(context)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
@@ -293,6 +296,28 @@ fun BarcodeScreen(
                     onCheckedChange = {
                         bottomEnabled = it
                         saveBarcodeBottomEnabled(context, it)
+                        onSettingsChanged()
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("铺满首页背景", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "把条码放大铺在首页背景上。注意：卡片会压住部分条码，扫码时建议用底部浮窗。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = backgroundEnabled,
+                    onCheckedChange = {
+                        backgroundEnabled = it
+                        saveBarcodeBackgroundEnabled(context, it)
                         onSettingsChanged()
                     }
                 )
