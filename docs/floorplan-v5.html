@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>海大快递站 · 瓷砖网格平面图 v5</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eceef1;font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#111}
+header{padding:9px 14px;background:#fff;border-bottom:1px solid #c8ccd2}h1{margin:0 0 2px;font-size:16px}
+.sub{color:#666;font-size:12px}
+main{display:grid;grid-template-columns:1fr 320px;gap:10px;padding:10px;align-items:start}
+@media(max-width:1200px){main{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid #c8ccd2;border-radius:8px;padding:10px}
+.card h2{margin:0 0 6px;font-size:13px}canvas{width:100%;height:auto;display:block;background:#fff;cursor:crosshair}
+.lg{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:12px;margin:0;padding:0;list-style:none}
+.lg i{display:inline-block;width:13px;height:10px;border:1px solid #555;margin-right:5px;vertical-align:-1px}
+input[type=text]{width:100%;padding:5px 7px;border:1px solid #c8ccd2;border-radius:5px;font:inherit}
+button{padding:6px 9px;border:1px solid #c8ccd2;background:#fff;border-radius:5px;cursor:pointer;font:inherit}
+button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.seq{list-style:none;padding:0;margin:0;max-height:330px;overflow:auto}
+.seq li{display:flex;gap:7px;align-items:baseline;padding:4px 0;border-bottom:1px dashed #d7dbe0;font-size:12.5px}
+.seq .n{flex:0 0 20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:#1f6feb;color:#fff;font-size:11.5px;font-weight:700}
+.seq .code{font-family:ui-monospace,Consolas,monospace;font-weight:700}.seq .leg{margin-left:auto;color:#666;white-space:nowrap}
+.hint{color:#666;font-size:11.5px}.badge{display:inline-block;padding:1px 6px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px}
+</style></head><body>
+<header><h1>海大快递站 · 瓷砖网格平面图 v5（按你的 Excel 逐格生成）</h1>
+<div class="sub">上方＝北｜<b>粗线格 = 1 块瓷砖，细线格 = 半块</b>｜14 排 B~R（<b>无 O</b>）｜蓝灰＝通道，只可走这里｜灰＝货架</div></header>
+<main><div><div class="card"><canvas id="map" width="1520" height="880"></canvas>
+<div class="row"><button id="btnRun" class="primary">计算顺序</button><button id="btnClear">清空</button>
+<button id="btnRandom5">随机 5 件</button><button id="btnDemo">示例：B 排东西两侧</button></div>
+<div class="hint">点货架加取件点。红线只沿通道走，不穿货架。</div></div>
+<div class="card" style="margin-top:10px"><h2>图例</h2><ul class="lg">
+<li><i style="background:#dfe7ef"></i>通道（走廊／主纵通道）</li><li><i style="background:#e8e8ea"></i>货架</li>
+<li><i style="background:#cfe0f5"></i>J 柜列（北·西）</li><li><i style="background:#cfe0f5"></i>S 顺丰（北·东）</li>
+<li><i style="background:#e2d4f0"></i>Y 大件（东）</li><li><i style="background:#f6e2c8"></i>A 区（左下）</li>
+<li><i style="background:#bfe3c8"></i>入口闸机</li><li><i style="background:#f0b9b9"></i>出口大门／闸机</li></ul></div>
+<div class="card" style="margin-top:10px"><h2>取件码</h2>
+<input type="text" id="codes" value="B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1">
+<div class="hint" style="margin-top:5px">支持 <code>B12-18</code> <code>Q5-3</code> <code>N5-1</code> <code>J5-21</code> <code>S3-2-2628</code> <code>Y5-7-1</code> <code>Y8-1-3</code> <code>A4-1</code></div></div></div>
+<div><div class="card"><h2>建议顺序 <span class="badge" id="totalBadge">—</span></h2><ol class="seq" id="seq"></ol><div class="hint" id="runInfo"></div></div>
+<div class="card" style="margin-top:10px"><h2>这份图与你的 Excel 对齐</h2><ul class="hint" style="padding-left:16px;margin:0">
+<li>货架 1/4/5/12 中心：<b>−12 / −3 / +3 / +24</b> 瓷砖（与你的列 K/AC/AO/CE 完全一致）</li>
+<li>背靠背带 7 条：B｜C、D｜E、F｜G、H｜K、L｜M、N｜P、Q｜R</li>
+<li>走廊 8 条（每 2 格宽），间隔 3 格</li>
+<li>Q／R 最北一对左右镜像（西 Q 北、东 R 北）</li>
+<li>J 柜列已收窄到 lat −5~−1（4 格宽）</li>
+<li>A 区在左下（lat −16~−9、深度 −2~−8）</li></ul></div></div></main><script>const GEO={"rows": ["B", "C", "D", "E", "F", "G", "H", "K", "L", "M", "N", "P", "Q", "R"], "pairs": [["B", "C"], ["D", "E"], ["F", "G"], ["H", "K"], ["L", "M"], ["N", "P"], ["Q", "R"]], "bandD0": [0, 3, 6, 9, 12, 15, 18], "corr": [[0, -2, 0], [1, 1, 3], [2, 4, 6], [3, 7, 9], [4, 10, 12], [5, 13, 15], [6, 16, 18], [7, 19, 21]], "shelfW": 3, "shelves": 12, "left": 4, "spineW": 3, "aisleW": 2, "pairD": 1, "J": {"1": -5, "2": -4, "3": -3.5, "4": -2.5, "5": -2, "6": -1}, "JD": [22.75, 24.75], "SD": {"1": 24.25, "2": 21.75, "3": 21.25}, "SL": [3, 24], "YL": 30.5, "YD": 25.5, "A": [["A8", -12, -2.25], ["A9", -9, -2.25], ["A7", -16, -2.25], ["A4", -12, -2.75], ["A5", -9, -2.75], ["A6", -16, -5.25], ["A3", -15.5, -8.25], ["A2", -12.5, -8.25], ["A1", -9.5, -8.25]], "IG": [-6, -3, -2.6], "EX": [-15.5, 3, 18], "GATES": [["出站闸机 C12", -15.5, 20.0], ["顺丰专用闸机 C13", -15.5, 18.5], ["7 个普通闸机 C15:C33", -15.5, 10.5]]};
+
+/* ===== 真瓷砖坐标（来自用户 Excel）：lat 西负东正（主通道中心=0），depth 南小北大 ===== */
+const R=GEO.rows;
+const aisleOf=i=>(i+1)>>1;                       // B0 C1 D1 E2 F2 G3 H3 K4 L4 M5 N5 P6 Q6 R7
+const sideOf =i=>(i%2===1)?'S':'N';
+const corrOf=k=>GEO.corr.find(c=>c[0]===k);
+const corrMid=k=>{const c=corrOf(k);return (c[1]+c[2])/2;};
+const bandOf=i=>{const a=aisleOf(i); return a===0?0:(sideOf(i)==='S'?a-1:a);};
+const shelfLat=s=>GEO.shelfW*(s<=GEO.left?(GEO.left-s):(s-GEO.left-1))+ (GEO.spineW+GEO.shelfW)/2;
+
+function locate(raw){
+  const t=String(raw).trim().toUpperCase();
+  const m=t.match(/^([A-Z])\s*(\d{1,2})(?:\s*[-－–—]\s*(\d{1,3}))?(?:\s*[-－–—]\s*(\d{1,4}))?$/);
+  if(!m)return null; const row=m[1],shelf=+m[2],cell=m[3]?+m[3]:null,sub=m[4]?+m[4]:null,c=cell||1;
+  if(row==='J'){const lat=GEO.J[shelf]; if(lat===undefined)return null;
+    return{depth:GEO.JD[0]+(c-1)*0.5,lat,side:'W',aisle:7,label:'J 区 j'+shelf+' 第'+c+'格'};}
+  if(row==='S'){const d=GEO.SD[shelf]; const span=GEO.SL[1]-GEO.SL[0]; const n=shelf===1?10:8;
+    return{depth:d,lat:GEO.SL[0]+(c-1)*span/(n-1),side:'E',aisle:7,label:'S 区 s'+shelf+' 第'+c+'格'};}
+  if(row==='Y'){ if(shelf===8){const k=Math.min(Math.max(c,1),8),ix=Math.min(Math.max(sub||1,1),3);
+      return{depth:GEO.YD+k*0.5,lat:GEO.YL+ix-1,side:'E',aisle:7,label:'Y 区 y8-'+k+' 第'+ix+'子位'};}
+    const dd={1:GEO.YD+1,2:GEO.YD,3:GEO.YD-0.5,4:GEO.YD-1,5:GEO.YD-2,6:GEO.YD-2,7:GEO.YD-3}[shelf];
+    const rev=(shelf===2?4:shelf===4?4:shelf===5?7:shelf===7?8:0);
+    return{depth:dd,lat:rev?(GEO.YL+rev-c):(GEO.YL+c-1),side:'E',aisle:7,label:'Y 区 y'+shelf+' 第'+c+'格'+(rev?'（反向）':'')};}
+  if(row==='A'){const e=GEO.A.find(x=>x[0]==='A'+shelf); if(!e)return null;
+    return{depth:e[2],lat:e[1],side:'W',aisle:-1,label:'A 区 a'+shelf};}
+  const i=R.indexOf(row); if(i<0)return null;
+  if(shelf<1||shelf>GEO.shelves)return null;
+  const a=aisleOf(i),side=shelf<=GEO.left?'W':'E';
+  let north=(sideOf(i)==='N');
+  if((row==='Q'||row==='R')&&a===6) north=(row===((side==='W')?'Q':'R'));
+  const b=bandOf(i), d0=GEO.bandD0[b];
+  return{depth:d0+(north?0.75:0.25),lat:shelfLat(shelf),side,aisle:a,row,
+    label:row+' 排 '+shelf+' 号货架'+(cell?' 第'+cell+'格':'')+'（'+(side==='W'?'西侧':'东侧')+'，走廊'+a+'）'};
+}
+function walk(a,b){const gap=Math.abs(a.depth-b.depth);
+  if(a.aisle>=0&&a.aisle===b.aisle) return (a.side===b.side?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap;
+  return a.lat+gap+b.lat;}
+const entranceTo=a=>4+a.depth+a.lat, exitFrom=a=>a.lat+Math.abs(a.depth-10)+Math.abs(GEO.EX[0]);
+function plan(items){const n=items.length; if(!n)return{order:[],legs:[],total:0};
+  if(n>13)return nn(items);
+  const full=1<<n,INF=1e9,from=items.map(entranceTo),toEx=items.map(exitFrom);
+  const d=items.map(a=>items.map(b=>walk(a,b)));
+  const dp=Array.from({length:full},()=>new Array(n).fill(INF)),par=Array.from({length:full},()=>new Array(n).fill(-1));
+  for(let i=0;i<n;i++)dp[1<<i][i]=from[i];
+  for(let mk=1;mk<full;mk++)for(let L=0;L<n;L++){const v=dp[mk][L];if(v>=INF)continue;
+    for(let x=0;x<n;x++){if(mk&(1<<x))continue;const nm=mk|(1<<x),nv=v+d[L][x];
+      if(nv<dp[nm][x]){dp[nm][x]=nv;par[nm][x]=L;}}}
+  let best=INF,bl=0;for(let i=0;i<n;i++){const v=dp[full-1][i]+toEx[i];if(v<best){best=v;bl=i;}}
+  const rev=[];let mk=full-1,cur=bl;
+  while(cur>=0){rev.push(cur);const pv=par[mk][cur];mk&=~(1<<cur);cur=pv;}
+  rev.reverse();
+  const legs=[from[rev[0]]];
+  for(let i=0;i+1<rev.length;i++)legs.push(walk(items[rev[i]],items[rev[i+1]]));
+  legs.push(toEx[rev[rev.length-1]]);
+  return{order:rev.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};}
+function nn(items){const left=items.map((_,i)=>i),order=[];let cur=null;
+  while(left.length){let bi=0,bv=Infinity;
+    left.forEach((i,k)=>{const v=cur===null?entranceTo(items[i]):walk(cur,items[i]);if(v<bv){bv=v;bi=k;}});
+    order.push(left[bi]);cur=items[left[bi]];left.splice(bi,1);}
+  const legs=[entranceTo(items[order[0]])];
+  for(let i=0;i+1<order.length;i++)legs.push(walk(items[order[i]],items[order[i+1]]));
+  legs.push(exitFrom(items[order[order.length-1]]));
+  return{order:order.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};}
+
+/* ===== 制图：半格细线、整格粗线 ===== */
+const cv=document.getElementById('map'),ctx=cv.getContext('2d');
+let G=null,items=[],lastPlan=null;
+const CELL=8;                       // 半格 8px ⇒ 一瓷砖 16px
+function geom(){
+  const minLat=-19,maxLat=GEO.YL+6,minD=-10,maxD=GEO.JD[1]+3;
+  const ox=64-minLat*CELL, oy=44+maxD*CELL;
+  return{minLat,maxLat,minD,maxD,ox,oy,
+    X:l=>ox+l*CELL*2, D:d=>oy-d*CELL*2, B:k=>oy-(GEO.bandD0[k]+GEO.pairD/2)*CELL*2};
+}
+function draw(){
+  const g=geom();G=g;const X=g.X,D=g.D;
+  ctx.clearRect(0,0,cv.width,cv.height);ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.textAlign='left';ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';
+  ctx.fillText('海大快递站 平面图（北 ↑）· 粗线格 = 1 瓷砖，细线格 = 半块 · 14 排 B~R（无 O）',12,16);
+  ctx.font='11px sans-serif';ctx.fillStyle='#666';
+  ctx.fillText('货架 1/4/5/12 中心 = −12 / −3 / +3 / +24 瓷砖　走廊 8 条×2 格　背靠背带 7 条×1 格　（坐标取自你的 Excel，逐格对齐）',12,31);
+  // 半格网格
+  for(let l=Math.ceil(g.minLat*2)/2;l<=g.maxLat;l+=0.5){
+    const whole=Math.abs(l-Math.round(l))<1e-6;
+    ctx.strokeStyle=whole?'#cdd5df':'#f0f3f7';ctx.lineWidth=whole?1:0.5;
+    ctx.beginPath();ctx.moveTo(X(l),D(g.maxD));ctx.lineTo(X(l),D(g.minD));ctx.stroke();}
+  for(let d=Math.ceil(g.minD*2)/2;d<=g.maxD;d+=0.5){
+    const whole=Math.abs(d-Math.round(d))<1e-6;
+    ctx.strokeStyle=whole?'#cdd5df':'#f0f3f7';ctx.lineWidth=whole?1:0.5;
+    ctx.beginPath();ctx.moveTo(X(g.minLat),D(d));ctx.lineTo(X(g.maxLat),D(d));ctx.stroke();}
+  ctx.lineWidth=1;
+  // 刻度
+  ctx.fillStyle='#8494a8';ctx.font='9px ui-monospace,monospace';
+  for(let l=Math.ceil(g.minLat);l<=g.maxLat;l+=5)ctx.fillText(l>0?'+'+l:''+l,X(l),D(g.minD)+10);
+  for(let d=Math.ceil(g.minD);d<=g.maxD;d+=5)ctx.fillText('深'+d,X(g.minLat)-24,D(d));
+  // 走廊
+  GEO.corr.forEach(([k,d0,d1])=>{
+    ctx.fillStyle='#dfe7ef';ctx.fillRect(X(g.minLat),D(d1),(g.maxLat-g.minLat)*CELL*2,(d1-d0)*CELL*2);
+    ctx.strokeStyle='#c3cbd6';ctx.strokeRect(X(g.minLat)+.5,D(d1)+.5,(g.maxLat-g.minLat)*CELL*2-1,(d1-d0)*CELL*2-1);
+    ctx.textAlign='right';ctx.fillStyle='#33506f';ctx.font='bold 10px sans-serif';
+    const nm=k===0?'B':(k===7?'R／J':GEO.pairs[k-1][1]+'｜'+GEO.pairs[k][0]);
+    ctx.fillText('走廊'+k+'（'+nm+'）',X(g.minLat)-6,D((d0+d1)/2));
+    ctx.textAlign='center';});
+  // 主纵通道 + V 通道
+  ctx.fillStyle='#dfe7ef';ctx.fillRect(X(-GEO.spineW/2),D(g.maxD),GEO.spineW*CELL*2,(g.maxD-g.minD)*CELL*2);
+  ctx.strokeStyle='#c3cbd6';ctx.strokeRect(X(-GEO.spineW/2)+.5,D(g.maxD)+.5,GEO.spineW*CELL*2-1,(g.maxD-g.minD)*CELL*2-1);
+  ctx.save();ctx.translate(X(0),D(g.maxD-1));ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='#33506f';ctx.font='bold 10px sans-serif';ctx.fillText('主纵向通道（货架 4｜5 之间）',0,0);ctx.restore();
+  const vL=shelfLat(GEO.shelves)+GEO.shelfW/2;
+  ctx.fillStyle='#dfe7ef';ctx.fillRect(X(vL),D(g.maxD),GEO.spineW*CELL*2,(g.maxD-g.minD)*CELL*2);
+  ctx.strokeStyle='#c3cbd6';ctx.strokeRect(X(vL)+.5,D(g.maxD)+.5,GEO.spineW*CELL*2-1,(g.maxD-g.minD)*CELL*2-1);
+  // 14 排货架
+  const bandHalf=GEO.pairD/2;
+  const rowY=(i)=>{const b=bandOf(i),d0=GEO.bandD0[b];
+    return sideOf(i)==='S'? d0+bandHalf*0.5+bandHalf*0.25 : d0+bandHalf+bandHalf*0.25;};
+  R.forEach((row,i)=>{
+    if(row==='Q'||row==='R'){ GEO.pairs[6]; }
+    for(let s=1;s<=GEO.shelves;s++){
+      const lat=shelfLat(s),isW=s<=GEO.left; let dep=rowY(i);
+      if((row==='Q'||row==='R')&&aisleOf(i)===6){          // 最北一对镜像
+        const northW=(row==='Q'), northE=(row==='R');
+        dep=isW?(northW?GEO.bandD0[6]+1.6:GEO.bandD0[6]+0.4):(northE?GEO.bandD0[6]+1.6:GEO.bandD0[6]+0.4);}
+      const x0=X(lat-GEO.shelfW/2),y0=D(dep+0.5);
+      ctx.fillStyle=isW?'#e8e8ea':'#eef1f3';ctx.fillRect(x0,y0,GEO.shelfW*CELL*2,0.5*CELL*2);
+      ctx.strokeStyle=(s===GEO.left||s===GEO.left+1)?'#555':'#aab2bd';
+      ctx.lineWidth=(s===GEO.left||s===GEO.left+1)?1.2:.5;
+      ctx.strokeRect(x0+.5,y0+.5,GEO.shelfW*CELL*2-1,0.5*CELL*2-1);ctx.lineWidth=1;
+    }
+    ctx.textAlign='right';ctx.fillStyle='#111';ctx.font='bold 10px ui-monospace,monospace';
+    ctx.fillText(row,X(g.minLat)-6,D(rowY(i)+0.5));ctx.textAlign='center';
+    ctx.fillStyle='#8b95a3';ctx.font='8px ui-monospace,monospace';
+    for(let s=1;s<=GEO.shelves;s++)ctx.fillText(String(s),X(shelfLat(s)),D(GEO.bandD0[bandOf(i)]-0.35));
+  });
+  // J 柜列（竖）
+  const jd0=GEO.JD[0],jd1=GEO.JD[1];
+  for(const k in GEO.J[1]?GEO.J:{}); 
+  [1,2,3,4,5,6].forEach(k=>{const lat=GEO.J[k];
+    ctx.fillStyle='#cfe0f5';ctx.fillRect(X(lat-0.25),D(jd1),0.5*CELL*2,(jd1-jd0)*CELL*2);
+    ctx.strokeStyle='#5b7fa6';ctx.strokeRect(X(lat-0.25)+.5,D(jd1)+.5,0.5*CELL*2-1,(jd1-jd0)*CELL*2-1);
+    ctx.fillStyle='#1e3a5f';ctx.font='bold 9px ui-monospace,monospace';
+    ctx.fillText('j'+k,X(lat),D(jd0-0.4));});
+  ctx.fillStyle='#1e3a5f';ctx.font='bold 10px sans-serif';
+  ctx.fillText('J 柜列（6 列·竖向·宽 4 格）',X(-3),D(jd1+0.8));
+  // S 三排 + Y
+  [[1,'s1（1~10，贴墙）'],[2,'s2（1~8）'],[3,'s3（1~8）']].forEach(([k,t])=>{
+    const y=D(GEO.SD[k]+0.5);
+    ctx.fillStyle='#cfe0f5';ctx.fillRect(X(GEO.SL[0]-1.5),y,(GEO.SL[1]-GEO.SL[0]+3)*CELL*2,20);
+    ctx.strokeStyle='#5b7fa6';ctx.strokeRect(X(GEO.SL[0]-1.5)+.5,y+.5,(GEO.SL[1]-GEO.SL[0]+3)*CELL*2-1,19);
+    ctx.fillStyle='#1e3a5f';ctx.font='bold 9.5px sans-serif';ctx.fillText(t,X(6),y+10);});
+  ctx.fillStyle='#e2d4f0';ctx.fillRect(X(GEO.YL-2),D(GEO.YD+2),7*CELL*2,5*CELL*2);
+  ctx.strokeStyle='#7c5aa6';ctx.strokeRect(X(GEO.YL-2)+.5,D(GEO.YD+2)+.5,7*CELL*2-1,5*CELL*2-1);
+  ctx.fillStyle='#4b2e6f';ctx.font='bold 10px sans-serif';
+  ctx.fillText('Y 大件区',X(GEO.YL+1.5),D(GEO.YD));ctx.font='9.5px sans-serif';
+  ctx.fillText('y1~y7 / y8',X(GEO.YL+1.5),D(GEO.YD-1.5));
+  // A 区
+  GEO.A.forEach(([k,lat,dep])=>{
+    ctx.fillStyle='#f6e2c8';ctx.fillRect(X(lat-2),D(dep+1),4*CELL*2,2*CELL*2);
+    ctx.strokeStyle='#a8763e';ctx.strokeRect(X(lat-2)+.5,D(dep+1)+.5,4*CELL*2-1,2*CELL*2-1);
+    ctx.fillStyle='#6b4a1e';ctx.font='bold 9.5px ui-monospace,monospace';
+    ctx.fillText(k.toLowerCase(),X(lat),D(dep));});
+  ctx.fillStyle='#8a5a20';ctx.font='bold 10.5px sans-serif';
+  ctx.fillText('A 区（a1~a9 · 独立区）',X(-12),D(-0.8));
+  // 入口闸机（主通道左侧、最右缘距通道 3 格）
+  ctx.fillStyle='#bfe3c8';ctx.fillRect(X(GEO.IG[0]),D(GEO.IG[2]+0.8),(GEO.IG[1]-GEO.IG[0])*CELL*2,1.6*CELL*2);
+  ctx.strokeStyle='#4b8b5f';ctx.strokeRect(X(GEO.IG[0])+.5,D(GEO.IG[2]+0.8)+.5,(GEO.IG[1]-GEO.IG[0])*CELL*2-1,1.6*CELL*2-1);
+  ctx.fillStyle='#245c37';ctx.font='bold 10px sans-serif';
+  ctx.fillText('入口闸机（最右缘距主通道 3 格）',X(GEO.IG[0]+1.5),D(GEO.IG[2]+1.6));
+  // 出口大门
+  ctx.fillStyle='#f0b9b9';ctx.fillRect(X(GEO.EX[0]-1),D(GEO.EX[2]),2*CELL*2,(GEO.EX[2]-GEO.EX[1])*CELL*2);
+  ctx.strokeStyle='#a34a4a';ctx.strokeRect(X(GEO.EX[0]-1)+.5,D(GEO.EX[2])+.5,2*CELL*2-1,(GEO.EX[2]-GEO.EX[1])*CELL*2-1);
+  ctx.save();ctx.translate(X(GEO.EX[0]-5),D(10));ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='#7a2020';ctx.font='bold 10px sans-serif';ctx.fillText('出口大门（跨 o~d）',0,0);ctx.restore();
+  GEO.GATES.forEach(([t,lat,dep])=>{ctx.fillStyle='#7a2020';ctx.font='10px sans-serif';
+    ctx.textAlign='left';ctx.fillText(t,X(g.minLat)-70,D(dep));ctx.textAlign='center';});
+  // 比例尺
+  ctx.strokeStyle='#111';ctx.beginPath();
+  ctx.moveTo(X(g.minLat)+30,cv.height-14);ctx.lineTo(X(g.minLat)+30+5*CELL*2,cv.height-14);ctx.stroke();
+  ctx.textAlign='left';ctx.fillStyle='#111';ctx.font='10px sans-serif';
+  ctx.fillText('5 瓷砖',X(g.minLat)+34,cv.height-24);
+  drawPoints();
+}
+function routePath(g){
+  const pts=[[g.X(0),g.D(corrMid(0))]];let cur=null;
+  items.forEach(it=>{const a=it.pos,ai=Math.max(a.aisle,0),yy=g.D(corrMid(ai));
+    if(!cur||cur.ai!==ai){if(cur)pts.push([g.X(0),cur.yy]);pts.push([g.X(0),yy]);}
+    pts.push([g.X(a.side==='W'?-a.lat:a.lat),yy]);cur={ai,yy};});
+  if(cur)pts.push([g.X(0),cur.yy]);
+  pts.push([g.X(0),g.D(10)]);pts.push([g.X(GEO.EX[0]),g.D(10)]);
+  const out=[];pts.forEach(q=>{const l=out[out.length-1];
+    if(!l||Math.abs(l[0]-q[0])>1e-6||Math.abs(l[1]-q[1])>1e-6)out.push(q);});return out;
+}
+function drawPoints(){items.forEach((it,i)=>{const a=it.pos;
+  const x=G.X(a.side==='W'?-a.lat:a.lat),y=G.D(corrMid(Math.min(Math.max(a.aisle,0),7)));
+  ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fillStyle='#1f6feb';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
+  ctx.fillStyle='#fff';ctx.font='bold 10px sans-serif';ctx.fillText(String(i+1),x,y+.5);});
+  if(lastPlan){ctx.strokeStyle='rgba(200,30,30,.9)';ctx.lineWidth=2.2;ctx.setLineDash([6,4]);
+    ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});
+    ctx.stroke();ctx.setLineDash([]);}}
+const codesEl=document.getElementById('codes');
+const cc=()=>codesEl.value.split(/[,，、\s]+/).map(s=>s.trim()).filter(Boolean);
+function run(){const bad=[];items=[];
+  cc().forEach(c=>{const p=locate(c);p?items.push({code:c,pos:p}):bad.push(c);});
+  const res=plan(items.map(i=>i.pos));
+  const byPos=new Map(items.map(i=>[JSON.stringify(i.pos),i]));
+  const ordered=res.order.map(q=>byPos.get(JSON.stringify(q)));
+  lastPlan=routePath(G);
+  const seqEl=document.getElementById('seq');seqEl.innerHTML='';
+  ordered.forEach((it,i)=>{const li=document.createElement('li');
+    li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+it.code+'</span><br><span class="hint">'+
+      it.pos.label+(i>0?'　上一件→本件 '+res.legs[i]+' 格':'')+'</span></span>'+
+      (i===ordered.length-1?'<span class="leg">出西门 '+res.legs[ordered.length]+' 格</span>':'');
+    seqEl.appendChild(li);});
+  document.getElementById('totalBadge').textContent='共 '+res.total+' 格';
+  document.getElementById('runInfo').textContent=bad.length?('无法定位：'+bad.join('、')):'';
+  drawPoints();}
+document.getElementById('btnRun').onclick=run;
+document.getElementById('btnClear').onclick=()=>{items=[];lastPlan=null;draw();};
+document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1';run();};
+document.getElementById('btnRandom5').onclick=()=>{const a=[];for(let i=0;i<5;i++)a.push(R[Math.floor(Math.random()*R.length)]+(1+Math.floor(Math.random()*12))+'-1');codesEl.value=a.join(', ');run();};
+cv.addEventListener('click',ev=>{const r=cv.getBoundingClientRect();
+  const mx=(ev.clientX-r.left)*(cv.width/r.width),my=(ev.clientY-r.top)*(cv.height/r.height);
+  let best=null,bd=Infinity;
+  R.forEach((row,i)=>{for(let s=1;s<=GEO.shelves;s++){
+    const dd=Math.hypot(G.D(GEO.bandD0[bandOf(i)]+0.5)-my,G.X(shelfLat(s))-mx);
+    if(dd<bd){bd=dd;best=row+s+'-1';}}});
+  if(best&&bd<30){codesEl.value=cc().concat(best).join(', ');run();}});
+draw();run();
+</script></body></html>
