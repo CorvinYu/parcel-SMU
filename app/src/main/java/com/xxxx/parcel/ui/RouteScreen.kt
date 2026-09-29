@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.util.SiteLayout
-import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getRouteAisleSpacing
 import com.xxxx.parcel.util.getRouteCrossAisle
 import com.xxxx.parcel.util.getRouteDoorToSpine
@@ -87,22 +86,17 @@ fun RouteScreen(
         )
     }
     val pending = remember(successData) {
-        // 用「有效货格号」：解析出的货格号为空时，退回「取件码本身就是货格号」
-        successData.filter {
-            !it.isCompleted && effectiveCompartmentNumber(it.compartmentNumber, it.code).isNotBlank()
-        }
+        successData.filter { !it.isCompleted && it.compartmentNumber.isNotBlank() }
     }
     val route = remember(pending, layout, returnToEntrance) {
         planPickupRoute(
-            rawCodes = pending.map { effectiveCompartmentNumber(it.compartmentNumber, it.code) },
+            rawCodes = pending.map { it.compartmentNumber },
             layout = layout,
             returnToEntrance = returnToEntrance,
         )
     }
     val byCode = remember(pending) {
-        pending.associateBy {
-            parseCompartmentCode(effectiveCompartmentNumber(it.compartmentNumber, it.code))
-        }
+        pending.associateBy { parseCompartmentCode(it.compartmentNumber) }
     }
     val zoneCounts = remember(route) { route.zoneCounts() }
 
