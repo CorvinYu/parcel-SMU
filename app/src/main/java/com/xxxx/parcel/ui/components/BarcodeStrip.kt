@@ -1,16 +1,14 @@
 package com.xxxx.parcel.ui.components
 
-import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,9 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -30,16 +26,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.xxxx.parcel.util.BarcodeSymbology
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
@@ -111,13 +105,12 @@ fun BarcodeImage(
 }
 
 /**
- * 首页顶部常驻条码条：**铺满整行**，点一下就全屏出示（不再单独放按钮，避免挤掉条码宽度）。
+ * 首页顶部常驻条码条：**铺满整行**，点一下进条码设置页（原「全屏出示」已按用户要求删除）。
  */
 @Composable
 fun BarcodeStrip(
     context: Context,
     isSeniorMode: Boolean,
-    onPresent: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val payload = getBarcodePayload(context)
@@ -132,7 +125,7 @@ fun BarcodeStrip(
         shadowElevation = 3.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { if (payload.isNullOrBlank()) onOpenSettings() else onPresent() },
+            .clickable { onOpenSettings() },
     ) {
         if (payload.isNullOrBlank()) {
             Text(
@@ -157,21 +150,23 @@ fun BarcodeStrip(
 }
 
 /**
- * 底部条码卡片，两种形态：
+ * 底部条码浮窗（**「浮窗」与「填充」已合并成这一个**）。
  *
- * - **浮窗**（不传 [fillHeightDp]）：固定高度的一条，浮在列表下方；
- * - **填充**（传 [fillHeightDp]）：整块占据这个高度 —— 由首页按「列表没占满时剩下的空白」算出来，
- *   取件码一多就自动缩到最小高度让位给列表。
- *
- * 两种都点一下即全屏出示。
+ * - 高度由 [heightDp] 决定：用户可在顶部把手上**上下拖动**调节，设置会持久化；
+ * - 首页会把「列表内容没占满时剩下的空白」算出来传进来，所以列表短时它占住空白、
+ *   列表一长就自动让位（缩到最小高度）——见 `HomeScreen` 里的 `targetBottomHeight`；
+ * - 点一下卡片进条码设置页（原「全屏出示」已按用户要求删除）。
  */
 @Composable
 fun BarcodeBottomCard(
     context: Context,
     isSeniorMode: Boolean,
-    onPresent: () -> Unit,
+    heightDp: Dp,
+    /** 拖动过程中上报位移（dp）：向上拖为负值 ⇒ 变高 */
+    onDrag: (Dp) -> Unit,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
     onOpenSettings: () -> Unit,
-    fillHeightDp: Int? = null,
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
@@ -179,10 +174,9 @@ fun BarcodeBottomCard(
     val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
-
-    val innerHeightDp = fillHeightDp
-        ?.let { (it - 12).coerceAtLeast(80) }
-        ?: if (isSeniorMode) 112 else 80
+    val density = LocalDensity.current
+    // 扣掉顶部把手与内边距，剩下的高度给条码
+    val innerHeightDp = (heightDp.value - 26f).coerceAtLeast(48f).toInt()
 
     Surface(
         color = Color.White,
@@ -190,113 +184,56 @@ fun BarcodeBottomCard(
         shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (fillHeightDp != null) Modifier.height(fillHeightDp.dp) else Modifier)
-            .clickable { if (!hasBarcode) onOpenSettings() else onPresent() },
+            .height(heightDp),
     ) {
-        if (!hasBarcode) {
-            Text(
-                text = "尚未设置快递中心条码 · 点这里去设置",
-                style = textStyle,
-                color = Color(0xFF444444),
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 顶部拖动把手
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-            )
-        } else {
-            BarcodeImage(
-                payload = payload,
-                symbology = symbology,
-                heightDp = innerHeightDp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-            )
-        }
-    }
-}
-
-/**
- * 「出示模式」全屏浮层：只留条码 + 白色底 + 屏幕亮度拉满，
- * 并盖掉首页卡片（卡片压住条码会导致扫码枪读不到）。
- */
-@Composable
-fun BarcodePresentationDialog(
-    context: Context,
-    onDismiss: () -> Unit,
-) {
-    val payload = getBarcodePayload(context)
-    val symbology = getBarcodeSymbology(context)
-    // 有原图也算「已设置」——原图模式不依赖解码是否成功
-    val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
-    val configuration = LocalConfiguration.current
-
-    // 出示期间把屏幕亮度拉到最高，退出时恢复
-    DisposableEffect(Unit) {
-        val window = (context as? Activity)?.window
-        val original = window?.attributes?.screenBrightness
-        window?.let {
-            val attrs = it.attributes
-            attrs.screenBrightness = 1f
-            it.attributes = attrs
-        }
-        onDispose {
-            window?.let {
-                val attrs = it.attributes
-                attrs.screenBrightness = original ?: -1f
-                it.attributes = attrs
+                    .height(18.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { onDragStart() },
+                            onDragEnd = { onDragEnd() },
+                            onDragCancel = { onDragEnd() },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                onDrag(with(density) { dragAmount.y.toDp() })
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(4.dp)
+                        .background(Color(0xFFCCCCCC), RoundedCornerShape(2.dp)),
+                )
             }
-        }
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.White)
-                .clickable { onDismiss() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+                    .fillMaxSize()
+                    .clickable { onOpenSettings() },
+                contentAlignment = Alignment.Center,
             ) {
                 if (!hasBarcode) {
                     Text(
-                        text = "尚未设置条码内容",
-                        fontSize = 20.sp,
-                        color = Color(0xFF222222),
+                        text = "尚未设置快递中心条码 · 点这里去设置",
+                        style = textStyle,
+                        color = Color(0xFF444444),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 } else {
-                    Text(
-                        text = "快递中心通行条码",
-                        fontSize = 18.sp,
-                        color = Color(0xFF666666),
-                    )
-                    Spacer(Modifier.height(16.dp))
                     BarcodeImage(
                         payload = payload,
                         symbology = symbology,
-                        heightDp = (configuration.screenHeightDp * 0.32f).toInt().coerceAtLeast(160),
-                        modifier = Modifier.fillMaxWidth(),
+                        heightDp = innerHeightDp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = payload.orEmpty(),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF222222),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                Spacer(Modifier.height(28.dp))
-                TextButton(onClick = onDismiss) {
-                    Text("点击任意处关闭", fontSize = 16.sp, color = Color(0xFF666666))
                 }
             }
         }

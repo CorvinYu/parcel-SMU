@@ -31,7 +31,9 @@ private const val KEY_PAYLOAD = "barcode_payload"
 private const val KEY_SYMBOLOGY = "barcode_symbology"
 private const val KEY_STRIP = "barcode_strip_enabled"
 private const val KEY_BOTTOM = "barcode_bottom_enabled"
+/** 旧「底部填充」开关：已与浮窗合并，此键只用于读取旧设置做迁移 */
 private const val KEY_BOTTOM_FILL = "barcode_bottom_fill_enabled"
+private const val KEY_BOTTOM_HEIGHT = "barcode_bottom_height_dp"
 private const val KEY_BACKGROUND = "barcode_background_enabled"
 private const val KEY_USE_ORIGINAL = "barcode_use_original"
 private const val KEY_UPDATED_AT = "barcode_updated_at"
@@ -78,25 +80,34 @@ fun saveBarcodeStripEnabled(context: Context, enabled: Boolean) {
     barcodePrefs(context).edit().putBoolean(KEY_STRIP, enabled).apply()
 }
 
-/** 底部浮窗：条码浮在列表下方，列表短时正好占住底部空白 */
-fun isBarcodeBottomEnabled(context: Context): Boolean =
-    barcodePrefs(context).getBoolean(KEY_BOTTOM, false)
+/**
+ * 底部浮窗（**「浮窗」与「填充」已合并：现在只有一个底部浮窗**）。
+ *
+ * 高度由用户在首页**拖动顶部把手**调节（[getBarcodeBottomHeightDp]），
+ * 列表内容占满屏幕时自动让位缩到最小高度。
+ *
+ * 兼容旧设置：以前「底部浮窗」或「底部填充」任一是开的，都算这个浮窗开着。
+ */
+fun isBarcodeBottomEnabled(context: Context): Boolean {
+    val prefs = barcodePrefs(context)
+    return prefs.getBoolean(KEY_BOTTOM, false) || prefs.getBoolean(KEY_BOTTOM_FILL, false)
+}
 
 fun saveBarcodeBottomEnabled(context: Context, enabled: Boolean) {
     barcodePrefs(context).edit().putBoolean(KEY_BOTTOM, enabled).apply()
 }
 
-/**
- * 底部**填充**：把首页下方「没有取件码」的整块空白都交给条码。
- * 列表一长就自动让位（缩到最小高度），列表短时条码占满剩余空间。
- * 与 [isBarcodeBottomEnabled]（固定高度的一条浮窗）是两种不同形态，可分别开关。
- */
-fun isBarcodeBottomFillEnabled(context: Context): Boolean =
-    barcodePrefs(context).getBoolean(KEY_BOTTOM_FILL, false)
+/** 底部浮窗高度（dp）：用户拖动后的设定值。 */
+fun getBarcodeBottomHeightDp(context: Context): Int =
+    barcodePrefs(context).getInt(KEY_BOTTOM_HEIGHT, DEFAULT_BOTTOM_HEIGHT_DP)
 
-fun saveBarcodeBottomFillEnabled(context: Context, enabled: Boolean) {
-    barcodePrefs(context).edit().putBoolean(KEY_BOTTOM_FILL, enabled).apply()
+fun saveBarcodeBottomHeightDp(context: Context, heightDp: Int) {
+    barcodePrefs(context).edit().putInt(KEY_BOTTOM_HEIGHT, heightDp).apply()
 }
+
+/** 默认高度：普通模式 96dp，老人模式（字大）128dp。 */
+const val DEFAULT_BOTTOM_HEIGHT_DP = 96
+const val DEFAULT_BOTTOM_HEIGHT_SENIOR_DP = 128
 
 /** 铺满首页背景 */
 fun isBarcodeBackgroundEnabled(context: Context): Boolean =

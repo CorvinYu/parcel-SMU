@@ -44,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.ui.components.BarcodeImage
-import com.xxxx.parcel.ui.components.BarcodePresentationDialog
 import com.xxxx.parcel.util.BarcodeSymbology
 import com.xxxx.parcel.util.clearBarcodePayload
 import com.xxxx.parcel.util.decodeBarcodeFromUri
@@ -53,11 +52,9 @@ import com.xxxx.parcel.util.getBarcodeSymbology
 import com.xxxx.parcel.util.getBarcodeUpdatedAt
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
-import com.xxxx.parcel.util.isBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomEnabled
-import com.xxxx.parcel.util.saveBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.saveBarcodePayload
 import com.xxxx.parcel.util.saveBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeSymbology
@@ -81,11 +78,9 @@ fun BarcodeScreen(
     var symbology by remember { mutableStateOf(getBarcodeSymbology(context)) }
     var stripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var bottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
-    var bottomFillEnabled by remember { mutableStateOf(isBarcodeBottomFillEnabled(context)) }
     var backgroundEnabled by remember { mutableStateOf(isBarcodeBackgroundEnabled(context)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var showPresentation by remember { mutableStateOf(false) }
 
     val pickImage = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -215,19 +210,6 @@ fun BarcodeScreen(
                     modifier = Modifier.weight(1f),
                 ) { Text("保存") }
 
-                Button(
-                    onClick = {
-                        if (payload.isBlank()) {
-                            status = "内容为空"
-                        } else {
-                            saveBarcodePayload(context, payload.trim())
-                            onSettingsChanged()
-                            showPresentation = true
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) { Text("出示") }
-
                 OutlinedButton(
                     onClick = {
                         clearBarcodePayload(context)
@@ -301,31 +283,10 @@ fun BarcodeScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("底部填充（自动让位）", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "把首页下方没有取件码的整块空白都给条码；取件码一多就自动缩到最小高度让位。",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Switch(
-                    checked = bottomFillEnabled,
-                    onCheckedChange = {
-                        bottomFillEnabled = it
-                        saveBarcodeBottomFillEnabled(context, it)
-                        onSettingsChanged()
-                    }
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
                     Text("底部浮窗", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "条码浮在列表下方：列表短时正好占住底部空白；列表长时会被遮住一部分，点一下即可全屏。",
+                        "条码固定在底部。高度可在首页**上下拖动它的顶部把手**调整；" +
+                            "列表取件码多到占满屏幕时，它会自动让位缩小。点一下浮窗进本页。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -347,7 +308,7 @@ fun BarcodeScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("铺满首页背景", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "把条码放大铺在首页背景上。注意：卡片会压住部分条码，真正扫码建议用「出示」全屏模式。",
+                        "把条码放大铺在首页背景上。注意：卡片会压住部分条码，扫码时建议用底部浮窗。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -362,18 +323,7 @@ fun BarcodeScreen(
                 )
             }
 
-            TextButton(onClick = { showPresentation = true }, enabled = payload.isNotBlank()) {
-                Text("全屏出示（亮度自动拉满）", fontWeight = FontWeight.Medium, fontSize = 16.sp)
-            }
-
             Spacer(Modifier.height(24.dp))
         }
-    }
-
-    if (showPresentation) {
-        BarcodePresentationDialog(
-            context = context,
-            onDismiss = { showPresentation = false },
-        )
     }
 }

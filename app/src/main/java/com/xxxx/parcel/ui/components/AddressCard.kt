@@ -287,7 +287,12 @@ fun AddressCard(
                                                     ),
                                                     color = if (smsData.isCompleted) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
-                                            } else if (showCompartment && smsData.compartmentNumber.isNotEmpty()) {
+                                            } else if (showCompartment &&
+                                                smsData.compartmentNumber.isNotEmpty() &&
+                                                // 只给快递柜显示「N格口」：人工货架/顺丰/大件的货格号
+                                                // 就是左边那个取件码本身，右侧再写一遍是纯冗余（用户反馈）
+                                                classifyPickupPlace(smsData.code) == PickupPlace.LOCKER
+                                            ) {
                                                 Text(
                                                     text = "${smsData.compartmentNumber}格口",
                                                     style = if (isSeniorMode) MaterialTheme.typography.bodyLarge.copy(
