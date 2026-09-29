@@ -78,14 +78,23 @@
 - 尚未在界面暴露开关，默认仍是「解码后重绘」
 - 触发场景：若某天驿站扫码枪不认重绘出来的条码，可一键切到原图保真
 
-### 4. 发布流程 —— ✅ 签名已建立，可继续自动化
+### 4. 发布流程 —— ✅ 0.1.8 已发布；**git push 在本机已不可用，改走 GitHub API**
 
 - 旧正式包 `v1.0.57-haida.1` 的签名密钥**已丢失** ⇒ 0.1.7 起改用**新的签名密钥**
   （keystore 与口令都在仓库外/已 gitignore 的本地文件里，**见项目 `CLAUDE.md` 的发布小节**）
 - ⚠️ 该密钥一旦丢失，后续版本无法覆盖安装，所有用户必须卸载重装 ⇒ **务必异地备份**
-- 现有流程（手工）：`assembleRelease -x lintVitalAnalyzeRelease`（本机 lint 组件拉取会被网络重置）→
-  上传到 GitHub Releases
-- **仍未做**：CI 自动构建 + 自动上传 Release（可选）
+- **⚠️ 2026-09-29 实测：本机 `git fetch` / `git push` 全部失败**（`TLS connect error: unexpected eof
+  while reading`）。诊断结论：**代理会掐断 POST，直连才行** ——
+  `git ls-remote` 走代理能通（小请求），`fetch`（POST + packfile）必断；
+  Python `urllib` **直连** `api.github.com` 的 POST 正常（0.6s 返回 200）。
+- ⇒ 0.1.8 的发布改用 **GitHub Git Data API** 完成，脚本 `.devtools/publish-0.1.8.py`（可复用）：
+  1. 取远端 main 的头提交与其 tree 作基线
+  2. 把本地待推提交**逐个重放**（`git diff-tree` → POST `/git/blobs` → `/git/trees` → `/git/commits`）
+  3. `PATCH /git/refs/heads/main` **快进**（父提交就是远端头 ⇒ **不重写历史**）
+  4. 建 tag → 建 Release → 上传 APK → **核对远端 `digest` 与本地 SHA-256**
+  - 注意：API 重放的提交 **SHA 与本地不同**（committer/时间不同），内容一致；
+    等哪天 git 通了，用 `git fetch && git reset --hard origin/main` 把本地对齐即可
+- **仍未做**：CI 自动构建 + 自动上传 Release（可选）。若要做，这一步天然适合放在 CI（不受本机网络限制）
 
 ### 5. 更多短信格式的解析规则（可选，**需要样例**）
 
