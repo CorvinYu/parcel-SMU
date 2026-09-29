@@ -27,11 +27,9 @@ android {
         applicationId = "com.xxxx.parcel"
         minSdk = 29
         targetSdk = 35
-        // versionName 规则（用户 2026-09-29 明确）：**只有真正发了 GitHub Release 的版本才升 versionName**。
-        // 已发布的最新版本 = 0.1.8（versionCode 82）⇒ 0.1.9 阶段一律叫 0.1.9-betaN。
-        // versionCode 每次构建递增（必须单调，否则无法覆盖安装）。
-        versionCode = 89
-        versionName = "0.1.9"
+        // versionName 由用户指定（0.1.8）；versionCode 必须单调递增，否则无法覆盖安装
+        versionCode = 77
+        versionName = "0.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
