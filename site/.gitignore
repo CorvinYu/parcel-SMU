@@ -1,0 +1,8 @@
+# 本地验证产物，不进仓库（截图可达数 MB）
+.shots/
+.shots-live/
+# 素材中间产物（如合成 OG 图用的 512px 图标）
+tools/.cache/
+# Python 字节码（sync_release.py 被导入时会产生）
+__pycache__/
+*.pyc
