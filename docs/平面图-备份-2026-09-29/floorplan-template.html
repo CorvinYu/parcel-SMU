@@ -32,7 +32,7 @@ ul.tight li{margin:1px 0}
 <div class="card"><div class="mapwrap" id="wrap"><img id="bg" src="data:image/png;base64,__B64__"><canvas id="ov"></canvas></div>
 <div class="row"><button id="btnRun" class="primary">计算顺序</button><button id="btnClear">清空</button>
 <button id="btnRandom5">随机 5 件</button><button id="btnRandom10">随机 10 件</button>
-<button id="btnDemo">示例：东西两侧各来一件</button></div>
+<button id="btnDemo">示例：东西两侧各来一件</button><button id="btnDemoSf">示例：只取顺丰件</button></div>
 <label class="ck"><input type="checkbox" id="ckGrid" checked> 显示模型识别的通道网格（蓝＝可走格，绿框＝纵向干线；应与你 Excel 的填充色完全重合）</label>
 <div class="err" id="err"></div>
 <div class="hint" style="margin-top:5px">图上直接点货架 = 加一个取件点；蓝点上的数字是<b>建议取件序号</b>；绿点＝入口，红框＝闸机带。</div></div>
@@ -50,9 +50,10 @@ ul.tight li{margin:1px 0}
 <li>纵向干线 <b>3 条</b>：西侧（靠闸机，列 F~J）、主通道（列 AI~AN）、东侧（列 CK~CP）</li>
 <li>横向走廊 <b>10 条</b>（含最北 J/S 区那条）；闸机带 C12:E16 / C17:E21 / C22:E57 可通行，只用于出行</li>
 <li>起点＝入口闸机（W59:AB59）</li>
-<li>🔴 <b>顺丰出库规则</b>：只要取了 <b>S 件</b>，就必须先到<b>顺丰专用闸机</b>出库；若同时还有普通件，
-    可以在顺丰出库后再去普通货架，最后从 <b>7 号普通闸机</b>出库直接走人；只有顺丰件时，出库点就是终点。
-    <i>程序把它作为「出库点必须在所有 S 件之后」的先后约束，交给 Held–Karp 求最优顺序</i></li>
+<li>🔴 <b>顺丰规则</b>：只要取了 <b>S 件</b>，就<b>必须</b>先到「顺丰专用闸机」<b>出库</b>；
+    若同时还有普通件，出库后再去普通货架，最后从 <b>7 号普通闸机</b>出库（它也是出站口）直接走人；
+    <b>只有顺丰件</b>时：顺丰出库机<b>不能出站</b>，还要走到「顺丰自取快递出口」<b>出站</b>才结束。
+    <i>程序作为「出库点必须在所有 S 件之后 + 路线永远终于出站口」的先后约束，交给 Held–Karp 求最优顺序</i></li>
 <li><b>S 区</b>按格位定位：s1 货位 1~10、s2/s3 各 1~8，左端为 1 向右递增（实测锚点 O7:U7 / O9:U9 / O10:U10）</li>
 <li><b>J 柜列</b>按格位定位：沿列由外端（靠通道）向里递增，<b>柜列纵深计入走位</b>；
     每列实际格数未实测 ⇒ 按 <b>21 格</b>等比铺开（待确认 Q1b/Q5）</li>
@@ -68,25 +69,31 @@ const model=RouteCore.buildModel(COR,{gateSpans:GATE_SPANS,shelfRects:COR.rects}
 const locate=RouteCore.makeLocator(COR,model,{jCells:21});
 const LANES=RouteCore.analyze(model);
 
-/* 出口闸机（依据 Excel 的合并区标签）：
-   普通件 → 「7 号普通闸机」C22:E57（多格，作为集合用：就近出）
-   顺丰件 → 「顺丰专用闸机」C17:E21 / 「顺丰自取快递出口」C12:E16
-   ⚠️ 顺丰出库是路线的**中间停靠点**，必须是一个确定的格：
-      取两处顺丰闸机带的中心格（两处相差 1 格，距离影响 ≤0.5 瓷砖）。若你实际固定走某一道，告诉我我再收紧。 */
+/* 出口 / 出库闸机（依据 Excel 的合并区标签，**照抄原文**）：
+   「7个普通闸机」C22:E57 = 普通件出库 + 出站（多格 ⇒ 集合就近用）
+   「顺丰专用闸机」C17:E21 = 顺丰**出库**（用户：这台不能出站）
+   「顺丰和无快递出口」C12:E16 = 顺丰侧**出站**（只有顺丰件时，出库后还要走到这里才结束）
+   ⚠️ 出库是**中间停靠点 ⇒ 必须是单一格**（取该闸机带的中心格）。 */
 const cellsIn=sp=>model.gates.filter(([r,c])=>r>=sp[0]&&r<=sp[1]&&c>=sp[2]&&c<=sp[3]);
 const rectSpans=re=>COR.rects.filter(r=>r.label&&re.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
-const generalGates=(()=>{const g=rectSpans(/7号|普通闸机/).flatMap(cellsIn);return g.length?g:model.gates;})();
-const sfSpansAll=rectSpans(/顺丰/);
-const sfAll=sfSpansAll.flatMap(cellsIn);
-const sfCell=(()=>{
- const r0=Math.min(...sfSpansAll.map(s=>s[0])),r1=Math.max(...sfSpansAll.map(s=>s[1]));
- const c0=Math.min(...sfSpansAll.map(s=>s[2])),c1=Math.max(...sfSpansAll.map(s=>s[3]));
+const centerOf=(spans,cells)=>{
+ if(!spans.length||!cells.length)return null;
+ const r0=Math.min(...spans.map(s=>s[0])),r1=Math.max(...spans.map(s=>s[1]));
+ const c0=Math.min(...spans.map(s=>s[2])),c1=Math.max(...spans.map(s=>s[3]));
  const cr=(r0+r1+1)/2,cc=(c0+c1+1)/2;
  let best=null,bd=Infinity;
- sfAll.forEach(c=>{const d=(c[0]-cr)*(c[0]-cr)+(c[1]-cc)*(c[1]-cc);if(d<bd){bd=d;best=c;}});
+ cells.forEach(c=>{const d=(c[0]-cr)*(c[0]-cr)+(c[1]-cc)*(c[1]-cc);if(d<bd){bd=d;best=c;}});
  return best;
-})();
-const sfGates=[sfCell];          // 传给求解器的顺丰出库节点（单格）
+};
+const generalGates=(()=>{const g=rectSpans(/普通闸机/).flatMap(cellsIn);return g.length?g:model.gates;})();
+/* 顺丰两处：含「专用」的是出库机，另一处是出站口（不依赖具体措辞） */
+const sfRects=COR.rects.filter(r=>r.label&&/顺丰/.test(r.label)&&/(闸机|出口)/.test(r.label));
+const sfCheckoutSpans=sfRects.filter(r=>/专用/.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
+const sfExitSpans=sfRects.filter(r=>!/专用/.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
+const sfCheckoutCells=sfCheckoutSpans.flatMap(cellsIn);
+const sfExitGates=(()=>{const g=sfExitSpans.flatMap(cellsIn);return g.length?g:model.gates;})();
+const sfAll=sfRects.map(r=>[r.r0,r.r1,r.c0,r.c1]).flatMap(cellsIn);
+const sfGates=[centerOf(sfCheckoutSpans,sfCheckoutCells)];   // 出库节点（单格）
 /* 入口：Excel 的入口闸机（theme5 那条）→ 绕开墙与货架投到最近通道格 */
 const entRun=COR.gate.find(g=>g[2]-g[1]>=2);
 const entCells=[];for(let c=entRun[1];c<=entRun[2];c++)entCells.push([entRun[0],c]);
@@ -143,7 +150,7 @@ function draw(){
   ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
   ctx.fillStyle='#fff';ctx.font='bold 11px sans-serif';ctx.fillText('SF',sx,sy+.5);
  }
- if(lastGate&&lastRes&&lastRes.exitKind==='normal'){
+ if(lastGate&&lastRes){
   const gx=cx(lastGate[1]),gy=cy(lastGate[0]);
   ctx.beginPath();ctx.arc(gx,gy,12,0,Math.PI*2);ctx.fillStyle='rgba(185,28,28,.95)';ctx.fill();
   ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
@@ -167,7 +174,7 @@ function run(){
   document.getElementById('exactBadge').textContent='';
   document.getElementById('runInfo').textContent=badTxt;draw();return;}
  const res=RouteCore.solve(items.map(i=>({label:i.code,cell:i.pos.cellPos,sf:/^S/i.test(i.code),stub:i.pos.stub||0})),
-   {model:model,entranceCell:entrance,sfGateCells:sfGates,normalGateCells:generalGates});
+   {model:model,entranceCell:entrance,sfGateCells:sfGates,sfExitGates:sfExitGates,normalGateCells:generalGates});
  lastOrder=res.order.map(i=>items[i]);lastGate=res.gateExit;lastRes=res;
  /* 交付前断言：每段都必须落在通道格上、每步相邻 */
  let errs=[];
@@ -197,18 +204,20 @@ function run(){
     '<span class="hint">取了 S 件必须先在这里出库　'+(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
   }else{
    const leg=res.legs[res.legs.length-1];
+   const isNormal=res.exitKind==='normal';
    li.innerHTML='<span class="n" style="background:#b91c1c">出</span><span><span class="code">'+
-    (res.exitKind==='normal'?'普通闸机出库（7 号闸机）':'顺丰出库后离场')+'</span><br>'+
-    '<span class="hint">'+((res.exitKind==='normal'&&res.sfAfter>=0)?'出库后直接走人　':'')+(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
+    (isNormal?'普通闸机（7 号）出库 + 出站':'顺丰自取快递出口 出站')+'</span><br>'+
+    '<span class="hint">'+(isNormal?(res.sfAfter>=0?'已顺丰出库，这里出完直接走人　':''):'顺丰出库机不能出站 ⇒ 再走到这里　')
+    +(leg?leg.tiles.toFixed(1):'?')+' 格</span></span>';
   }
   seqEl.appendChild(li);});
  document.getElementById('totalBadge').textContent='共 '+res.total.toFixed(1)+' 格';
  document.getElementById('exactBadge').textContent=res.exact?'精确最优':'非精确（件数>13）';
  document.getElementById('exactBadge').className='badge '+(res.exact?'ok':'warn');
  document.getElementById('runInfo').textContent=(badTxt?badTxt+'　':'')
-   +'终点：'+(res.exitKind==='normal'?'7 号普通闸机':'顺丰出库闸机')
+   +'终点：'+(res.exitKind==='normal'?'7 号普通闸机（出库+出站）':'顺丰自取快递出口（出站）')
    +'（行'+res.gateExit[0]+' 列'+res.gateExit[1]+'）'
-   +(res.sfAfter>=0?('　｜　顺丰出库插在第 '+res.sfAfter+' 件之后'):'');
+   +(res.sfAfter>=0?('　｜　顺丰出库插在第 '+res.sfAfter+' 件之后（出库机不能出站）'):'');
  draw();
 }
 /* ---------- 模型自检面板 ---------- */
@@ -225,7 +234,8 @@ function run(){
  html+=li('横向走廊 <b>'+cors.length+'</b> 条：'+cors.map(t=>
    '深 '+model.depOf(t.r1+0.5).toFixed(1)+'~'+model.depOf(t.r0-0.5).toFixed(1)).join('，'));
  html+=li('闸机带可通行格：<b>'+model.gates.length+'</b> 格（只用于出行）—— 普通出口 '+generalGates.length+' 格；顺丰 '+sfAll.length+' 格');
- html+=li('顺丰出库节点（单一格）：行'+sfCell[0]+' 列'+sfCell[1]+'（两处顺丰闸机带的中心）');
+ html+=li('顺丰<b>出库</b>节点（单一格）：行'+(sfGates[0]?sfGates[0][0]:'?')+' 列'+(sfGates[0]?sfGates[0][1]:'?')+
+   '（「顺丰专用闸机」C17:E21 的中心）　｜　顺丰<b>出站</b>：'+sfExitGates.length+' 格（「顺丰和无快递出口」C12:E16）');
  html+=li('入口：Excel 入口闸机 → 通道格 ('+entrance.row+','+entrance.col+')');
  ul.innerHTML=html;
 })();
@@ -233,8 +243,14 @@ document.getElementById('btnRun').onclick=run;
 document.getElementById('btnClear').onclick=()=>{codesEl.value='';run();};
 document.getElementById('ckGrid').onchange=draw;
 document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, Q1-3, S3-2-2628, D8-6';run();};
-/* 随机：从 Excel 合并区里挑普通排货架 */
-const SHELF_CODES=COR.rects.filter(r=>/^[A-R]\d{1,2}$/.test(r.label||'')).map(r=>r.label);
+document.getElementById('btnDemoSf').onclick=()=>{codesEl.value='S1-1, S3-2-2628';run();};
+/* 随机：覆盖**全部区域**（普通排 + J 柜列 + S 顺丰 + Y 大件），不再只有普通排 */
+const SHELF_CODES=(()=>{
+ const a=COR.rects.filter(r=>/^[A-R]\d{1,2}$/.test(r.label||'')).map(r=>r.label);   // 普通排 + J 柜列
+ const s=COR.rects.filter(r=>/^S\d$/.test(r.label||'')).map(r=>r.label);            // 顺丰 s1~s3
+ const y=['Y1','Y5','Y8'];                                                          // 大件（精确版里是一整块）
+ return [...new Set(a.concat(s,y))];
+})();
 function rand(n){const a=new Set();while(a.size<n)a.add(SHELF_CODES[Math.floor(Math.random()*SHELF_CODES.length)]+'-1');
  codesEl.value=[...a].join(', ');run();}
 document.getElementById('btnRandom5').onclick=()=>rand(5);
@@ -245,10 +261,12 @@ ov.addEventListener('click',ev=>{
  const mx=(ev.clientX-r.left)*(ov.width/r.width),my=(ev.clientY-r.top)*(ov.height/r.height);
  let best=null,bd=Infinity;
  COR.rects.forEach(rc=>{
-  if(!rc.label||!/^([A-R]\d{1,2}|[JS]\d|A\d)$/.test(rc.label))return;
+  if(!rc.label||!/^([A-R]\d{1,2}|[JS]\d|Y区域)$/.test(rc.label))return;
   const x=cx((rc.c0+rc.c1+1)/2),y=cy((rc.r0+rc.r1+1)/2);
   const d=Math.hypot(x-mx,y-my);if(d<bd){bd=d;best=rc.label;}});
- if(best&&bd<60){const cur=cc();if(!cur.includes(best+'-1')){codesEl.value=cur.concat(best+'-1').join(', ');run();}}
+ if(best&&bd<60){
+  const code=(best==='Y区域'?'Y5-1':best+'-1');    // Y 在精确版里是一整块，用 Y5-1 代表
+  const cur=cc();if(!cur.includes(code)){codesEl.value=cur.concat(code).join(', ');run();}}
 });
 run();
 </script></body></html>
