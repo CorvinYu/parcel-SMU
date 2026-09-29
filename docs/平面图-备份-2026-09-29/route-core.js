@@ -21,7 +21,7 @@
   'use strict';
 
   var CELL_TILES = 0.5;          // 1 单元格 = 0.5 瓷砖
-  var EXACT_MAX = 13;            // ≤13 件走精确 Held–Karp，超过退化为 NN + 2-opt（并如实标记）
+  var EXACT_MAX = 16;            // ≤16 件走精确 Held–Karp（2^16×17×2 ≈ 2.2M 状态）；超过退化为两种子 + 2-opt 并如实标记
 
   /* ---------- 1) 建模：把通道 RLE 变成可走网格 ---------- */
   function buildModel(cor, opts) {
@@ -395,7 +395,9 @@
       seqNodes.reverse();
       total = best;
     } else {
-      /* 启发式（>13 件）：S 件块 → 顺丰出库 → 普通件块，块内最近邻 + 2-opt，如实标 exact=false */
+      /* 启发式（>EXACT_MAX 件）：S 件块 → 顺丰出库 → 普通件块。
+         普通件块用**两个种子**各跑一遍 2-opt 取优者：
+           ① 最近邻（聚簇场景好）② **走廊扫描**（按投影行从入口往里、同一走廊内按横向走） */
       var sList = [], nList = [];
       picks.forEach(function (p, i) { (p.sf ? sList : nList).push(i); });
       function nn(list, fromSf) {
@@ -433,7 +435,8 @@
         }
         return t;
       }
-      var sSeq = nn(sList, false), nSeq = nn(nList, hasSf);
+      var sSeq = nn(sList, false);
+      var nSeq = nn(nList, hasSf);
       function twoOpt(arr, which) {
         var improved = true;
         while (improved) {
@@ -446,8 +449,14 @@
           }
         }
       }
-      twoOpt(sSeq, 's');
       twoOpt(nSeq, 'n');
+      var sweep = nList.slice().sort(function (a, b) {
+        if (picks[a].cell.row !== picks[b].cell.row) return picks[b].cell.row - picks[a].cell.row;
+        return picks[a].cell.col - picks[b].cell.col;
+      });
+      twoOpt(sweep, 'n');
+      if (seqCost(sSeq, sweep) < seqCost(sSeq, nSeq)) nSeq = sweep;
+      twoOpt(sSeq, 's');
       order = sSeq.concat(nSeq);
       seqNodes = [];
       sSeq.forEach(function (x) { seqNodes.push({ node: x, sf: 0 }); });
@@ -597,10 +606,12 @@
         depth = e.d0 + (jCells > 1 ? jk / (jCells - 1) : 0) * (e.d1 - e.d0);   // d0 = 靠通道的外端
         posNote = 'j' + shelf + ' 第' + (cell || 1) + '格（沿列由外端向里，按 ' + jCells + ' 格铺开）';
       }
-      /* 投影：从整个合并区出发、绕开墙与货架的 BFS（不允许穿墙） */
+      /* 投影：从整个合并区出发、绕开墙与货架的 BFS（不允许穿墙）。
+         ⚠️ 决胜基准必须是**按格位算出来的精确点**，不能是合并区中心 ——
+         否则 S 区同一货架的不同格会全部投到同一格，段距恒为 0（踩过）。 */
       var src = [];
       for (var r = e.r0; r <= e.r1; r++) for (var c = e.c0; c <= e.c1; c++) src.push([r, c]);
-      var near = model.nearestWalkFrom(src, (e.r0 + e.r1 + 1) / 2, (e.c0 + e.c1 + 1) / 2);
+      var near = model.nearestWalkFrom(src, model.rowOf(depth), model.colOf(lat));
       if (!near) return null;
       /* 区内那一段（投影格 ↔ 取件格）走位：J 柜列的纵深必须算进距离，其余近似为 0 */
       var pc = model.pointOf(near.row, near.col);
