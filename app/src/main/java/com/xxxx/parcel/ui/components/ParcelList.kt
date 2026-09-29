@@ -46,13 +46,13 @@ import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.util.PickupCategory
-import com.xxxx.parcel.util.SiteLayout
+import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
-import com.xxxx.parcel.util.getSiteLayout
+import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveCodeNote
 import com.xxxx.parcel.viewmodel.ParcelViewModel
@@ -232,14 +232,14 @@ fun ParcelList(
     // 「按取件路线排序」：把「快递站」页里能定位的件按最优取件顺序排开（①②③…），
     // 定位不了的（无货格号、货架号越界）保持原顺序排在后面。
     // 布局参数与「取件路线」页共用同一套。
-    val routeLayout = remember { getSiteLayout(context) }
-    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeLayout) {
+    val routeOptions = remember { getRouteOptions(context) }
+    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeOptions) {
         if (!routeSortEnabled) {
             emptyMap()
         } else {
             stationRouteOrder(
                 filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
-                routeLayout,
+                routeOptions,
             )
         }
     }
@@ -417,7 +417,7 @@ private data class ParcelListEntry(
  */
 private fun stationRouteOrder(
     parcels: List<ParcelData>,
-    layout: SiteLayout,
+    options: RouteOptions,
 ): Map<String, Int> {
     val pairs = parcels.mapNotNull { parcel ->
         val sms = parcel.smsDataList.firstOrNull { !it.isCompleted }
@@ -427,7 +427,7 @@ private fun stationRouteOrder(
     }
     if (pairs.isEmpty()) return emptyMap()
 
-    val route = planPickupRoute(pairs.map { it.second }, layout, returnToEntrance = true)
+    val route = planPickupRoute(pairs.map { it.second }, options)
     val remaining = pairs.toMutableList()
     val order = LinkedHashMap<String, Int>()
     var seq = 0

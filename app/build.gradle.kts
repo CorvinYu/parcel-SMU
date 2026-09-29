@@ -30,8 +30,8 @@ android {
         // versionName 规则（用户 2026-09-29 明确）：**只有真正发了 GitHub Release 的版本才升 versionName**。
         // 已发布的最新版本 = 0.1.8（versionCode 82）⇒ 0.1.9 阶段一律叫 0.1.9-betaN。
         // versionCode 每次构建递增（必须单调，否则无法覆盖安装）。
-        versionCode = 85
-        versionName = "0.1.9-beta3"
+        versionCode = 86
+        versionName = "0.1.9-beta4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
