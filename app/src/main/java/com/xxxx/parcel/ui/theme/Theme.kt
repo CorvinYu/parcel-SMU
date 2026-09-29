@@ -30,7 +30,6 @@ import com.xxxx.parcel.util.AppBackgroundPreset
 import com.xxxx.parcel.util.AppBackgroundScaleMode
 import com.xxxx.parcel.util.getAppBackgroundSettings
 import com.xxxx.parcel.util.getBarcodePayload
-import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.loadBarcodeBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -104,29 +103,9 @@ fun ParcelTheme(
         settings.scaleMode.toContentScale()
     }
 
-    // 海大版：快递中心条码铺作背景。
-    // 按「屏幕实际像素」生成 —— ZXing 内部按整数倍放大条宽，因此横向天然等比，
-    // 铺满只是把条拉高（纵向），不会变形导致扫不出。
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
-    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.roundToPx() }
-    val barcodeEnabled = remember(barcodeVersion) { isBarcodeBackgroundEnabled(context) }
-    val barcodeBitmap by produceState<Bitmap?>(
-        null,
-        barcodeVersion,
-        barcodeEnabled,
-        screenWidthPx,
-        screenHeightPx
-    ) {
-        value = if (!barcodeEnabled) {
-            null
-        } else {
-            withContext(Dispatchers.Default) {
-                loadBarcodeBitmap(context, screenWidthPx, screenHeightPx)
-            }
-        }
-    }
+    // 注：「快递中心条码铺满首页背景」这条功能已按用户要求**整条删除**
+    // （效果不好、也容易压住列表文字）。barcodeVersion 参数保留：它变化时会触发
+    // ParcelTheme 重组，让顶条/底部浮窗重新读取条码设置。
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -153,15 +132,6 @@ fun ParcelTheme(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(Color.Black.copy(alpha = settings.overlayAlpha))
-                    )
-                }
-                val barcodeImage = barcodeBitmap
-                if (applyCustomBackground && barcodeImage != null) {
-                    Image(
-                        bitmap = barcodeImage.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.FillBounds
                     )
                 }
                 content()
