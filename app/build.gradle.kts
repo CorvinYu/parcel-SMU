@@ -30,8 +30,8 @@ android {
         // versionName 规则（用户 2026-09-29 明确）：**只有真正发了 GitHub Release 的版本才升 versionName**。
         // 未发布的本地构建用「上一个已发布版本 + -betaN」；已发布的最新版本是 0.1.7（versionCode 76）。
         // versionCode 每次构建递增即可（必须单调，否则无法覆盖安装）。
-        versionCode = 80
-        versionName = "0.1.8-beta2"
+        versionCode = 81
+        versionName = "0.1.8-beta3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

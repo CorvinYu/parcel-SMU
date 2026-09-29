@@ -46,8 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.util.BarcodeSymbology
-import com.xxxx.parcel.util.compartmentFromPickupCode
-import com.xxxx.parcel.util.isLockerCode
 import com.xxxx.parcel.util.renderBarcodePixels
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
@@ -77,21 +75,15 @@ fun BarcodeLabScreen(
     navController: NavController,
 ) {
     val successData by viewModel.successSmsData.collectAsState()
-    // ⚠️ 这个页面是**给快递柜柜机**试的，候选只取「快递柜」的取件码（纯数字）。
-    // 人工货架的货格号（D8-6 这类）柜机根本不认，混进来只会误导；单独放一小块仅供对照。
-    val lockerCandidates = remember(successData) {
-        successData.filter { !it.isCompleted && isLockerCode(it.code) }
-            .map { it.code.trim() }
+    // 候选：当前未取件的取件码 + 解析出的货格号，去重
+    val candidates = remember(successData) {
+        successData.filter { !it.isCompleted }
+            .flatMap { listOf(it.code, it.compartmentNumber) }
+            .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
     }
-    val shelfCandidates = remember(successData) {
-        successData.filter { !it.isCompleted && !isLockerCode(it.code) }
-            .map { it.compartmentNumber.trim().ifEmpty { it.code.trim() } }
-            .filter { it.isNotEmpty() && compartmentFromPickupCode(it) != null }
-            .distinct()
-    }
-    var input by remember(lockerCandidates) { mutableStateOf(lockerCandidates.firstOrNull().orEmpty()) }
+    var input by remember(candidates) { mutableStateOf(candidates.firstOrNull().orEmpty()) }
     val variants = remember(input) { labVariants(input) }
 
     Scaffold(
@@ -116,22 +108,16 @@ fun BarcodeLabScreen(
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("这是给「快递柜」试的", fontWeight = FontWeight.Medium)
+                    Text("这是什么", fontWeight = FontWeight.Medium)
                     Text(
-                        "把**快递柜的取件码**按几种常见码制渲染出来，拿到柜机的「扫码口」上试扫，" +
+                        "把同一个取件码按几种常见码制渲染出来，拿到快递柜柜机的「扫码口」上试扫，" +
                             "看有没有机型认。**成功与否取决于那台柜机的固件**，测出来才知道。",
                         style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "人工货架的货格号（`D8-6` 这类）柜机本来就不认，所以不放在主列表里——" +
-                            "但下面也留了一小块，想对照着试也行。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text("怎么测", fontWeight = FontWeight.Medium)
                     Text(
                         "在柜机上点「取件」→ 如果屏幕出现扫码提示（或扫码口有光），就把下面对应的条码" +
-                            "凑近扫一下；先把手机亮度调高、别贴反光。",
+                            "凑近扫一下；注意先把手机亮度调高、别贴反光。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
@@ -146,36 +132,22 @@ fun BarcodeLabScreen(
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
-                label = { Text("要试的快递柜取件码") },
-                supportingText = { Text("纯数字，例如 54018314；柜机上一般还要先选柜号。") },
+                label = { Text("要试的取件码") },
+                supportingText = { Text("一般用快递柜的纯数字取件码；也可以用人工货架的货格号试试。") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            if (lockerCandidates.isNotEmpty()) {
-                Text("从当前待取的快递柜取件码里选", fontWeight = FontWeight.Medium)
+            if (candidates.isNotEmpty()) {
+                Text("从当前待取件里选", fontWeight = FontWeight.Medium)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    lockerCandidates.chunked(3).forEach { rowCodes ->
+                    candidates.chunked(3).forEach { rowCodes ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             rowCodes.forEach { code ->
-                                AssistChip(onClick = { input = code }, label = { Text(code) })
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (shelfCandidates.isNotEmpty()) {
-                Text(
-                    "人工货架货格号（柜机不认，仅供对照）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    shelfCandidates.chunked(4).forEach { rowCodes ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            rowCodes.forEach { code ->
-                                AssistChip(onClick = { input = code }, label = { Text(code) })
+                                AssistChip(
+                                    onClick = { input = code },
+                                    label = { Text(code) },
+                                )
                             }
                         }
                     }
