@@ -42,6 +42,7 @@ import com.xxxx.parcel.util.SiteLayout
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getRouteAisleSpacing
 import com.xxxx.parcel.util.getRouteExitDepth
+import com.xxxx.parcel.util.getRouteShelfWidth
 import com.xxxx.parcel.util.getRouteExitLateral
 import com.xxxx.parcel.util.getRouteDoorToSpine
 import com.xxxx.parcel.util.getRouteRowLetters
@@ -52,6 +53,7 @@ import com.xxxx.parcel.util.parseRowLetters
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveRouteAisleSpacing
 import com.xxxx.parcel.util.saveRouteExitDepth
+import com.xxxx.parcel.util.saveRouteShelfWidth
 import com.xxxx.parcel.util.saveRouteExitLateral
 import com.xxxx.parcel.util.saveRouteDoorToSpine
 import com.xxxx.parcel.util.saveRouteReturnToEntrance
@@ -78,13 +80,15 @@ fun RouteScreen(
     var returnToEntrance by remember { mutableStateOf(isRouteReturnToEntrance(context)) }
     var aisleSpacingText by remember { mutableStateOf(getRouteAisleSpacing(context).toString()) }
     var doorToSpineText by remember { mutableStateOf(getRouteDoorToSpine(context).toString()) }
+    var shelfWidthText by remember { mutableStateOf(getRouteShelfWidth(context).toString()) }
     var exitDepthText by remember { mutableStateOf(getRouteExitDepth(context).toString()) }
     var exitLateralText by remember { mutableStateOf(getRouteExitLateral(context).toString()) }
 
-    val layout = remember(rowLettersText, aisleSpacingText, doorToSpineText, exitDepthText, exitLateralText) {
+    val layout = remember(rowLettersText, aisleSpacingText, shelfWidthText, doorToSpineText, exitDepthText, exitLateralText) {
         SiteLayout.default().copy(
             rowLetters = parseRowLetters(rowLettersText),
             aisleSpacingTiles = aisleSpacingText.toIntOrNull()?.coerceIn(1, 20) ?: 3,
+            shelfWidthTiles = shelfWidthText.toIntOrNull()?.coerceIn(1, 20) ?: 3,
             doorToSpineTiles = doorToSpineText.toIntOrNull()?.coerceIn(0, 50) ?: 4,
             exitDepthTiles = exitDepthText.toIntOrNull()?.coerceIn(0, 60) ?: 10,
             exitLateralTiles = exitLateralText.toIntOrNull()?.coerceIn(0, 30) ?: 5,
@@ -294,8 +298,15 @@ fun RouteScreen(
                 value = aisleSpacingText,
                 onValueChange = { aisleSpacingText = it },
                 label = "相邻两条横向通道之间的距离（格）",
-                supporting = "默认 3。只影响总格数与「谁更深」的权重，不影响相对顺序。",
+                supporting = "实测 3 格（横向通道 2 格 + 背靠背两个货架 1 格）。",
                 onSave = { saveRouteAisleSpacing(context, it) },
+            )
+            NumberField(
+                value = shelfWidthText,
+                onValueChange = { shelfWidthText = it },
+                label = "单个货架的宽度（格）",
+                supporting = "实测 3 格（\"近 4，按 3 算\"）。相邻货架号之间就隔这么多 —— 这条对顺序影响最大。",
+                onSave = { saveRouteShelfWidth(context, it) },
             )
             NumberField(
                 value = doorToSpineText,
@@ -315,7 +326,7 @@ fun RouteScreen(
                 value = exitLateralText,
                 onValueChange = { exitLateralText = it },
                 label = "出口距主通道多远（格）",
-                supporting = "默认 5（西侧门在 1 号货架之外）。",
+                supporting = "默认 15（1 号货架中心 12 格 + 半个货架）。",
                 onSave = { saveRouteExitLateral(context, it) },
             )
 

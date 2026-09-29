@@ -158,8 +158,23 @@ data class SiteLayout(
     val shelvesPerRow: Int = 12,
     /** 主通道西侧的货架号上界（默认 4 ⇒ 西 1~4、东 5~12） */
     val leftBlockEnd: Int = 4,
-    /** 相邻两条横向通道之间的纵向格数 */
+    /**
+     * 相邻两条横向通道之间的纵向格数。
+     *
+     * 用户 2026-09-29 实测：**横向通道宽 2 格**，**背靠背两个货架占 1 格** ⇒ 2 + 1 = **3 格**。
+     */
     val aisleSpacingTiles: Int = 3,
+    /**
+     * 单个货架的宽度（格）。用户 2026-09-29 实测：**3 格**（"近 4，按 3 算，实际略多于 3"）。
+     * ⇒ 相邻货架号的横向间距就是这个值。
+     */
+    val shelfWidthTiles: Int = 3,
+    /**
+     * 紧邻主通道那个货架的中心，距主通道**中心线**的横向格数。
+     *
+     * = 主通道半宽 + 货架半宽 = 1.5 + 1.5 = **3 格**（纵向通道宽 3 格、货架宽 3 格，均为实测）。
+     */
+    val lateralBaseTiles: Int = 3,
     /** 入口到主通道口的横向格数（用户口述「向右 4 块瓷砖」） */
     val doorToSpineTiles: Int = 4,
     /**
@@ -169,8 +184,12 @@ data class SiteLayout(
      * **等用户实测的瓷砖格数到位后再校准**。
      */
     val exitDepthTiles: Int = 10,
-    /** 出口距主通道的横向格数：西侧门在货架 1 之外，默认 5 格 */
-    val exitLateralTiles: Int = 5,
+    /**
+     * 出口距主通道中心线的横向格数。
+     *
+     * 西侧门在 1 号货架之外：1 号货架中心 12 格 + 半个货架 1.5 ⇒ 取 **15 格**。
+     */
+    val exitLateralTiles: Int = 15,
     val specialShelves: List<SpecialShelf> = defaultSpecialShelves(),
 ) {
     /** 最里侧那条通道的序号（J 柜列与 S 顺丰区挂在它上面） */
@@ -200,7 +219,9 @@ data class SiteLayout(
                     shelfNumber = i,
                     maxCell = 21,
                     depthTiles = 25,          // 原图标签在第 10 行 ⇒ 通道 11 以北 1 格
-                    lateralBase = 7 - i,      // j1=6 … j6=1
+                    // 实测尺度：列宽 3 格、列间纵向通道 3 格；j6 紧邻主通道 ⇒
+                    // 从主通道往西：j6=3、[通道3]、j5=9、j4=12、[通道3]、j3=18、j2=21、[通道3]、j1=27
+                    lateralBase = listOf(27, 21, 18, 12, 9, 3)[i - 1],
                     spineSide = SpineSide.WEST,
                     aisleSide = AisleSide.NORTH,
                     aisle = 8,
@@ -219,7 +240,7 @@ data class SiteLayout(
                     shelfNumber = num,
                     maxCell = maxCell,
                     depthTiles = depth,
-                    lateralBase = 1,
+                    lateralBase = 3,          // 紧邻主通道（实测：货架中心离通道中心线 3 格）
                     spineSide = SpineSide.EAST,
                     aisleSide = AisleSide.NORTH,
                     aisle = 8,
@@ -243,7 +264,8 @@ data class SiteLayout(
                     shelfNumber = num,
                     maxCell = spec[1],
                     depthTiles = spec[2],
-                    lateralBase = 9,          // 位于纵向通道 V 之东（货架 12 之外）
+                    // 位于纵向通道 V 之东：货架 12 中心 24 + 半货架 1.5 + 通道 V 3 + 半个单元 1.5 = 30
+                    lateralBase = 30,
                     spineSide = SpineSide.EAST,
                     aisleSide = AisleSide.NORTH,
                     aisle = spec[4],
@@ -257,7 +279,7 @@ data class SiteLayout(
                 shelfNumber = 8,
                 maxCell = 8,
                 depthTiles = 15,
-                lateralBase = 9,
+                lateralBase = 30,
                 spineSide = SpineSide.EAST,
                 aisleSide = AisleSide.NORTH,
                 aisle = 5,
@@ -329,16 +351,26 @@ private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
 fun effectiveCompartmentNumber(compartmentNumber: String, code: String): String =
     compartmentNumber.trim().ifBlank { compartmentFromPickupCode(code) ?: "" }
 
-/** 货架号 → 距主纵向通道的横向格数；越靠近通道越小。 */
+/**
+ * 货架号 → 距主纵向通道**中心线**的横向格数；越靠近通道越小。
+ *
+ * 用用户 2026-09-29 实测的瓷砖格数算（不再是估的）：
+ * - 纵向通道宽 3 格 + 单个货架宽 3 格 ⇒ 紧邻通道那个货架的**中心**离通道中心线 = 1.5 + 1.5 = **3 格**
+ *   （即 [SiteLayout.lateralBaseTiles]）
+ * - 相邻货架号之间 = 一个货架宽 = **3 格**（[SiteLayout.shelfWidthTiles]）
+ *
+ * 于是西侧 1~4 = 12 / 9 / 6 / 3，东侧 5~12 = 3 / 6 / … / 24。
+ */
 fun lateralTilesFor(shelfNumber: Int, layout: SiteLayout): Int? {
     if (shelfNumber < 1 || shelfNumber > layout.shelvesPerRow) return null
-    return if (shelfNumber <= layout.leftBlockEnd) {
-        // 西侧：通道在西段的东端 ⇒ 4 号最近（1 格），1 号最远
-        layout.leftBlockEnd - shelfNumber + 1
+    val steps = if (shelfNumber <= layout.leftBlockEnd) {
+        // 西侧：4 号紧邻通道（0 步），1 号最远（leftBlockEnd-1 步）
+        layout.leftBlockEnd - shelfNumber
     } else {
-        // 东侧：通道在东段的西端 ⇒ 5 号最近（1 格），12 号最远
-        shelfNumber - layout.leftBlockEnd
+        // 东侧：5 号紧邻通道（0 步），12 号最远
+        shelfNumber - layout.leftBlockEnd - 1
     }
+    return layout.lateralBaseTiles + steps * layout.shelfWidthTiles
 }
 
 /** 把货格号定位到场地坐标；无法定位（未知字母、货架号越界）返回 null。 */
@@ -422,12 +454,19 @@ fun entranceToTiles(target: SitePosition, layout: SiteLayout): Int =
  * 该点 → **西侧出口** 的步数。
  *
  * 用户 2026-09-29 确认：**取完从西侧大门出去**（原图 `A15:A30` 那道门），**不是走回南门**。
- * 所以是「横向回主通道 → 沿主通道走到出口所在深度 → 再横向出去」。
+ *
+ * 两种走法：
+ * - 目标在**西侧**、且与出口**同一条横向通道** ⇒ 沿这条通道径直往西出去，不必回主通道；
+ * - 其余情况 ⇒ 横向回主通道 → 沿主通道走到出口所在深度 → 再横向出去。
  */
-fun exitFromTiles(target: SitePosition, layout: SiteLayout): Int =
-    target.lateralTiles +
-        abs(target.depthTiles - layout.exitDepthTiles) +
-        layout.exitLateralTiles
+fun exitFromTiles(target: SitePosition, layout: SiteLayout): Int {
+    val depthGap = abs(target.depthTiles - layout.exitDepthTiles)
+    return if (depthGap == 0 && target.spineSide == SpineSide.WEST) {
+        abs(target.lateralTiles - layout.exitLateralTiles)
+    } else {
+        target.lateralTiles + depthGap + layout.exitLateralTiles
+    }
+}
 
 /**
  * 两点之间的步数（走行图上的最短路径）。
