@@ -17,7 +17,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.snap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,14 +31,12 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
+import com.xxxx.parcel.ui.components.BarcodePresentationDialog
 import com.xxxx.parcel.ui.components.BarcodeStrip
 import com.xxxx.parcel.ui.components.HomeTopBar
 import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.TimeFilterSheet
 import com.xxxx.parcel.ui.components.timeFilterOptions
-import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_DP
-import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_SENIOR_DP
-import com.xxxx.parcel.util.getBarcodeBottomHeightDp
 import com.xxxx.parcel.util.getHorizontalLayout
 import com.xxxx.parcel.util.getPreferLockerAddress
 import com.xxxx.parcel.util.getShowCodeTime
@@ -47,9 +44,10 @@ import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.isRouteSortList
+import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
+import com.xxxx.parcel.util.isBarcodeBottomFillEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
-import com.xxxx.parcel.util.saveBarcodeBottomHeightDp
 import com.xxxx.parcel.util.saveHorizontalLayout
 import com.xxxx.parcel.util.saveIndex
 import com.xxxx.parcel.util.savePreferLockerAddress
@@ -83,16 +81,12 @@ fun HomeScreen(
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
-    // 底部浮窗高度：用户在浮窗顶部上下拖动调节，持久化
-    var bottomHeightDp by remember {
-        mutableStateOf(
-            getBarcodeBottomHeightDp(context).takeIf { it > 0 }
-                ?: if (isSeniorMode) DEFAULT_BOTTOM_HEIGHT_SENIOR_DP else DEFAULT_BOTTOM_HEIGHT_DP
-        )
-    }
-    var draggingBottom by remember { mutableStateOf(false) }
-    // 条码铺作背景的功能已删除，这里不再需要给顶栏加垫子
+    var barcodeBottomFillEnabled by remember { mutableStateOf(isBarcodeBottomFillEnabled(context)) }
+    // 由列表上报「当前页内容高度（px）」，用来算出底部条码能占多少空白
     var listContentHeightPx by remember { mutableStateOf<Int?>(null) }
+    // 条码铺作背景时，文字直接压在条码上会难读 —— 给文字容器加半透明垫子
+    val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
+    var showBarcodePresentation by remember { mutableStateOf(false) }
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -102,7 +96,14 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             Column(
-                modifier = Modifier
+                modifier = if (barcodeBackgroundOn) {
+                    Modifier.background(
+                        if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.74f)
+                        else Color.White.copy(alpha = 0.90f)
+                    )
+                } else {
+                    Modifier
+                }
             ) {
             HomeTopBar(
                 context = context,
@@ -164,6 +165,7 @@ fun HomeScreen(
                     BarcodeStrip(
                         context = context,
                         isSeniorMode = isSeniorMode,
+                        onPresent = { showBarcodePresentation = true },
                         onOpenSettings = { navController.navigate("barcode") }
                     )
                 }
@@ -175,28 +177,23 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // 底部浮窗高度 = 「列表没占满时剩下的空白」与「用户拖动设定的高度」取小；
-            // 列表装不下（内容高度未知）时缩到最小高度让位给列表。
+            // 列表「装得下」时，把下方空白整块让给条码；装不下就缩到最小高度、给取件码让位。
+            // 用容器总高度 maxHeight（固定值）而不是列表视口来算，避免「条码变高→视口变矮→条码又变矮」的来回震荡。
             val density = LocalDensity.current
             val contentHeightDp = remember(listContentHeightPx) {
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
-            // 手动可调的上限：最多占容器一半，别把列表挤没
-            val maxBarcodeHeight = maxHeight * 0.5f
-            val userHeight = bottomHeightDp.dp.coerceIn(minBarcodeHeight, maxBarcodeHeight)
-            // 空 8dp 余量，避免「浮窗变高 → 列表视口变矮 → 列表变成可滚动 → 浮窗又缩回」的来回震荡
-            val availableBlank = contentHeightDp?.let { (maxHeight - it - 8.dp).coerceAtLeast(0.dp) }
-            val targetBottomHeight = if (availableBlank == null) {
-                minBarcodeHeight
-            } else {
-                availableBlank.coerceIn(minBarcodeHeight, userHeight)
-            }
-            // 拖动过程中用 snap，避免动画拖后腿
-            val animatedBottomHeight by animateDpAsState(
-                targetValue = if (draggingBottom) userHeight else targetBottomHeight,
-                animationSpec = if (draggingBottom) snap() else tween(320, easing = FastOutSlowInEasing),
-                label = "barcodeBottomHeight"
+            // 最多占屏幕 1/4，别把页面顶得太高（用户反馈：太高不好看）
+            val maxBarcodeHeight = maxHeight * 0.25f
+            val targetFillHeight = (contentHeightDp?.let { maxHeight - it } ?: maxBarcodeHeight)
+                .coerceAtMost(maxBarcodeHeight)
+                .coerceAtLeast(minOf(minBarcodeHeight, maxBarcodeHeight))
+            // 隐藏/取出取件码时列表高度会突变，条码高度用动画跟上，避免「啪」地跳一下
+            val animatedFillHeight by animateDpAsState(
+                targetValue = targetFillHeight,
+                animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+                label = "barcodeFillHeight"
             )
 
             Column(modifier = Modifier.fillMaxSize()) {
@@ -227,25 +224,25 @@ fun HomeScreen(
                         }
                 }
 
-                if (barcodeBottomEnabled) {
+                if (barcodeBottomFillEnabled) {
                     BarcodeBottomCard(
                         context = context,
                         isSeniorMode = isSeniorMode,
-                        heightDp = animatedBottomHeight,
-                        onDrag = { delta ->
-                            // 向上拖（delta 为负）⇒ 变高
-                            bottomHeightDp = (bottomHeightDp - delta.value).toInt()
-                                .coerceIn(
-                                    minBarcodeHeight.value.toInt(),
-                                    maxBarcodeHeight.value.toInt(),
-                                )
-                        },
-                        onDragStart = { draggingBottom = true },
-                        onDragEnd = {
-                            draggingBottom = false
-                            saveBarcodeBottomHeightDp(context, bottomHeightDp)
-                        },
+                        onPresent = { showBarcodePresentation = true },
                         onOpenSettings = { navController.navigate("barcode") },
+                        fillHeightDp = animatedFillHeight.value.toInt()
+                    )
+                }
+            }
+
+            // 固定高度的一条浮窗（与「底部填充」是两种形态；同时开启时以填充为准）
+            if (barcodeBottomEnabled && !barcodeBottomFillEnabled) {
+                Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    BarcodeBottomCard(
+                        context = context,
+                        isSeniorMode = isSeniorMode,
+                        onPresent = { showBarcodePresentation = true },
+                        onOpenSettings = { navController.navigate("barcode") }
                     )
                 }
             }
@@ -259,6 +256,13 @@ fun HomeScreen(
                 (context as MainActivity).readAndParseSms()
             },
             onDismiss = { showBottomSheet = false }
+        )
+    }
+
+    if (showBarcodePresentation) {
+        BarcodePresentationDialog(
+            context = context,
+            onDismiss = { showBarcodePresentation = false }
         )
     }
 

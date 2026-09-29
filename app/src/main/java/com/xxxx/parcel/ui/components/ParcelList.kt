@@ -330,14 +330,12 @@ fun ParcelList(
             LaunchedEffect(layoutInfo, page, pagerState.currentPage) {
                 if (page == pagerState.currentPage) {
                     onListContentHeightPx(
-                        when {
-                            // 空列表：下方整块都是空白，交给底部浮窗
-                            layoutInfo.totalItemsCount == 0 -> 0
-                            // 全部可见：上报内容高度，底部浮窗据此算「还能占多少空白」
-                            layoutInfo.visibleItemsInfo.size == layoutInfo.totalItemsCount ->
-                                layoutInfo.visibleItemsInfo.sumOf { it.size }
-                            // 列表可滚动：没有空白可让，底部浮窗缩到最小
-                            else -> null
+                        if (layoutInfo.totalItemsCount > 0 &&
+                            layoutInfo.visibleItemsInfo.size == layoutInfo.totalItemsCount
+                        ) {
+                            layoutInfo.visibleItemsInfo.sumOf { it.size }
+                        } else {
+                            null
                         }
                     )
                 }

@@ -280,6 +280,45 @@ fun parseCompartmentCode(raw: String): CompartmentCode? {
     return CompartmentCode(row, shelf, cell, sub, raw.trim())
 }
 
+/**
+ * 从「取件码」文本里识别**人工货架 / 顺丰 / 大件**的货格号。
+ *
+ * 为什么需要它：上游 `SmsParser` 的 `compartmentNumber` 只从「格口」「N号柜」这类**快递柜**写法里提取
+ * （见 `SmsParser.compartmentPattern` 等三条正则），人工货架短信（`请用D8-6到人工货架取包裹`）
+ * 的货格号一直只被当成取件码存进 `code`——于是路线功能永远拿不到输入、页面永远是空的。
+ * 这里做兜底：**取件码本身就是货格号时，把它也当作货格号**。
+ *
+ * 只认「排字母 + 货架号(-格号)」，因此不会误伤快递柜与其他编号：
+ * - 纯数字（`54018314`）⇒ 快递柜
+ * - 无排字母（`23-32`、`8-3-2018`）⇒ 不匹配
+ * - 字母开头但不是「字母+数字」（`SF1234567890`、`JD12345678`）⇒ 不匹配
+ *
+ * @return 归一化成大写的货格号；识别不出返回 null
+ */
+fun compartmentFromPickupCode(rawCode: String): String? {
+    val text = rawCode.trim()
+    if (text.isEmpty()) return null
+    for (token in text.split(',', '，', '、', ' ', '\n', '\t')) {
+        val t = token.trim()
+        if (t.isEmpty()) continue
+        if (!t.first().isAsciiLetter()) continue
+        if (parseCompartmentCode(t) == null) continue
+        return t.uppercase()
+    }
+    return null
+}
+
+private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
+
+/**
+ * 一个件的**有效货格号**：优先用短信解析出的货格号；为空时退回「取件码本身就是货格号」。
+ *
+ * 这样路线功能就不必依赖解析器的 `compartmentNumber` 是否正确填充——哪怕上游规则只认快递柜写法，
+ * 只要取件码长得像货格号（`D8-6`、`S3-2-2628`），排序与路线照样能算。
+ */
+fun effectiveCompartmentNumber(compartmentNumber: String, code: String): String =
+    compartmentNumber.trim().ifBlank { compartmentFromPickupCode(code) ?: "" }
+
 /** 货架号 → 距主纵向通道的横向格数；越靠近通道越小。 */
 fun lateralTilesFor(shelfNumber: Int, layout: SiteLayout): Int? {
     if (shelfNumber < 1 || shelfNumber > layout.shelvesPerRow) return null
