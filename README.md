@@ -11,7 +11,8 @@
 ## 📲 下载
 
 最新版本见 **[Releases](https://github.com/CorvinYu/parcel-SPU/releases)**；
-也可直接从镜像下载：**[k.corvinyu.icu](https://k.corvinyu.icu/)**。
+也可直接从镜像下载：**[k.corvinyu.icu](https://k.corvinyu.icu/)**
+（镜像与 Releases 是**同一份文件**，页面上给出体积与 SHA-256，可自行校验）。
 
 > ⚠️ **0.1.7 起使用新的签名密钥**（旧密钥已丢失），因此从 `v1.0.57-haida.1` 升级**需先卸载旧版**。
 > 0.1.7 → 0.1.8 可以直接覆盖安装。
