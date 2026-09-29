@@ -28,12 +28,10 @@ android {
         minSdk = 29
         targetSdk = 35
         // versionName 规则（用户 2026-09-29 明确）：**只有真正发了 GitHub Release 的版本才升 versionName**。
-        // 未发布的本地构建用「上一个已发布版本 + -betaN」；已发布的最新版本是 0.1.7（versionCode 76）。
-        // versionCode 每次构建递增即可（必须单调，否则无法覆盖安装）。
-        // versionName 规则：**只有真正发了 GitHub Release 的版本才升**。
-        // 2026-09-29：用户授权发布 0.1.8 ⇒ 正式定为 0.1.8（versionCode 82，单调递增）。
-        versionCode = 82
-        versionName = "0.1.8"
+        // 已发布的最新版本 = 0.1.8（versionCode 82）⇒ 0.1.9 阶段一律叫 0.1.9-betaN。
+        // versionCode 每次构建递增（必须单调，否则无法覆盖安装）。
+        versionCode = 83
+        versionName = "0.1.9-beta1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
