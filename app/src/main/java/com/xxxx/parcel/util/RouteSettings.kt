@@ -5,17 +5,21 @@ import android.content.Context
 /**
  * 布局参数的持久化（Android 侧）。
  *
- * 之所以把「横排字母序列」做成**可编辑**：用户尚未现场核实字母到哪个为止，
- * 与其等，不如让他自己在界面里填对——引擎会如实报告无法定位的货格号，不会静默算错。
+ * 之所以把「排字母序列」和几个距离参数做成**可编辑**：踩点图给出的是**相对结构**（谁挨着谁、
+ * 哪条通道服务哪两排），绝对格数（通道间距、入口到通道的距离）是示意图上的估算。
+ * 与其等实测，不如让用户自己在界面里校准——引擎会如实报告无法定位的取件码，不会静默算错。
  */
 private const val PREFS = "parcel_prefs"
 private const val KEY_ROW_LETTERS = "route_row_letters"
 private const val KEY_RETURN_TO_ENTRANCE = "route_return_to_entrance"
+private const val KEY_AISLE_SPACING = "route_aisle_spacing"
+private const val KEY_DOOR_TO_SPINE = "route_door_to_spine"
+private const val KEY_CROSS_AISLE = "route_cross_aisle"
 
 private fun routePrefs(context: Context) =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-/** 解析用户填的字母序列，容忍逗号/空格/换行/全角逗号分隔。 */
+/** 解析用户填的字母序列，容忍逗号/空格/换行/全角逗号/顿号分隔。 */
 fun parseRowLetters(text: String): List<Char> =
     text.split(',', '，', ' ', '\n', '\t', '、')
         .mapNotNull { it.trim().uppercase().firstOrNull() }
@@ -25,7 +29,7 @@ fun parseRowLetters(text: String): List<Char> =
 fun getRouteRowLetters(context: Context): List<Char> {
     val raw = routePrefs(context).getString(KEY_ROW_LETTERS, null)
     val parsed = parseRowLetters(raw.orEmpty())
-    return parsed.ifEmpty { SiteLayout.default().rowLetters }
+    return parsed.ifEmpty { SiteLayout.DEFAULT_ROW_LETTERS }
 }
 
 fun saveRouteRowLetters(context: Context, letters: List<Char>) {
@@ -40,6 +44,34 @@ fun saveRouteReturnToEntrance(context: Context, value: Boolean) {
     routePrefs(context).edit().putBoolean(KEY_RETURN_TO_ENTRANCE, value).apply()
 }
 
+/** 相邻两条横向通道之间的纵向格数。 */
+fun getRouteAisleSpacing(context: Context): Int =
+    routePrefs(context).getInt(KEY_AISLE_SPACING, SiteLayout.default().aisleSpacingTiles)
+
+fun saveRouteAisleSpacing(context: Context, value: Int) {
+    routePrefs(context).edit().putInt(KEY_AISLE_SPACING, value).apply()
+}
+
+/** 入口到主纵向通道的横向格数。 */
+fun getRouteDoorToSpine(context: Context): Int =
+    routePrefs(context).getInt(KEY_DOOR_TO_SPINE, SiteLayout.default().doorToSpineTiles)
+
+fun saveRouteDoorToSpine(context: Context, value: Int) {
+    routePrefs(context).edit().putInt(KEY_DOOR_TO_SPINE, value).apply()
+}
+
+/** 同一条通道南北异侧之间横穿的代价。 */
+fun getRouteCrossAisle(context: Context): Int =
+    routePrefs(context).getInt(KEY_CROSS_AISLE, SiteLayout.default().crossAisleTiles)
+
+fun saveRouteCrossAisle(context: Context, value: Int) {
+    routePrefs(context).edit().putInt(KEY_CROSS_AISLE, value).apply()
+}
+
 /** 读出当前生效的场地布局。 */
-fun getSiteLayout(context: Context): SiteLayout =
-    SiteLayout.default().copy(rowLetters = getRouteRowLetters(context))
+fun getSiteLayout(context: Context): SiteLayout = SiteLayout.default().copy(
+    rowLetters = getRouteRowLetters(context),
+    aisleSpacingTiles = getRouteAisleSpacing(context),
+    doorToSpineTiles = getRouteDoorToSpine(context),
+    crossAisleTiles = getRouteCrossAisle(context),
+)

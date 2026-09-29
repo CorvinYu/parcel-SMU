@@ -10,8 +10,11 @@ import kotlin.random.Random
 /**
  * 取件路径引擎的验证。
  *
- * 最关键的一条：**用暴力枚举所有排列**作为参照，验证 Held–Karp 子集 DP 求出的
- * 确实是最优解（而不是「看起来合理」）。这条测试过了，顺序优化才算真的可信。
+ * 两条最关键的测试：
+ * 1. **用暴力枚举所有排列**作为参照，验证 Held–Karp 子集 DP 求出的确实是最优解；
+ * 2. **用走行图的树结构独立推导理论最优值**（不依赖 DP），两者必须相等。
+ *
+ * 场地数据全部来自用户 2026-09-29 现场踩点图，这里的断言逐条对着该图写。
  */
 class PickupRouteTest {
 
@@ -26,6 +29,27 @@ class PickupRouteTest {
         assertEquals('D', code!!.rowLetter)
         assertEquals(5, code.shelfNumber)
         assertEquals(23, code.cellNumber)
+        assertEquals(PickupZone.MAIN, code.zone)
+    }
+
+    @Test
+    fun `解析三段式编号（顺丰与大件）`() {
+        val sf = parseCompartmentCode("S3-2-2628")!!
+        assertEquals('S', sf.rowLetter)
+        assertEquals(3, sf.shelfNumber)
+        assertEquals(2, sf.cellNumber)
+        assertEquals(2628, sf.subNumber)
+        assertEquals(PickupZone.SF, sf.zone)
+
+        val bulk = parseCompartmentCode("Y5-7-1")!!
+        assertEquals(7, bulk.cellNumber)
+        assertEquals(1, bulk.subNumber)
+        assertEquals(PickupZone.BULK, bulk.zone)
+
+        val y8 = parseCompartmentCode("Y8-1-3")!!
+        assertEquals(8, y8.shelfNumber)
+        assertEquals(1, y8.cellNumber)
+        assertEquals(3, y8.subNumber)
     }
 
     @Test
@@ -34,16 +58,13 @@ class PickupRouteTest {
         assertEquals('D', a.rowLetter)
         assertEquals(23, a.cellNumber)
 
-        // 全角横线
         val b = parseCompartmentCode("D5－23")!!
         assertEquals(23, b.cellNumber)
 
-        // 空格
         val c = parseCompartmentCode(" D 5 - 23 ")!!
         assertEquals(5, c.shelfNumber)
         assertEquals(23, c.cellNumber)
 
-        // 长横线
         val d = parseCompartmentCode("D5—23")!!
         assertEquals(23, d.cellNumber)
     }
@@ -58,7 +79,6 @@ class PickupRouteTest {
 
     @Test
     fun `有歧义的写法拒绝解析而不是猜`() {
-        // D523 既可读作 D-52-3 也可读作 D-5-23，必须拒绝
         assertNull(parseCompartmentCode("D523"))
         assertNull(parseCompartmentCode("5-23"))
         assertNull(parseCompartmentCode("D"))
@@ -68,80 +88,175 @@ class PickupRouteTest {
         assertNull(parseCompartmentCode("abc"))
     }
 
-    // ===== 场地坐标 =====
+    // ===== 场地结构（对着踩点图逐条断言） =====
 
     @Test
-    fun `货架到主通道的横向格数（左4右8）`() {
-        assertEquals(4, lateralTilesFor(1, layout))   // 左侧最远
+    fun `排字母是16排且没有 I 和 J`() {
+        val letters = layout.rowLetters
+        assertEquals(16, letters.size)
+        assertTrue("不应包含 I", 'I' !in letters)
+        assertTrue("不应包含 J（J 是独立柜列区）", 'J' !in letters)
+        // 由入口向里：A…R，且 R 在最里
+        assertEquals('A', letters.first())
+        assertEquals('R', letters.last())
+        assertEquals(listOf('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R'), letters)
+    }
+
+    @Test
+    fun `每两排背靠背共用一条横向通道`() {
+        // A/B 用通道 0，C/D 用通道 1，…，Q/R 用通道 7；J/S 区挂在最里侧通道 8
+        assertEquals(0, layout.aisleOf(0))   // A
+        assertEquals(0, layout.aisleOf(1))   // B
+        assertEquals(1, layout.aisleOf(2))   // C
+        assertEquals(1, layout.aisleOf(3))   // D
+        assertEquals(7, layout.aisleOf(14))  // Q
+        assertEquals(7, layout.aisleOf(15))  // R
+        assertEquals(8, layout.innermostAisle)
+
+        // 同一通道的南北两侧：偶数下标（A、C、E…）在南，奇数（B、D、F…）在北
+        assertEquals(AisleSide.SOUTH, layout.aisleSideOf(0))   // A 最靠入口
+        assertEquals(AisleSide.NORTH, layout.aisleSideOf(1))   // B
+        assertEquals(AisleSide.SOUTH, layout.aisleSideOf(2))   // C
+        assertEquals(AisleSide.NORTH, layout.aisleSideOf(3))   // D
+    }
+
+    @Test
+    fun `货架到主通道的横向格数（西4东8）`() {
+        assertEquals(4, lateralTilesFor(1, layout))   // 西侧最远
         assertEquals(1, lateralTilesFor(4, layout))   // 紧邻通道
         assertEquals(1, lateralTilesFor(5, layout))   // 紧邻通道
-        assertEquals(8, lateralTilesFor(12, layout))  // 右侧最远
+        assertEquals(8, lateralTilesFor(12, layout))  // 东侧最远
         assertNull(lateralTilesFor(0, layout))
         assertNull(lateralTilesFor(13, layout))
     }
 
+    // ===== 定位 =====
+
     @Test
-    fun `定位：A1 在入口第一排最左侧`() {
-        val loc = locate(parseCompartmentCode("A1")!!, layout)!!
-        assertEquals(0, loc.rowIndex)
-        assertEquals(4, loc.lateralTiles)
-        assertTrue(loc.onLeft)
+    fun `定位：A1 在入口第一排最西侧`() {
+        val pos = locate(parseCompartmentCode("A1")!!, layout)!!
+        assertEquals(PickupZone.MAIN, pos.zone)
+        assertEquals(0, pos.aisle)
+        assertEquals(0, pos.depthTiles)
+        assertEquals(4, pos.lateralTiles)
+        assertEquals(SpineSide.WEST, pos.spineSide)
+        assertEquals(AisleSide.SOUTH, pos.aisleSide)
     }
 
     @Test
-    fun `定位：跳过 J 之后 L 的下标是 10`() {
-        // A B C D E F G H I K L ⇒ L 的下标是 10（J 被跳过）
-        val loc = locate(parseCompartmentCode("L12")!!, layout)!!
-        assertEquals(10, loc.rowIndex)
-        assertEquals(8, loc.lateralTiles)
-        assertTrue(!loc.onLeft)
+    fun `定位：R12 在最里侧那一排的最东端`() {
+        val pos = locate(parseCompartmentCode("R12")!!, layout)!!
+        assertEquals(7, pos.aisle)
+        assertEquals(21, pos.depthTiles)      // 7 × 3
+        assertEquals(8, pos.lateralTiles)
+        assertEquals(SpineSide.EAST, pos.spineSide)
+        assertEquals(AisleSide.NORTH, pos.aisleSide)
     }
 
     @Test
-    fun `特殊区与未知排返回 null`() {
-        assertNull(locate(parseCompartmentCode("J3-15")!!, layout))  // J：最里面那排的特殊区
-        assertNull(locate(parseCompartmentCode("S6-02")!!, layout))  // S：顺丰区（三段式编号）
-        assertNull(locate(parseCompartmentCode("Y1-01")!!, layout))  // Y：大物区（用户 2026-10-01 更正）
-        assertNull(locate(parseCompartmentCode("Z1-1")!!, layout))   // Z 不在排序列里
-        assertNull(locate(parseCompartmentCode("D13-1")!!, layout))  // 货架号越界
+    fun `定位：J 柜列沿列向里递增`() {
+        val j5c1 = locate(parseCompartmentCode("J5-1")!!, layout)!!
+        val j5c21 = locate(parseCompartmentCode("J5-21")!!, layout)!!
+        assertEquals(PickupZone.J_CABINET, j5c1.zone)
+        assertEquals(SpineSide.WEST, j5c1.spineSide)
+        assertEquals(j5c1.lateralTiles, j5c21.lateralTiles)   // 同一条柜列，横向相同
+        assertEquals(20, j5c21.depthTiles - j5c1.depthTiles)  // 第 21 格比第 1 格深 20 格
+        // j6 最靠主通道（横向最小），j1 最靠西（横向最大）
+        val j1 = locate(parseCompartmentCode("J1-1")!!, layout)!!
+        val j6 = locate(parseCompartmentCode("J6-1")!!, layout)!!
+        assertTrue(j1.lateralTiles > j6.lateralTiles)
+        assertNull(locate(parseCompartmentCode("J7-1")!!, layout))  // 只有 6 条柜列
+    }
+
+    @Test
+    fun `定位：S 顺丰区格子沿横向递增`() {
+        val s1 = locate(parseCompartmentCode("S1-1")!!, layout)!!
+        val s1Last = locate(parseCompartmentCode("S1-10")!!, layout)!!
+        assertEquals(PickupZone.SF, s1.zone)
+        assertEquals(SpineSide.EAST, s1.spineSide)
+        assertEquals(9, s1Last.lateralTiles - s1.lateralTiles)
+        // 实测样例 S3-2-2628：s3 货架、第 2 格
+        val s3 = locate(parseCompartmentCode("S3-2-2628")!!, layout)!!
+        assertEquals(SpineSide.EAST, s3.spineSide)
+        assertEquals(1 + 2 - 1, s3.lateralTiles)
+        assertNull(locate(parseCompartmentCode("S4-1")!!, layout))   // 只有 3 个货架
+    }
+
+    @Test
+    fun `定位：Y 区反向编号的货架（右端为 1）`() {
+        // y2 是反向编号：y2-1 在东端、y2-4 在西端
+        val y2c1 = locate(parseCompartmentCode("Y2-1")!!, layout)!!
+        val y2c4 = locate(parseCompartmentCode("Y2-4")!!, layout)!!
+        assertEquals(PickupZone.BULK, y2c1.zone)
+        assertTrue("y2-1 应比 y2-4 更靠东（右端为 1）", y2c1.lateralTiles > y2c4.lateralTiles)
+
+        // y1 是正常编号：y1-1 在西端
+        val y1c1 = locate(parseCompartmentCode("Y1-1")!!, layout)!!
+        val y1c9 = locate(parseCompartmentCode("Y1-9")!!, layout)!!
+        assertTrue(y1c9.lateralTiles > y1c1.lateralTiles)
+
+        assertNull(locate(parseCompartmentCode("Y9-1")!!, layout))   // 只有 y1~y8
+    }
+
+    @Test
+    fun `定位：Y8 是三段式，行决定深度、子位决定横向`() {
+        val a = locate(parseCompartmentCode("Y8-1-1")!!, layout)!!
+        val b = locate(parseCompartmentCode("Y8-1-3")!!, layout)!!
+        val deep = locate(parseCompartmentCode("Y8-8-1")!!, layout)!!
+        // 同一行：子位 1→3 横向递增
+        assertEquals(2, b.lateralTiles - a.lateralTiles)
+        // 行 1 比行 8 更深（原图 y8-1 在上、y8-8 在下）
+        assertTrue("y8 第 1 行应比第 8 行更深", a.depthTiles > deep.depthTiles)
     }
 
     @Test
     fun `M 是普通排而不是大物区（用户更正）`() {
         val code = parseCompartmentCode("M5-5")!!
-        val located = locate(code, layout)
-        assertNotNull("M5-5 应当能定位：用户更正「大物是 Y 不是 M」", located)
-        assertEquals(5, located!!.code.shelfNumber)
+        assertEquals(PickupZone.MAIN, code.zone)
+        val pos = locate(code, layout)
+        assertNotNull("M5-5 应当能定位：大物是 Y 不是 M", pos)
+        assertEquals(5, pos!!.code.shelfNumber)
     }
 
     @Test
-    fun `真实短信样例的分类与定位`() {
-        // 人工货架（普通排）—— 全部应能解析并定位
+    fun `未知字母与越界货架号仍返回 null`() {
+        assertNull(locate(parseCompartmentCode("Z1-1")!!, layout))    // Z 不在排序列里
+        assertNull(locate(parseCompartmentCode("D13-1")!!, layout))   // 主货架 1~12
+    }
+
+    @Test
+    fun `真实短信样例全部可以定位（含 J S Y）`() {
         listOf(
-            "B4-18", "D8-6", "F12-32", "F7-24", "Q12-25",
-            "D3-24", "M5-5", "E9-9", "F2-5", "F11-12", "Q11-27"
+            "B4-18", "D8-6", "F12-32", "F7-24", "Q12-25", "D3-24", "M5-5",
+            "E5-5", "E9-9", "F2-5", "F11-12", "Q11-27",
+            "J5-21", "S3-2-2628", "Y5-7-1",
         ).forEach { raw ->
             val code = parseCompartmentCode(raw)
             assertNotNull("$raw 应能解析", code)
             assertNotNull("$raw 应能定位", locate(code!!, layout))
         }
+    }
 
-        // 混在一起时应各归其位，不丢件也不静默算错
+    @Test
+    fun `混合输入时各归其位`() {
         val route = planPickupRoute(
             listOf("D8-6", "J5-21", "S3-2-2628", "Y5-7-1", "54018314", "乱写"),
-            layout
+            layout,
         )
-        assertEquals(1, route.resolvedCount)
-        assertEquals(listOf("J5-21", "S3-2-2628", "Y5-7-1"), route.specialZoneCodes)
+        assertEquals(4, route.resolvedCount)                                   // 普通排 + J + S + Y
         assertEquals(listOf("54018314"), route.lockerCodes)
         assertEquals(listOf("乱写"), route.unresolved)
+        assertEquals(4, route.zoneCounts().values.sum())
+        assertEquals(1, route.zoneCounts()[PickupZone.J_CABINET])
+        assertEquals(1, route.zoneCounts()[PickupZone.SF])
+        assertEquals(1, route.zoneCounts()[PickupZone.BULK])
     }
 
     // ===== 距离度量性质 =====
 
     @Test
     fun `距离对称且满足三角不等式`() {
-        val samples = listOf("A1", "A12", "C4", "C5", "F9", "L1")
+        val samples = listOf("A1", "A12", "C4", "C5", "F9", "L1", "J3-5", "S1-3", "Y5-7")
             .map { locate(parseCompartmentCode(it)!!, layout)!! }
 
         for (a in samples) for (b in samples) {
@@ -151,7 +266,7 @@ class PickupRouteTest {
         for (a in samples) for (b in samples) for (c in samples) {
             assertTrue(
                 "三角不等式失败: ${a.code} ${b.code} ${c.code}",
-                walkTiles(a, c, layout) <= walkTiles(a, b, layout) + walkTiles(b, c, layout)
+                walkTiles(a, c, layout) <= walkTiles(a, b, layout) + walkTiles(b, c, layout),
             )
         }
     }
@@ -159,8 +274,8 @@ class PickupRouteTest {
     @Test
     fun `单件包裹的总步数等于入口进出往返`() {
         val route = planPickupRoute(listOf("C5-10"), layout, returnToEntrance = true)
-        val loc = locate(parseCompartmentCode("C5-10")!!, layout)!!
-        assertEquals(entranceToTiles(loc, layout) + exitFromTiles(loc, layout), route.totalTiles)
+        val pos = locate(parseCompartmentCode("C5-10")!!, layout)!!
+        assertEquals(entranceToTiles(pos, layout) + exitFromTiles(pos, layout), route.totalTiles)
         assertEquals(2, route.legTiles.size)
     }
 
@@ -177,104 +292,134 @@ class PickupRouteTest {
     }
 
     private fun runExactnessComparison(returnToEntrance: Boolean) {
-        val random = Random(20261001) // 固定种子 ⇒ 可复现
+        val random = Random(20260929) // 固定种子 ⇒ 可复现
         val rowLetters = layout.rowLetters
         for (size in 1..6) {
             repeat(30) {
                 val codes = (0 until size).map {
-                    val row = rowLetters[random.nextInt(rowLetters.size)]
-                    val shelf = random.nextInt(1, layout.shelvesPerRow + 1)
-                    val cell = random.nextInt(1, 90)
-                    "$row$shelf-$cell"
+                    when (random.nextInt(8)) {
+                        0 -> "J${random.nextInt(1, 7)}-${random.nextInt(1, 22)}"
+                        1 -> "S${random.nextInt(1, 4)}-${random.nextInt(1, 11)}"
+                        2 -> "Y${random.nextInt(1, 8)}-${random.nextInt(1, 10)}"
+                        3 -> "Y8-${random.nextInt(1, 9)}-${random.nextInt(1, 4)}"
+                        else -> {
+                            val row = rowLetters[random.nextInt(rowLetters.size)]
+                            val shelf = random.nextInt(1, layout.shelvesPerRow + 1)
+                            "$row$shelf-${random.nextInt(1, 40)}"
+                        }
+                    }
                 }
-                val locations = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
-                val brute = bruteForceMin(locations, layout, returnToEntrance)
+                val positions = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
+                val brute = bruteForceMin(positions, layout, returnToEntrance)
                 val route = planPickupRoute(codes, layout, returnToEntrance)
                 assertEquals(
                     "件数=$size 组合=$codes 折返=$returnToEntrance 时 DP 不是最优",
                     brute,
-                    route.totalTiles
+                    route.totalTiles,
                 )
             }
         }
     }
 
+    // ===== 通道路径规则 =====
+
     @Test
-    fun `同一排同侧两件可直接沿排走，不必绕回主通道`() {
-        val a = locate(parseCompartmentCode("A1-1")!!, layout)!!   // 左侧，lateral 4
-        val b = locate(parseCompartmentCode("A2-1")!!, layout)!!   // 左侧，lateral 3
+    fun `同一条通道同一侧可直接沿通道走`() {
+        val a = locate(parseCompartmentCode("A1-1")!!, layout)!!   // 西侧，lateral 4
+        val b = locate(parseCompartmentCode("A2-1")!!, layout)!!   // 西侧，lateral 3
         assertEquals(1, walkTiles(a, b, layout))
         assertEquals(1, walkTiles(b, a, layout))
     }
 
     @Test
-    fun `同一排异侧两件必须绕经主通道`() {
-        val a = locate(parseCompartmentCode("A4-1")!!, layout)!!   // 左，lateral 1
-        val b = locate(parseCompartmentCode("A5-1")!!, layout)!!   // 右，lateral 1
+    fun `同一条通道异侧必须绕经主通道`() {
+        val a = locate(parseCompartmentCode("A4-1")!!, layout)!!   // 西，lateral 1
+        val b = locate(parseCompartmentCode("A5-1")!!, layout)!!   // 东，lateral 1
         assertEquals(2, walkTiles(a, b, layout))
         assertEquals(2, walkTiles(b, a, layout))
     }
 
     @Test
+    fun `背靠背的两排可以横穿，不必绕回主通道`() {
+        // A 排（通道 0 南侧）与 B 排（通道 0 北侧）：同一横向位置，横穿 1 格
+        val a4 = locate(parseCompartmentCode("A4-1")!!, layout)!!
+        val b4 = locate(parseCompartmentCode("B4-1")!!, layout)!!
+        assertEquals(0, a4.depthTiles)
+        assertEquals(0, b4.depthTiles)
+        assertEquals(AisleSide.SOUTH, a4.aisleSide)
+        assertEquals(AisleSide.NORTH, b4.aisleSide)
+        assertEquals(layout.crossAisleTiles, walkTiles(a4, b4, layout))
+
+        // 横向也要走一段时：|Δ横向| + 横穿代价
+        val b1 = locate(parseCompartmentCode("B1-1")!!, layout)!!   // 横向 4
+        assertEquals(3 + layout.crossAisleTiles, walkTiles(a4, b1, layout))
+
+        // 不同通道则必须回主通道：横向 + 通道间距 + 横向
+        val c4 = locate(parseCompartmentCode("C4-1")!!, layout)!!
+        assertEquals(1 + layout.aisleSpacingTiles + 1, walkTiles(a4, c4, layout))
+    }
+
+    @Test
+    fun `最深的是 R 排与 J 柜列（比入口第一排远得多）`() {
+        val a1 = locate(parseCompartmentCode("A1-1")!!, layout)!!
+        val r1 = locate(parseCompartmentCode("R1-1")!!, layout)!!
+        val j1 = locate(parseCompartmentCode("J1-1")!!, layout)!!
+        assertTrue(entranceToTiles(a1, layout) < entranceToTiles(r1, layout))
+        assertTrue(entranceToTiles(r1, layout) < entranceToTiles(j1, layout))
+    }
+
+    @Test
     fun `折返最优值等于两倍Steiner子树权重，敞开路径再减去最深目标深度`() {
-        // 独立验算：不依赖 DP，而用走行图的树结构直接推导理论最优值。
-        // 前提：样本里没有「同排同侧」的点对，此时走行图退化为树，公式才成立。
-        val codes = listOf("A1-1", "A12-1", "C4-1", "C5-1", "F9-1")
-        val locations = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
-        assertTrue(
-            "样本必须不含同排同侧点对",
-            locations.groupBy { it.rowIndex }.values.all { row ->
-                row.count { it.onLeft } <= 1 && row.count { !it.onLeft } <= 1
-            }
+        // 独立验算：不依赖 DP，用走行图的树结构直接推导理论最优值。
+        // 前提：样本点在互不相同的通道上，此时不存在「横穿」近路，走行图退化为树。
+        val codes = listOf("A1-1", "C4-1", "E5-1", "G9-1")
+        val positions = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
+        assertEquals(
+            "样本必须落在互不相同的通道上",
+            positions.size,
+            positions.map { it.aisle }.distinct().size,
         )
 
-        val maxRow = locations.maxOf { it.rowIndex }
-        val steiner = layout.corridorOffsetTiles +
-            layout.rowSpacingTiles * maxRow +
-            (0..maxRow).sumOf { row ->
-                val inRow = locations.filter { it.rowIndex == row }
-                val left = inRow.filter { it.onLeft }.maxOfOrNull { it.lateralTiles } ?: 0
-                val right = inRow.filter { !it.onLeft }.maxOfOrNull { it.lateralTiles } ?: 0
-                left + right
-            }
+        val steiner = layout.doorToSpineTiles +
+            positions.maxOf { it.depthTiles } +
+            positions.sumOf { it.lateralTiles }
 
         val roundTrip = planPickupRoute(codes, layout, returnToEntrance = true).totalTiles
         assertEquals("折返最优应等于 2×Steiner", 2 * steiner, roundTrip)
 
-        val maxDepth = locations.maxOf { entranceToTiles(it, layout) }
+        val maxDepth = positions.maxOf { entranceToTiles(it, layout) }
         val openPath = planPickupRoute(codes, layout, returnToEntrance = false).totalTiles
         assertEquals("敞开路径最优应等于 2×Steiner − 最深目标深度", 2 * steiner - maxDepth, openPath)
     }
 
     @Test
     fun `不折返时最优解把最远的一件排在最后`() {
-        val codes = listOf("A1-1", "A12-1", "F1-1")
+        val codes = listOf("A1-1", "A12-1", "G1-1")
         val route = planPickupRoute(codes, layout, returnToEntrance = false)
-        // F 排离入口最深（4 + 5*1 + 4 = 13 格），敞开路径应在它这里收尾
-        assertEquals('F', route.orderedCodes.last().rowLetter)
+        // G 排（通道 3）比 A 排深，敞开路径应在它这里收尾
+        assertEquals('G', route.orderedCodes.last().rowLetter)
     }
 
     // ===== 异常输入 =====
 
     @Test
-    fun `无法定位的货格号被如实报告且不影响其余件`() {
+    fun `无法定位的取件码被如实报告且不影响其余件`() {
         val route = planPickupRoute(
-            listOf("D5-23", "J3-15", "乱写的", "Z9-9", "A1-1"),
+            listOf("D5-23", "J9-15", "乱写的", "Z9-9", "A1-1"),
             layout,
-            returnToEntrance = true
+            returnToEntrance = true,
         )
         assertEquals(2, route.resolvedCount)
-        assertEquals(listOf("J3-15"), route.specialZoneCodes)
-        assertEquals(listOf("乱写的", "Z9-9"), route.unresolved)
+        assertEquals(listOf("J9-15", "乱写的", "Z9-9"), route.unresolved)
         assertTrue(route.totalTiles > 0)
     }
 
     @Test
-    fun `没有任何普通排货架时返回空路线而不是崩溃`() {
+    fun `只有特殊区取件码时同样能规划`() {
         val route = planPickupRoute(listOf("J1-1", "S2-2"), layout)
-        assertEquals(0, route.resolvedCount)
-        assertEquals(0, route.totalTiles)
-        assertEquals(listOf("J1-1", "S2-2"), route.specialZoneCodes)
+        assertEquals(2, route.resolvedCount)
+        assertTrue(route.totalTiles > 0)
+        assertEquals(2, route.zoneCounts().size)
     }
 
     @Test
@@ -289,7 +434,6 @@ class PickupRouteTest {
     fun `同一货架取多件时它们之间步数为零`() {
         val route = planPickupRoute(listOf("B5-1", "B5-2"), layout, returnToEntrance = true)
         assertEquals(2, route.resolvedCount)
-        // 入口→B5、B5→B5(0)、B5→入口
         val legs = route.legTiles
         assertEquals(3, legs.size)
         assertEquals(0, legs[1])
@@ -307,17 +451,17 @@ class PickupRouteTest {
     // ===== 参照实现：暴力枚举 =====
 
     private fun bruteForceMin(
-        locations: List<ShelfLocation>,
+        positions: List<SitePosition>,
         layout: SiteLayout,
         returnToEntrance: Boolean,
     ): Int {
         var best = Int.MAX_VALUE
-        for (perm in permutations(locations.indices.toList())) {
-            var sum = entranceToTiles(locations[perm[0]], layout)
+        for (perm in permutations(positions.indices.toList())) {
+            var sum = entranceToTiles(positions[perm[0]], layout)
             for (i in 0 until perm.size - 1) {
-                sum += walkTiles(locations[perm[i]], locations[perm[i + 1]], layout)
+                sum += walkTiles(positions[perm[i]], positions[perm[i + 1]], layout)
             }
-            if (returnToEntrance) sum += exitFromTiles(locations[perm.last()], layout)
+            if (returnToEntrance) sum += exitFromTiles(positions[perm.last()], layout)
             if (sum < best) best = sum
         }
         return best

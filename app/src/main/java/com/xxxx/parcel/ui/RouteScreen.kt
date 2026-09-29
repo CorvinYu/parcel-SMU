@@ -39,21 +39,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.util.SiteLayout
+import com.xxxx.parcel.util.getRouteAisleSpacing
+import com.xxxx.parcel.util.getRouteCrossAisle
+import com.xxxx.parcel.util.getRouteDoorToSpine
 import com.xxxx.parcel.util.getRouteRowLetters
 import com.xxxx.parcel.util.isRouteReturnToEntrance
 import com.xxxx.parcel.util.locate
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.parseRowLetters
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.saveRouteAisleSpacing
+import com.xxxx.parcel.util.saveRouteCrossAisle
+import com.xxxx.parcel.util.saveRouteDoorToSpine
 import com.xxxx.parcel.util.saveRouteReturnToEntrance
 import com.xxxx.parcel.util.saveRouteRowLetters
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
 /**
- * 取件路线页：把当前待取件按货格号（`D5-23`）排序成一条最短走行路线。
+ * 取件路线页：把当前待取件按货格号（`D5-23`、`J5-21`、`S3-2-2628`、`Y5-7-1`）排成一条最短走行路线。
  *
- * 计算由 `planPickupRoute` 完成（纯逻辑，已用暴力枚举验证最优性）。
- * 本页只负责展示与「布局参数」的录入。
+ * 场地结构来自用户 2026-09-29 现场踩点（16 排、每两排背靠背共用一条横向通道、主纵向通道在货架 4/5 之间、
+ * J 柜列 / S 顺丰区 / Y 大件区）。计算由 `planPickupRoute` 完成（Held–Karp 精确解，已用暴力枚举验证）。
+ * 本页只负责展示与「场地参数」校准。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,9 +73,17 @@ fun RouteScreen(
 
     var rowLettersText by remember { mutableStateOf(getRouteRowLetters(context).joinToString(",")) }
     var returnToEntrance by remember { mutableStateOf(isRouteReturnToEntrance(context)) }
+    var aisleSpacingText by remember { mutableStateOf(getRouteAisleSpacing(context).toString()) }
+    var doorToSpineText by remember { mutableStateOf(getRouteDoorToSpine(context).toString()) }
+    var crossAisleText by remember { mutableStateOf(getRouteCrossAisle(context).toString()) }
 
-    val layout = remember(rowLettersText) {
-        SiteLayout.default().copy(rowLetters = parseRowLetters(rowLettersText))
+    val layout = remember(rowLettersText, aisleSpacingText, doorToSpineText, crossAisleText) {
+        SiteLayout.default().copy(
+            rowLetters = parseRowLetters(rowLettersText),
+            aisleSpacingTiles = aisleSpacingText.toIntOrNull()?.coerceIn(1, 20) ?: 3,
+            doorToSpineTiles = doorToSpineText.toIntOrNull()?.coerceIn(0, 50) ?: 4,
+            crossAisleTiles = crossAisleText.toIntOrNull()?.coerceIn(0, 20) ?: 1,
+        )
     }
     val pending = remember(successData) {
         successData.filter { !it.isCompleted && it.compartmentNumber.isNotBlank() }
@@ -83,6 +98,7 @@ fun RouteScreen(
     val byCode = remember(pending) {
         pending.associateBy { parseCompartmentCode(it.compartmentNumber) }
     }
+    val zoneCounts = remember(route) { route.zoneCounts() }
 
     Scaffold(
         topBar = {
@@ -109,8 +125,8 @@ fun RouteScreen(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("还没有可用于规划的取件码", fontWeight = FontWeight.Medium)
                         Text(
-                            "需要短信里带「货格号」（形如 D5-23）。如果没有，可以在首页长按取件码补" +
-                                "备注，或在「添加自定义取件短信」里补上货格号。",
+                            "需要短信里带「货格号」（形如 D5-23、J5-21、S3-2-2628、Y5-7-1）。" +
+                                "如果没有，可以在「添加自定义取件短信」里补上货格号。",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -131,13 +147,19 @@ fun RouteScreen(
                             if (returnToEntrance) "路径：入口 → 逐件取 → 返回入口" else "路径：入口 → 逐件取 → 到最深一件为止",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (zoneCounts.isNotEmpty()) {
+                            Text(
+                                zoneCounts.entries.joinToString("　") { "${it.key.label} ${it.value} 件" },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
 
                 Text("建议顺序", fontWeight = FontWeight.Medium)
                 route.orderedCodes.forEachIndexed { index, code ->
                     val sms = byCode[code]
-                    val loc = locate(code, layout)
+                    val pos = locate(code, layout)
                     val leg = route.legTiles.getOrNull(index)
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
@@ -154,6 +176,10 @@ fun RouteScreen(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(code.toString(), fontWeight = FontWeight.Medium, fontSize = 17.sp)
+                                Text(code.zone.label, style = MaterialTheme.typography.bodySmall)
+                                if (pos != null) {
+                                    Text(pos.label, style = MaterialTheme.typography.bodySmall)
+                                }
                                 if (sms != null) {
                                     if (sms.address.isNotBlank()) {
                                         Text(sms.address, style = MaterialTheme.typography.bodySmall)
@@ -161,13 +187,6 @@ fun RouteScreen(
                                     if (sms.code.isNotBlank()) {
                                         Text("取件码 ${sms.code}", style = MaterialTheme.typography.bodySmall)
                                     }
-                                }
-                                if (loc != null) {
-                                    Text(
-                                        "${if (loc.onLeft) "通道左侧" else "通道右侧"} · " +
-                                            "距通道 ${loc.lateralTiles} 格",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
                                 }
                             }
                             if (leg != null) {
@@ -179,22 +198,8 @@ fun RouteScreen(
 
                 if (returnToEntrance && route.legTiles.size == route.resolvedCount + 1) {
                     Text(
-                        "最后返回入口：${route.legTiles.last()} 格",
+                        "最后返回出口：${route.legTiles.last()} 格",
                         style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-
-                if (route.specialZoneCodes.isNotEmpty()) {
-                    HorizontalDivider()
-                    Text("特殊区（未纳入路线）", fontWeight = FontWeight.Medium)
-                    Text(
-                        route.specialZoneCodes.joinToString("、"),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        "J / S / Y 这几个区的编号规则与普通排不同（例如顺丰 S3-2-2628、大物 Y5-7-1 是三段式），" +
-                            "在确认它们各自的规则之前，本页不猜、只如实列出。",
-                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
 
@@ -213,28 +218,44 @@ fun RouteScreen(
 
                 if (route.unresolved.isNotEmpty()) {
                     HorizontalDivider()
-                    Text("无法识别", fontWeight = FontWeight.Medium)
+                    Text("无法定位", fontWeight = FontWeight.Medium)
                     Text(
                         route.unresolved.joinToString("、"),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "这些既不是纯数字，也没能解析成「字母+货架号-格号」。可以把下面的排字母序列改对再试。",
+                        "这些没能解析成「字母+货架号-格号」。可能是排字母序列填错、货架号越界" +
+                            "（主货架 1~12、J 柜列 1~6、S 区 1~3、Y 区 1~8），或短信里本就没有货格号。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
 
             HorizontalDivider()
-            Text("场地参数", fontWeight = FontWeight.Medium)
+            Text("场地结构（据 2026-09-29 现场踩点）", fontWeight = FontWeight.Medium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("纵向：16 排，由入口向里 ${layout.rowLetters.joinToString(" ")}", style = MaterialTheme.typography.bodySmall)
+                    Text("横向：每排 12 个货架 —— 主通道西侧 1~4、东侧 5~12", style = MaterialTheme.typography.bodySmall)
+                    Text("通道：每两排背靠背共用一条横向通道；主纵向通道在货架 4 与 5 之间", style = MaterialTheme.typography.bodySmall)
+                    Text("最里侧通道挂：J 柜列（6 条纵向柜列）、S 顺丰区（3 个货架）", style = MaterialTheme.typography.bodySmall)
+                    Text("东侧另有：Y 大件区（y1~y7 + y8 的 8 行 × 3 子位）", style = MaterialTheme.typography.bodySmall)
+                    Text("入口在南侧（J39:M40），出口在西侧（A15:A30）", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "分区：主货架区 / J 柜列区 / 顺丰 S 区 / 大件 Y 区　—— 四类都已纳入本页规划。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            HorizontalDivider()
+            Text("场地参数（与现场不符时改这里）", fontWeight = FontWeight.Medium)
 
             OutlinedTextField(
                 value = rowLettersText,
                 onValueChange = { rowLettersText = it },
                 label = { Text("普通排字母序列（由入口向深处）") },
-                supportingText = {
-                    Text("用逗号分隔。J / S / M 是特殊区，不要写进来。填错会导致对应件无法定位。")
-                },
+                supportingText = { Text("用逗号分隔。J / S / Y 是特殊区，不要写进来。填错会导致对应件无法定位。") },
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(
@@ -242,9 +263,7 @@ fun RouteScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(
-                    onClick = {
-                        rowLettersText = SiteLayout.default().rowLetters.joinToString(",")
-                    },
+                    onClick = { rowLettersText = SiteLayout.DEFAULT_ROW_LETTERS.joinToString(",") },
                     modifier = Modifier.weight(1f),
                 ) { Text("恢复默认") }
 
@@ -259,6 +278,28 @@ fun RouteScreen(
                     modifier = Modifier.weight(1f),
                 ) { Text("保存") }
             }
+
+            NumberField(
+                value = aisleSpacingText,
+                onValueChange = { aisleSpacingText = it },
+                label = "相邻两条横向通道之间的距离（格）",
+                supporting = "默认 3。只影响总格数与「谁更深」的权重，不影响相对顺序。",
+                onSave = { saveRouteAisleSpacing(context, it) },
+            )
+            NumberField(
+                value = doorToSpineText,
+                onValueChange = { doorToSpineText = it },
+                label = "入口到主纵向通道的距离（格）",
+                supporting = "默认 4（原图入口在 J39:M40，主通道在 N 列）。对所有件是同一常数。",
+                onSave = { saveRouteDoorToSpine(context, it) },
+            )
+            NumberField(
+                value = crossAisleText,
+                onValueChange = { crossAisleText = it },
+                label = "背靠背两排之间横穿的代价（格）",
+                supporting = "默认 1。同一条通道南北两侧可以直接横穿，不必绕回主通道。",
+                onSave = { saveRouteCrossAisle(context, it) },
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -282,12 +323,33 @@ fun RouteScreen(
             }
 
             Text(
-                "其余已确认参数：每排 12 个货架、纵向通道左侧 1~4 右侧 5~12、入口到通道 4 格、" +
-                    "相邻两排间隔 1 格。若与现场不符请告知，我再做成可编辑项。",
+                "仍是估算、已如实标注的部分：每货架实际格数尚未实测（同一货架内先视作同一点）；" +
+                    "J 柜列横向按列序、S/Y 格子横向按格号；a 区排列未确认，只定位到货架号。",
                 style = MaterialTheme.typography.bodySmall,
             )
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun NumberField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    supporting: String,
+    onSave: (Int) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onValueChange(it.filter { ch -> ch.isDigit() }.take(3)) },
+        label = { Text(label) },
+        supportingText = { Text(supporting) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        OutlinedButton(onClick = { value.toIntOrNull()?.let(onSave) }) { Text("保存此项") }
     }
 }
