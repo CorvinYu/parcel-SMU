@@ -46,10 +46,14 @@ import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.util.PickupCategory
+import com.xxxx.parcel.util.SiteLayout
 import com.xxxx.parcel.util.classifyPickupCategory
+import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
+import com.xxxx.parcel.util.getSiteLayout
+import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveCodeNote
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import kotlinx.coroutines.launch
@@ -168,6 +172,8 @@ fun ParcelList(
     preferLockerAddress: Boolean,
     isSeniorMode: Boolean,
     isTimeSort: Boolean = false,
+    /** 首页「快递站」列表是否按最优取件顺序排列（①②③…） */
+    routeSortEnabled: Boolean = false,
     /** 上报「当前页列表内容高度（px；列表可滚动时为 null）」，用于底部条码自动让位 */
     onListContentHeightPx: (Int?) -> Unit = {},
 ) {
@@ -223,6 +229,20 @@ fun ParcelList(
         orderedParcelsData.filter { it.categoryOf() == PickupCategory.OFF_CAMPUS },
     )
     val categoryCounts = categoryParcels.map { it.size }
+    // 「按取件路线排序」：把「快递站」页里能定位的件按最优取件顺序排开（①②③…），
+    // 定位不了的（无货格号、货架号越界）保持原顺序排在后面。
+    // 布局参数与「取件路线」页共用同一套。
+    val routeLayout = remember { getSiteLayout(context) }
+    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeLayout) {
+        if (!routeSortEnabled) {
+            emptyMap()
+        } else {
+            stationRouteOrder(
+                filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
+                routeLayout,
+            )
+        }
+    }
     val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
     val pagerState = rememberPagerState(
         initialPage = defaultCategoryIndex,
@@ -289,13 +309,19 @@ fun ParcelList(
                 .fillMaxSize()
                 .weight(1f),
         ) { page ->
-            val pageParcels = categoryParcels[page]
+            // 快递站（第 0 页）：按取件路线排序时重排；其余页保持原顺序
+            val pageParcels = if (page == 0 && routeOrder.isNotEmpty()) {
+                categoryParcels[page].sortedBy { routeOrder[it.address] ?: Int.MAX_VALUE }
+            } else {
+                categoryParcels[page]
+            }
             // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不再重复「自助取件」
             val entries = pageParcels.map { parcel ->
                 ParcelListEntry(
                     parcel = parcel,
                     hideHeader = page == 0,
                     showLockerTag = page != 1,
+                    routeOrder = routeOrder[parcel.address],
                 )
             }
             val pageListState = rememberLazyListState()
@@ -348,6 +374,7 @@ fun ParcelList(
                             onLongPressCode = { noteTarget = it },
                             showLockerTag = entry.showLockerTag,
                             hideHeader = entry.hideHeader,
+                            routeOrder = entry.routeOrder,
                         )
                     }
                     if (showUnparsedHint) {
@@ -374,8 +401,42 @@ private data class ParcelListEntry(
     val parcel: ParcelData,
     val hideHeader: Boolean,
     val showLockerTag: Boolean,
+    /** 「按取件路线排序」时的取件序号（1 起）；null 表示这件不在路线里（无货格号等） */
+    val routeOrder: Int? = null,
 ) {
     val key: String get() = "card:${parcel.address}"
+}
+
+/**
+ * 计算「快递站」列表的取件序号表：地址 → ①②③…
+ *
+ * 每个地址分组取它第一个未取件的**有效货格号**（`compartmentNumber`，为空时用取件码兜底），
+ * 一起交给路径引擎求最优顺序，再把最优顺序映射回地址。定位不了的地址不出现在表里。
+ */
+private fun stationRouteOrder(
+    parcels: List<ParcelData>,
+    layout: SiteLayout,
+): Map<String, Int> {
+    val pairs = parcels.mapNotNull { parcel ->
+        val sms = parcel.smsDataList.firstOrNull { !it.isCompleted }
+            ?: parcel.smsDataList.firstOrNull()
+        val code = sms?.let { effectiveCompartmentNumber(it.compartmentNumber, it.code) } ?: ""
+        if (code.isEmpty()) null else parcel.address to code
+    }
+    if (pairs.isEmpty()) return emptyMap()
+
+    val route = planPickupRoute(pairs.map { it.second }, layout, returnToEntrance = true)
+    val remaining = pairs.toMutableList()
+    val order = LinkedHashMap<String, Int>()
+    var seq = 0
+    route.orderedCodes.forEach { code ->
+        val idx = remaining.indexOfFirst { it.second == code.toString() }
+        if (idx >= 0) {
+            order[remaining[idx].first] = ++seq
+            remaining.removeAt(idx)
+        }
+    }
+    return order
 }
 
 /** 该地址分组属于哪一大类（同组取第一条短信的正文判定）。 */

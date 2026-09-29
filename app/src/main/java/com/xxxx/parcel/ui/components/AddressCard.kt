@@ -76,6 +76,8 @@ fun AddressCard(
     showLockerTag: Boolean = true,
     /** 隐藏整行地址头（含 + 与整组勾选按钮）—— 快递站那种短信碎片地址用 */
     hideHeader: Boolean = false,
+    /** 「按取件路线排序」时的取件序号（1 起）；null 表示不显示 */
+    routeOrder: Int? = null,
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
     val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
@@ -182,7 +184,7 @@ fun AddressCard(
                     ),
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        displaySmsDataList.forEach { smsData ->
+                        displaySmsDataList.forEachIndexed { rowIndex, smsData ->
                             if (!(((!isExpanded) && smsData.isCompleted) || ((!showCompleted) && smsData.isCompleted))) {
 
                                 Box(modifier = Modifier.padding(vertical = 2.dp)) {
@@ -191,6 +193,28 @@ fun AddressCard(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        // 取件路线序号：跟着 ①②③ 取就行（只标在卡片第一行）
+                                        if (routeOrder != null && rowIndex == 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .padding(end = 8.dp)
+                                                    .size(if (isSeniorMode) 44.dp else 30.dp)
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(MaterialTheme.colorScheme.primary),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Text(
+                                                    text = "$routeOrder",
+                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    style = if (isSeniorMode) {
+                                                        MaterialTheme.typography.titleLarge
+                                                    } else {
+                                                        MaterialTheme.typography.titleMedium
+                                                    },
+                                                )
+                                            }
+                                        }
                                         // 快递柜：左侧用大号数字标出柜号，一眼看到去哪个柜
                                         if (classifyPickupPlace(smsData.code) == PickupPlace.LOCKER) {
                                             Box(

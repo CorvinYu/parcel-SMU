@@ -43,6 +43,7 @@ import com.xxxx.parcel.util.getShowCodeTime
 import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
+import com.xxxx.parcel.util.isRouteSortList
 import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeBottomFillEnabled
@@ -54,6 +55,7 @@ import com.xxxx.parcel.util.saveShowCodeTime
 import com.xxxx.parcel.util.saveShowCompartment
 import com.xxxx.parcel.util.saveShowCompleted
 import com.xxxx.parcel.util.saveTimeSort
+import com.xxxx.parcel.util.saveRouteSortList
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
 @SuppressLint("StateFlowValueCalledInComposition")
@@ -75,6 +77,7 @@ fun HomeScreen(
     var showCompartment by remember { mutableStateOf(getShowCompartment(context)) }
     var isHorizontalLayout by remember { mutableStateOf(getHorizontalLayout(context)) }
     var isTimeSort by remember { mutableStateOf(getTimeSort(context)) }
+    var isRouteSort by remember { mutableStateOf(isRouteSortList(context)) }
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
@@ -107,6 +110,7 @@ fun HomeScreen(
                 navController = navController,
                 isSeniorMode = isSeniorMode,
                 isTimeSort = isTimeSort,
+                isRouteSort = isRouteSort,
                 preferLockerAddress = preferLockerAddress,
                 isHorizontalLayout = isHorizontalLayout,
                 showCompleted = showCompleted,
@@ -122,6 +126,11 @@ fun HomeScreen(
                     val new = !isTimeSort
                     saveTimeSort(context, new)
                     isTimeSort = new
+                },
+                onToggleRouteSort = {
+                    val new = !isRouteSort
+                    saveRouteSortList(context, new)
+                    isRouteSort = new
                 },
                 onTogglePreferLockerAddress = {
                     val new = !preferLockerAddress
@@ -201,6 +210,7 @@ fun HomeScreen(
                         preferLockerAddress = preferLockerAddress,
                         isSeniorMode = isSeniorMode,
                         isTimeSort = isTimeSort,
+                        routeSortEnabled = isRouteSort,
                         onListContentHeightPx = { listContentHeightPx = it }
                     ) else
                         Column(

@@ -48,6 +48,8 @@ fun HomeTopBar(
     navController: NavController,
     isSeniorMode: Boolean,
     isTimeSort: Boolean,
+    /** 首页「快递站」列表是否按最优取件顺序排列 */
+    isRouteSort: Boolean = false,
     preferLockerAddress: Boolean,
     isHorizontalLayout: Boolean,
     showCompleted: Boolean,
@@ -60,6 +62,7 @@ fun HomeTopBar(
     onSuccessCountClick: () -> Unit,
     onFailedCountClick: () -> Unit,
     onToggleTimeSort: () -> Unit,
+    onToggleRouteSort: () -> Unit = {},
     onTogglePreferLockerAddress: () -> Unit,
     onToggleHorizontalLayout: () -> Unit,
     onToggleShowCompleted: () -> Unit,
@@ -140,6 +143,18 @@ fun HomeTopBar(
                     ) {
 
                     SheetSectionTitle("显示与排序")
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (isRouteSort) "取消「按取件路线排序」" else "按取件路线排序",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleRouteSort()
+                        }
+                    )
                     DropdownMenuItem(
                         text = {
                             Text(

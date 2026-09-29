@@ -100,7 +100,7 @@ class SmsParser {
         val lockerNumber = if (lockerMatcher.find()) lockerMatcher.group(1) ?: "" else ""
 
         // 始终提取格口号：优先匹配"格口"字样（前后两种写法），其次匹配柜号后紧跟的字符
-        val compartmentNumber = run {
+        var compartmentNumber = run {
             val m1 = compartmentPattern.matcher(sms)
             if (m1.find()) return@run m1.group(1) ?: ""
             val m1b = compartmentPrefixPattern.matcher(sms)
@@ -126,6 +126,14 @@ class SmsParser {
             }
 
         }
+
+        // 兜底：人工货架 / 顺丰 / 大件 —— 取件码本身就是货格号。
+        // 上游那三条正则（格口 / N号柜）只认快递柜写法，导致「请用D8-6到人工货架取包裹」
+        // 这类短信的货格号一直是空的，路线功能因此拿不到输入、页面永远是空的。
+        if (compartmentNumber.isEmpty()) {
+            compartmentNumber = compartmentFromPickupCode(foundCode) ?: ""
+        }
+
         foundAddress = foundAddress.replace(Regex("[,，。“”\"'」』]"), "")  // 移除所有标点和符号（含引号类终止符）
         foundAddress = foundAddress.replace("取件", "")  // 移除"取件"
         return ParseResult(
