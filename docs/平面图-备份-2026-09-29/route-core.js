@@ -247,16 +247,20 @@
 
   /* ---------- 4) 精确排序：Held–Karp ＋ 顺丰出库先后约束 ----------
    * 起点：入口闸机（固定）。
-   * 终点：有普通件 → 7 号普通闸机；**只有顺丰件 → 顺丰出库闸机**。
-   * 🔴 用户 2026-09-29 规则：「只要拿了 S，一定要先从顺丰专用闸机出库；
-   *    若同时还有普通件，可以在顺丰出库后再去普通货架，最后从普通闸机出库直接走人。」
-   * ⇒ 这是**带先后约束**的开放路径 TSP：顺丰出库点必须排在**所有 S 件之后**。
+   * 🔴 用户 2026-09-29 规则：
+   *   ① 「只要拿了 S，一定要先从顺丰专用闸机出库；若同时还有普通件，可以在顺丰出库后再去
+   *      普通货架，最后从普通闸机出库直接走人。」
+   *   ② 「**顺丰的出库机不能出站，所以要走那个出站机出站**」——出库 ≠ 出站：
+   *      - 有普通件 → 终点＝普通闸机（既是普通件出库，也是出站口）
+   *      - 只有顺丰件 → 顺丰专用闸机出库 → 再走到**顺丰自取快递出口**出站，才结束
+   *   ⇒ 这是**带先后约束**的开放路径 TSP：出库点必须在所有 S 件之后，且路线**永远终于出站口**。
    * `pick.stub`：件在自身区内要走的那一小段（如 J 柜列的纵深），逐段计入。
    */
   function solve(picks, opts) {
     var model = opts.model, entranceCell = opts.entranceCell;
     var defaultGates = opts.gateCells || [];
-    var sfCells = opts.sfGateCells || [];
+    var sfCells = opts.sfGateCells || [];                 // 顺丰**出库**节点（单格）
+    var sfExitGates = opts.sfExitGates || [];             // 顺丰侧**出站**闸机（只有顺丰件时的终点）
     var normalGates = opts.normalGateCells || defaultGates;
     var n = picks.length;
     var stubOf = function (p) { return p.stub || 0; };            // 区内走位，单位：**瓷砖**
@@ -319,6 +323,8 @@
       return r.d + sc(p);
     });
     var sfToNormal = hasSf ? minBetween(sfCells, normalGates) : Infinity;   // 出库后走到普通闸机
+    var sfToExit = hasSf ? minBetween(sfCells, sfExitGates) : Infinity;     // 出库后走到顺丰侧出站机
+    if (hasSf && !hasNormal && !sfExitGates.length) throw new Error('只有顺丰件时必须提供顺丰侧出站闸机');
 
     var total, order, seqNodes, sfAfter = -1;
     if (n <= EXACT_MAX) {
@@ -367,7 +373,11 @@
           if (hasSf && !s3) continue;                     // 拿了 S 却没出库 ⇒ 非法
           var endCost;
           if (hasNormal) endCost = (l2 === n) ? sfToNormal : toNormal[l2];
-          else { if (l2 !== n) continue; endCost = 0; }    // 只有顺丰件 ⇒ 终点就是顺丰出库点
+          else {
+            /* 只有顺丰件：出库 ≠ 出站 ⇒ 必须在出库之后**再走到顺丰侧出站机** */
+            if (l2 !== n) continue;
+            endCost = sfToExit;
+          }
           if (v + endCost < best) { best = v + endCost; bLast = l2; bSf = s3; }
         }
       }
@@ -413,6 +423,8 @@
             var cu2 = -1;
             nS.forEach(function (x) { if (cu2 >= 0) t += pair(cu2, x); cu2 = x; });
             t += toNormal[cu2];
+          } else {
+            t += sfToExit;                                      // 只有顺丰件：出库 ≠ 出站，还要出站
           }
         } else {
           var cu3 = -1;
@@ -507,6 +519,20 @@
         bestGate = rg.cell;
       }
       exitKind = 'normal';
+    } else if (hasSf) {
+      /* 只有顺丰件：出库 ≠ 出站 ⇒ 出库后还要走到顺丰侧出站机才结束 */
+      var bex = null, bd2 = Infinity;
+      for (var a4 = 0; a4 < sfCells.length; a4++) {
+        var b4 = model.bfs(sfCells[a4][0], sfCells[a4][1]);
+        for (var g4 = 0; g4 < sfExitGates.length; g4++) {
+          var ix4 = model.at(sfExitGates[g4][0], sfExitGates[g4][1]);
+          if (ix4 >= 0 && b4.dist[ix4] >= 0 && b4.dist[ix4] < bd2) { bd2 = b4.dist[ix4]; bex = { sf: sfCells[a4], g: sfExitGates[g4] }; }
+        }
+      }
+      var pex = model.path(model.bfs(bex.sf[0], bex.sf[1]), bex.g[0], bex.g[1]);
+      pushLeg('顺丰出库', '顺丰侧出站机', pex, (pex ? (pex.length - 1) * CELL_TILES : 0), 'exit');
+      bestGate = bex.g;
+      exitKind = 'sfExit';
     }
 
     order = seqNodes.filter(function (x) { return x.node !== n; }).map(function (x) { return x.node; });
