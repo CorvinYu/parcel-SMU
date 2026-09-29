@@ -80,6 +80,20 @@ class PickupRouteTest {
     }
 
     @Test
+    fun `S 区同货架不同格不会投到同一格`() {
+        // 回归：投影决胜基准若用「合并区中心」，同一货架的所有格都会投到同一格 ⇒ 段距恒为 0（踩过）
+        val a = spot("S3-2-2628")
+        val b = spot("S3-3-7606")
+        assertFalse(
+            "S3-2 与 S3-3 投到了同一格 (${a.row},${a.col}) ⇒ 段距恒为 0",
+            a.row == b.row && a.col == b.col,
+        )
+        val s1a = spot("S1-1")
+        val s1b = spot("S1-10")
+        assertTrue("S1 首尾格应投到不同列：${s1a.col} vs ${s1b.col}", s1a.col < s1b.col)
+    }
+
+    @Test
     fun `J 柜列按格位纵向展开且纵深计入走位`() {
         val j5c1 = spot("J5-1")
         val j5c21 = spot("J5-21")
@@ -193,6 +207,36 @@ class PickupRouteTest {
         assertTrue("出库后不该还有 S 件", picksAfter.none { it.code.zone == PickupZone.SF })
         assertTrue(stops.last() is RouteStop.Exit)
         assertTrue("终点落在普通闸机带", route.exitCell!!.row in 22..57)
+    }
+
+    // ------------------------------------------------------------ 大件数（启发式）自洽
+
+    @Test
+    fun `大件数 20 件走启发式但结构自洽`() {
+        // 用户 2026-09-30 的真实现场：一次取 53 件 ⇒ 必须走启发式（2^53 不可能精确）
+        val pool = SiteData.rectLabels
+            .map { it.trim().uppercase() }
+            .filter { Regex("^[A-R]\\d{1,2}$").matches(it) }
+            .distinct()
+        assertTrue("标签池应够大，实际 ${pool.size}", pool.size >= 20)
+        val codes = pool.take(18).map { "$it-1" } + listOf("S3-2-2628", "J5-21")
+        val route = planPickupRoute(codes, options)
+
+        assertFalse(">16 件必须如实标为非精确", route.exact)
+        assertEquals("件数不该丢", codes.size, route.orderedCodes.size)
+        assertEquals("件不该重复", codes.size, route.orderedCodes.map { it.toString() }.toSet().size)
+        assertEquals("停靠点数 == 段数", route.stops.size, route.legTiles.size)
+        assertEquals("逐段和 == 总距离", route.totalTiles, route.legTiles.sum(), 1e-9)
+        assertTrue("总距离应为正", route.totalTiles > 0)
+        // 含顺丰件 ⇒ 必须有出库停靠点，且出库后不再有 S 件
+        assertTrue("应出现顺丰出库停靠点", route.hasSfCheckout)
+        val sfIdx = route.stops.indexOfFirst { it is RouteStop.SfCheckout }
+        assertTrue(
+            "出库后不该还有 S 件",
+            route.stops.drop(sfIdx).filterIsInstance<RouteStop.Pickup>().none { it.code.zone == PickupZone.SF },
+        )
+        assertTrue("终点是出站", route.stops.last() is RouteStop.Exit)
+        println("20 件启发式：共 ${route.totalTiles} 格，${route.stops.size} 站，sfAfter=${route.sfCheckoutAfter}")
     }
 
     // ------------------------------------------------------------ 最优性（与独立暴力枚举比对）

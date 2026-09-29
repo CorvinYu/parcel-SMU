@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.xxxx.parcel.util.MAX_EXACT_ITEMS
 import com.xxxx.parcel.util.RouteExit
 import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.RouteStop
@@ -130,8 +131,8 @@ fun RouteScreen(
                             fontSize = 18.sp,
                         )
                         Text(
-                            if (route.exact) "顺序为精确最优解（Held–Karp，已与暴力枚举比对）"
-                            else "件数较多，顺序为启发式近似",
+                            if (route.exact) "顺序为精确最优解（Held–Karp，≤$MAX_EXACT_ITEMS 件；已与暴力枚举逐例比对）"
+                            else "件数 >$MAX_EXACT_ITEMS ⇒ 启发式近似（最近邻 / 走廊扫描两种子 + 2-opt 取优）",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(

@@ -243,8 +243,14 @@ data class PickupRoute(
         orderedCodes.groupingBy { it.zone }.eachCount()
 }
 
-/** 超过这个件数就不用 O(2^n·n²) 的精确 DP，退化为「S 块 → 出库 → 普通块」+ 2-opt。 */
-const val MAX_EXACT_ITEMS = 13
+/**
+ * 超过这个件数就不用 O(2^n·n·2) 的精确 DP，退化为「S 块 → 出库 → 普通块」的两个种子 +
+ * 2-opt（最近邻种子 / 走廊扫描种子，取更优者）。
+ *
+ * 上限怎么定的：n=16 时 DP 状态 = 2^16 × 17 × 2 ≈ 2.2M（FloatArray 约 9MB）＋ 同规模的前驱数组，
+ * 手机上可接受；n=18 起内存翻 4 倍（>70MB）就不合适了。53 件这种量级**不可能**精确求解（2^53）。
+ */
+const val MAX_EXACT_ITEMS = 16
 
 // ============================================================================
 // 场地索引（合并区 / 闸机带）
@@ -427,7 +433,10 @@ fun locate(code: CompartmentCode, options: RouteOptions = RouteOptions.DEFAULT):
         }
     }
 
-    val cell = SiteModel.nearestWalkFrom(rect.cells, rect.centerRow, rect.centerCol) ?: return null
+    // 投影：从整个合并区出发、绕开墙与货架；**决胜基准用按格位算出的精确点**
+    // （用合并区中心的话，S 区同一货架的不同格会全投到同一格，段距恒为 0 —— 踩过）
+    val cell = SiteModel.nearestWalkFrom(rect.cells, SiteModel.rowOf(depth), SiteModel.colOf(lat))
+        ?: return null
     val (cellLat, cellDepth) = SiteModel.centerOf(cell.row, cell.col)
     // 区内走位：J 柜列纵深必须算进距离；普通货架只有半块瓷砖深，格位归一点
     val stub = if (letter == 'J') abs(depth - cellDepth) else 0.0
@@ -742,9 +751,21 @@ fun planPickupRoute(
         }
 
         val sfSeq = nn(sfList, true)
-        val nSeq = nn(normalList, !hasSf)
+
+        // 普通件块用两个种子各跑一遍 2-opt，取更优者：
+        //   ① 最近邻（对小规模、聚簇场景好）
+        //   ② **走廊扫描**（按投影行从入口一侧往里、同一走廊内按横向走 —— 大件数时更像人走法）
+        val seedA = nn(normalList, !hasSf)
+        twoOpt(seedA, sfSeq, normalList, false)
+
+        val seedB = normalList.sortedWith(
+            compareByDescending<Int> { spots[it].row }.thenBy { spots[it].col }
+        ).toMutableList()
+        twoOpt(seedB, sfSeq, normalList, false)
+
+        val nSeq = if (seqCost(sfSeq, seedA) <= seqCost(sfSeq, seedB)) seedA else seedB
+        // 再用选定的普通块为参照，把 S 块的先后顺序也 2-opt 一遍
         twoOpt(sfSeq, sfSeq, nSeq, true)
-        twoOpt(nSeq, sfSeq, nSeq, false)
         val built = ArrayList<Int>(n)
         built.addAll(sfSeq)
         if (hasSf) built.add(n)

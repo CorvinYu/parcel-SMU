@@ -32,6 +32,7 @@ ul.tight li{margin:1px 0}
 <div class="card"><div class="mapwrap" id="wrap"><img id="bg" src="data:image/png;base64,__B64__"><canvas id="ov"></canvas></div>
 <div class="row"><button id="btnRun" class="primary">计算顺序</button><button id="btnClear">清空</button>
 <button id="btnRandom5">随机 5 件</button><button id="btnRandom10">随机 10 件</button>
+<button id="btnRandom20">随机 20 件</button><button id="btnRandom30">随机 30 件</button>
 <button id="btnDemo">示例：东西两侧各来一件</button><button id="btnDemoSf">示例：只取顺丰件</button></div>
 <label class="ck"><input type="checkbox" id="ckGrid" checked> 显示模型识别的通道网格（蓝＝可走格，绿框＝纵向干线；应与你 Excel 的填充色完全重合）</label>
 <div class="err" id="err"></div>
@@ -59,7 +60,9 @@ ul.tight li{margin:1px 0}
     每列实际格数未实测 ⇒ 按 <b>21 格</b>等比铺开（待确认 Q1b/Q5）</li>
 <li><b>Y 大件区</b>在你精确版里是<b>一整块</b>（<code>Y区域</code>）⇒ 只定位到东侧通道最近点，<b>无法分 y1~y8</b></li>
 <li>距离单位＝<b>瓷砖</b>（1 单元格 = 0.5 瓷砖）；普通排货架内不同格暂视为同一点</li>
-<li>≤13 件＝精确最优（Held–Karp）；更多件退化为「S 块 → 出库 → 普通块」+ 2-opt，并如实标「非精确」</li>
+<li>≤<b>16 件＝精确最优</b>（Held–Karp；状态 2^n×n×2，n=16 约 2.2M）；更多件退化为
+    「S 块 → 出库 → 普通块」＋（最近邻 / 走廊扫描）两种子各跑 2-opt 取优，并如实标「非精确」
+    —— 53 件这种量级不可能精确求解（2^53）</li>
 </ul></div></div></main>
 <script>__CORE__</script>
 <script>
@@ -255,6 +258,9 @@ function rand(n){const a=new Set();while(a.size<n)a.add(SHELF_CODES[Math.floor(M
  codesEl.value=[...a].join(', ');run();}
 document.getElementById('btnRandom5').onclick=()=>rand(5);
 document.getElementById('btnRandom10').onclick=()=>rand(10);
+/* 大件数压测：>16 件会走「两种子 + 2-opt」启发式（并如实标非精确） */
+document.getElementById('btnRandom20').onclick=()=>rand(20);
+document.getElementById('btnRandom30').onclick=()=>rand(30);
 /* 点图加取件点：找最近的合并区（货架）中心 */
 ov.addEventListener('click',ev=>{
  const r=ov.getBoundingClientRect();
