@@ -75,3 +75,15 @@ fun getSiteLayout(context: Context): SiteLayout = SiteLayout.default().copy(
     doorToSpineTiles = getRouteDoorToSpine(context),
     crossAisleTiles = getRouteCrossAisle(context),
 )
+
+// ===== 首页列表「按取件路线排序」=====
+
+private const val KEY_ROUTE_SORT_LIST = "route_sort_list"
+
+/** 首页「快递站」列表是否按最优取件顺序排列（默认开）。 */
+fun isRouteSortList(context: Context): Boolean =
+    routePrefs(context).getBoolean(KEY_ROUTE_SORT_LIST, true)
+
+fun saveRouteSortList(context: Context, value: Boolean) {
+    routePrefs(context).edit().putBoolean(KEY_ROUTE_SORT_LIST, value).apply()
+}

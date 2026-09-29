@@ -46,13 +46,13 @@ import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.util.PickupCategory
-import com.xxxx.parcel.util.RouteOptions
+import com.xxxx.parcel.util.SiteLayout
 import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
-import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.getSiteLayout
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveCodeNote
 import com.xxxx.parcel.viewmodel.ParcelViewModel
@@ -232,14 +232,14 @@ fun ParcelList(
     // 「按取件路线排序」：把「快递站」页里能定位的件按最优取件顺序排开（①②③…），
     // 定位不了的（无货格号、货架号越界）保持原顺序排在后面。
     // 布局参数与「取件路线」页共用同一套。
-    val routeOptions = remember { getRouteOptions(context) }
-    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeOptions) {
+    val routeLayout = remember { getSiteLayout(context) }
+    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeLayout) {
         if (!routeSortEnabled) {
             emptyMap()
         } else {
             stationRouteOrder(
                 filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
-                routeOptions,
+                routeLayout,
             )
         }
     }
@@ -330,14 +330,12 @@ fun ParcelList(
             LaunchedEffect(layoutInfo, page, pagerState.currentPage) {
                 if (page == pagerState.currentPage) {
                     onListContentHeightPx(
-                        when {
-                            // 空列表：下方整块都是空白，交给底部浮窗
-                            layoutInfo.totalItemsCount == 0 -> 0
-                            // 全部可见：上报内容高度，底部浮窗据此算「还能占多少空白」
-                            layoutInfo.visibleItemsInfo.size == layoutInfo.totalItemsCount ->
-                                layoutInfo.visibleItemsInfo.sumOf { it.size }
-                            // 列表可滚动：没有空白可让，底部浮窗缩到最小
-                            else -> null
+                        if (layoutInfo.totalItemsCount > 0 &&
+                            layoutInfo.visibleItemsInfo.size == layoutInfo.totalItemsCount
+                        ) {
+                            layoutInfo.visibleItemsInfo.sumOf { it.size }
+                        } else {
+                            null
                         }
                     )
                 }
@@ -417,7 +415,7 @@ private data class ParcelListEntry(
  */
 private fun stationRouteOrder(
     parcels: List<ParcelData>,
-    options: RouteOptions,
+    layout: SiteLayout,
 ): Map<String, Int> {
     val pairs = parcels.mapNotNull { parcel ->
         val sms = parcel.smsDataList.firstOrNull { !it.isCompleted }
@@ -427,7 +425,7 @@ private fun stationRouteOrder(
     }
     if (pairs.isEmpty()) return emptyMap()
 
-    val route = planPickupRoute(pairs.map { it.second }, options)
+    val route = planPickupRoute(pairs.map { it.second }, layout, returnToEntrance = true)
     val remaining = pairs.toMutableList()
     val order = LinkedHashMap<String, Int>()
     var seq = 0
