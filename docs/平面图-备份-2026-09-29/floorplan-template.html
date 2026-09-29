@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>海大快递站 · 平面图与取件路线</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eceef1;font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#111}
+header{padding:9px 14px;background:#fff;border-bottom:1px solid #c8ccd2}h1{margin:0 0 2px;font-size:16px}
+main{display:grid;grid-template-columns:1fr 330px;gap:10px;padding:10px;align-items:start}
+@media(max-width:1200px){main{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid #c8ccd2;border-radius:8px;padding:10px}
+.card h2{margin:0 0 6px;font-size:13px}
+.mapwrap{position:relative;border:1px solid #c8ccd2;border-radius:8px;overflow:auto;background:#fff}
+.mapwrap img{display:block;width:100%;height:auto}
+.mapwrap canvas{position:absolute;left:0;top:0;width:100%;height:100%;cursor:crosshair}
+input[type=text]{width:100%;padding:5px 7px;border:1px solid #c8ccd2;border-radius:5px;font:inherit}
+button{padding:6px 9px;border:1px solid #c8ccd2;background:#fff;border-radius:5px;cursor:pointer;font:inherit}
+button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.seq{list-style:none;padding:0;margin:0;max-height:360px;overflow:auto}
+.seq li{display:flex;gap:7px;align-items:baseline;padding:4px 0;border-bottom:1px dashed #d7dbe0;font-size:12.5px}
+.seq .n{flex:0 0 20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:#1f6feb;color:#fff;font-size:11.5px;font-weight:700}
+.seq .code{font-family:ui-monospace,Consolas,monospace;font-weight:700}.seq .leg{margin-left:auto;color:#666;white-space:nowrap}
+.hint{color:#666;font-size:11.5px}.badge{display:inline-block;padding:1px 6px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px}
+</style></head><body>
+<header><h1>海大快递站 · 平面图与取件路线</h1>
+<div class="sub">底图由你的 Excel 逐格生成（粗线＝1 瓷砖）｜点货架加取件点｜红线只沿通道走，不穿货架</div></header>
+<main><div>
+<div class="card"><div class="mapwrap" id="wrap"><img id="bg" src="data:image/png;base64,__B64__"><canvas id="ov"></canvas></div>
+<div class="row"><button id="btnRun" class="primary">计算顺序</button><button id="btnClear">清空</button>
+<button id="btnRandom5">随机 5 件</button><button id="btnRandom10">随机 10 件</button>
+<button id="btnDemo">示例：B 排东西两侧</button></div>
+<div class="hint">蓝色圆点＝取件点（按序号），红虚线＝走行路线。</div></div>
+<div class="card" style="margin-top:10px"><h2>取件码</h2>
+<input type="text" id="codes" value="B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1">
+<div class="hint" style="margin-top:5px">支持 <code>B12-18</code> <code>Q5-3</code> <code>N5-1</code> <code>J5-21</code> <code>S3-2-2628</code> <code>Y5-7-1</code> <code>Y8-1-3</code> <code>A4-1</code></div></div>
+</div><div>
+<div class="card"><h2>建议顺序 <span class="badge" id="totalBadge">—</span></h2><ol class="seq" id="seq"></ol><div class="hint" id="runInfo"></div></div>
+<div class="card" style="margin-top:10px"><h2>这份图与你的 Excel 对齐</h2><ul class="hint" style="padding-left:16px;margin:0">
+<li>货架 1/4/5/12 中心 = <b>−12 / −3 / +3 / +24</b> 瓷砖</li>
+<li>14 排 B~R（无 O）；背靠背带 7 条：B｜C D｜E F｜G H｜K L｜M N｜P Q｜R</li>
+<li>走廊 8 条（2 格宽、间隔 3 格）</li>
+<li>Q／R 最北一对左右镜像</li>
+<li>J 柜列 lat −5~−1（4 格宽）</li>
+<li>A 区左下（lat −16~−9、深度 −2~−8）</li>
+<li>入口闸机最右缘距主通道 3 格</li></ul></div></div></main>
+<script>
+const GEO=__GEO__;
+const R=GEO.rows;
+const aisleOf=i=>(i+1)>>1, sideOf=i=>(i%2===1)?'S':'N';
+const cmid=k=>{const c=GEO.corr.find(x=>x[0]===k);return (c[1]+c[2])/2;};
+const bandOf=i=>{const a=aisleOf(i);return a===0?0:(sideOf(i)==='S'?a-1:a);};
+const shelfLat=s=>GEO.shelfW*(s<=GEO.left?(GEO.left-s):(s-GEO.left-1))+(GEO.spineW+GEO.shelfW)/2;
+function locate(raw){
+ const t=String(raw).trim().toUpperCase();
+ const m=t.match(/^([A-Z])\s*(\d{1,2})(?:\s*[-－–—]\s*(\d{1,3}))?(?:\s*[-－–—]\s*(\d{1,4}))?$/);
+ if(!m)return null;const row=m[1],shelf=+m[2],cell=m[3]?+m[3]:null,sub=m[4]?+m[4]:null,c=cell||1;
+ if(row==='J'){const lat=GEO.J[shelf];if(lat===undefined)return null;
+  return{depth:GEO.JD[0]+(c-1)*0.5,lat,side:'W',aisle:7,label:'J 区 j'+shelf+' 第'+c+'格'};}
+ if(row==='S'){const d=GEO.SD[shelf],span=GEO.SL[1]-GEO.SL[0],n=shelf===1?10:8;
+  return{depth:d,lat:GEO.SL[0]+(c-1)*span/(n-1),side:'E',aisle:7,label:'S 区 s'+shelf+' 第'+c+'格'};}
+ if(row==='Y'){if(shelf===8){const k=Math.min(Math.max(c,1),8),ix=Math.min(Math.max(sub||1,1),3);
+   return{depth:GEO.YD+k*0.5,lat:GEO.YL+ix-1,side:'E',aisle:7,label:'Y 区 y8-'+k+' 第'+ix+'子位'};}
+  const dd={1:GEO.YD+1,2:GEO.YD,3:GEO.YD-0.5,4:GEO.YD-1,5:GEO.YD-2,6:GEO.YD-2,7:GEO.YD-3}[shelf];
+  const rev=(shelf===2?4:shelf===4?4:shelf===5?7:shelf===7?8:0);
+  return{depth:dd,lat:rev?(GEO.YL+rev-c):(GEO.YL+c-1),side:'E',aisle:7,label:'Y 区 y'+shelf+' 第'+c+'格'+(rev?'（反向）':'')};}
+ if(row==='A'){const e=GEO.A.find(x=>x[0]==='a'+shelf);if(!e)return null;
+  return{depth:e[2],lat:e[1],side:'W',aisle:-1,label:'A 区 a'+shelf};}
+ const i=R.indexOf(row);if(i<0)return null;
+ if(shelf<1||shelf>GEO.shelves)return null;
+ const a=aisleOf(i),side=shelf<=GEO.left?'W':'E';
+ let north=(sideOf(i)==='N');
+ if((row==='Q'||row==='R')&&a===6)north=(row===((side==='W')?'Q':'R'));
+ const d0=GEO.bandD0[bandOf(i)];
+ return{depth:d0+(north?0.75:0.25),lat:shelfLat(shelf),side,aisle:a,
+  label:row+' 排 '+shelf+' 号货架'+(cell?' 第'+cell+'格':'')+'（'+(side==='W'?'西侧':'东侧')+'，走廊'+a+'）'};}
+/* 两条纵向干线：主通道（lat 0）与东侧 V 通道（lat ≈ 27）。同走廊可直走，跨走廊取「经主通道 / 经 V」较短者 */
+const VLAT=shelfLat(GEO.shelves)+GEO.shelfW/2+GEO.spineW/2;
+const toV=a=>a.side==='W'?VLAT+a.lat:Math.abs(VLAT-a.lat);   // 西侧的货要先跨过主通道再到 V
+function walk(a,b){const gap=Math.abs(a.depth-b.depth);
+ const viaSpine=Math.abs(a.lat)+gap+Math.abs(b.lat);
+ const viaV=toV(a)+gap+toV(b);
+ const sameSide=(a.side===b.side);
+ const same=(a.aisle>=0&&a.aisle===b.aisle)?((sameSide?Math.abs(a.lat-b.lat):a.lat+b.lat)+gap):Infinity;
+ return Math.min(same,viaSpine,viaV);}
+/* 返回某一段实际走法（用于画线，必须与 walk 的取值一致） */
+function legWay(a,b){const gap=Math.abs(a.depth-b.depth);
+ const same=(a.aisle>=0&&a.aisle===b.aisle);
+ const cS=Math.abs(a.lat)+gap+Math.abs(b.lat), cV=toV(a.lat)+gap+toV(b.lat), cX=same?Math.abs(a.lat-b.lat)+gap:Infinity;
+ if(cX<=cS&&cX<=cV) return{k:'same',c:cX};
+ return cV<cS?{k:'V',c:cV,mid:VLAT}:{k:'spine',c:cS,mid:0};}
+const entranceTo=a=>4+a.depth+a.lat, exitFrom=a=>a.lat+Math.abs(a.depth-10)+Math.abs(GEO.EX[0]);
+function plan(items){const n=items.length;if(!n)return{order:[],legs:[],total:0};
+ if(n>13)return nn(items);
+ const full=1<<n,INF=1e9,from=items.map(entranceTo),toEx=items.map(exitFrom);
+ const d=items.map(a=>items.map(b=>walk(a,b)));
+ const dp=Array.from({length:full},()=>new Array(n).fill(INF)),par=Array.from({length:full},()=>new Array(n).fill(-1));
+ for(let i=0;i<n;i++)dp[1<<i][i]=from[i];
+ for(let mk=1;mk<full;mk++)for(let L=0;L<n;L++){const v=dp[mk][L];if(v>=INF)continue;
+  for(let x=0;x<n;x++){if(mk&(1<<x))continue;const nm=mk|(1<<x),nv=v+d[L][x];
+   if(nv<dp[nm][x]){dp[nm][x]=nv;par[nm][x]=L;}}}
+ let best=INF,bl=0;for(let i=0;i<n;i++){const v=dp[full-1][i]+toEx[i];if(v<best){best=v;bl=i;}}
+ const rev=[];let mk=full-1,cur=bl;
+ while(cur>=0){rev.push(cur);const pv=par[mk][cur];mk&=~(1<<cur);cur=pv;}
+ rev.reverse();const legs=[from[rev[0]]];
+ for(let i=0;i+1<rev.length;i++)legs.push(walk(items[rev[i]],items[rev[i+1]]));
+ legs.push(toEx[rev[rev.length-1]]);
+ return{order:rev.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};}
+function nn(items){const left=items.map((_,i)=>i),order=[];let cur=null;
+ while(left.length){let bi=0,bv=Infinity;
+  left.forEach((i,k)=>{const v=cur===null?entranceTo(items[i]):walk(cur,items[i]);if(v<bv){bv=v;bi=k;}});
+  order.push(left[bi]);cur=items[left[bi]];left.splice(bi,1);}
+ const legs=[entranceTo(items[order[0]])];
+ for(let i=0;i+1<order.length;i++)legs.push(walk(items[order[i]],items[order[i+1]]));
+ legs.push(exitFrom(items[order[order.length-1]]));
+ return{order:order.map(i=>items[i]),legs,total:legs.reduce((x,y)=>x+y,0)};}
+/* 叠加层：像素变换与 PNG 完全一致 */
+const img=document.getElementById('bg'),ov=document.getElementById('ov'),ctx=ov.getContext('2d');
+const PX=l=>GEO.LL+(l-GEO.minLat)*GEO.P, PY=d=>GEO.T+(GEO.maxD-d)*GEO.P;
+let items=[],lastPlan=null;
+function resize(){ov.width=GEO.imgW;ov.height=GEO.imgH;}
+function drawOv(){
+ ctx.clearRect(0,0,ov.width,ov.height);
+ items.forEach((it,i)=>{const a=it.pos;const x=PX(a.side==='W'?-a.lat:a.lat),y=PY(cmid(Math.min(Math.max(a.aisle,0),7)));
+  ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.fillStyle='rgba(31,111,235,.95)';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
+  ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(String(i+1),x,y+.5);});
+ if(lastPlan){ctx.strokeStyle='rgba(200,30,30,.95)';ctx.lineWidth=3;ctx.setLineDash([8,5]);
+  ctx.beginPath();lastPlan.forEach((q,i)=>{i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});
+  ctx.stroke();ctx.setLineDash([]);}}
+function routePath(){
+ const pts=[[PX(GEO.IG[1]),PY(GEO.IG[2])],[PX(0),PY(GEO.IG[2])]];   // 入口闸机 → 主通道南端
+ const put=(lat,depth)=>pts.push([PX(lat),PY(depth)]);
+ const cm=k=>cmid(Math.min(Math.max(k,0),7));
+ let prev=null;
+ items.forEach(it=>{const a=it.pos;
+  if(prev){
+   const w=legWay(prev,a);
+   if(w.k==='same'){ put(a.side==='W'?-a.lat:a.lat,cm(a.aisle)); }
+   else { put(w.mid,cm(prev.aisle)); put(w.mid,cm(a.aisle)); put(a.side==='W'?-a.lat:a.lat,cm(a.aisle)); }
+  } else {
+   put(0,cm(0)); put(a.side==='W'?-a.lat:a.lat,cm(a.aisle));
+  }
+  prev=a;});
+ if(prev){ put(0,cm(prev.aisle)); put(0,PY(10)); put(PX(GEO.EX[0]),PY(10)); }
+ else { put(0,PY(10)); put(PX(GEO.EX[0]),PY(10)); }
+ const out=[];pts.forEach(q=>{const l=out[out.length-1];
+  if(!l||Math.abs(l[0]-q[0])>1e-6||Math.abs(l[1]-q[1])>1e-6)out.push(q);});return out;}
+const codesEl=document.getElementById('codes');
+const cc=()=>codesEl.value.split(/[,，、\s]+/).map(s=>s.trim()).filter(Boolean);
+function run(){const bad=[];items=[];
+ cc().forEach(c=>{const p=locate(c);p?items.push({code:c,pos:p}):bad.push(c);});
+ const res=plan(items.map(i=>i.pos));
+ const byPos=new Map(items.map(i=>[JSON.stringify(i.pos),i]));
+ const ordered=res.order.map(q=>byPos.get(JSON.stringify(q)));
+ lastPlan=routePath();
+ const seqEl=document.getElementById('seq');seqEl.innerHTML='';
+ ordered.forEach((it,i)=>{const li=document.createElement('li');
+  li.innerHTML='<span class="n">'+(i+1)+'</span><span><span class="code">'+it.code+'</span><br><span class="hint">'+
+   it.pos.label+(i>0?'　上一件→本件 '+res.legs[i]+' 格':'')+'</span></span>'+
+   (i===ordered.length-1?'<span class="leg">出西门 '+res.legs[ordered.length]+' 格</span>':'');
+  seqEl.appendChild(li);});
+ document.getElementById('totalBadge').textContent='共 '+res.total+' 格';
+ document.getElementById('runInfo').textContent=bad.length?('无法定位：'+bad.join('、')):'';
+ drawOv();}
+document.getElementById('btnRun').onclick=run;
+document.getElementById('btnClear').onclick=()=>{items=[];lastPlan=null;drawOv();};
+document.getElementById('btnDemo').onclick=()=>{codesEl.value='B1-1, B12-1, B4-1, B3-1, B5-1, B8-1, B10-1';run();};
+function rand(n){const a=[];for(let i=0;i<n;i++)a.push(R[Math.floor(Math.random()*R.length)]+(1+Math.floor(Math.random()*GEO.shelves))+'-1');codesEl.value=a.join(', ');run();}
+document.getElementById('btnRandom5').onclick=()=>rand(5);
+document.getElementById('btnRandom10').onclick=()=>rand(10);
+ov.addEventListener('click',ev=>{const r=ov.getBoundingClientRect();
+ const mx=(ev.clientX-r.left)*(ov.width/r.width),my=(ev.clientY-r.top)*(ov.height/r.height);
+ let best=null,bd=Infinity;
+ R.forEach(row=>{const i=R.indexOf(row);for(let s=1;s<=GEO.shelves;s++){
+  const dd=Math.hypot(PY(GEO.bandD0[bandOf(i)]+0.5)-my,PX(shelfLat(s))-mx);
+  if(dd<bd){bd=dd;best=row+s+'-1';}}});
+ if(best&&bd<34){codesEl.value=cc().concat(best).join(', ');run();}});
+resize();drawOv();run();
+</script></body></html>
