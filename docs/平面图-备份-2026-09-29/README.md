@@ -20,6 +20,7 @@
 | `floorplan-template.html` | 页面模板（构建时注入 PNG / 通道 JSON / 寻路核心） |
 | `build-floorplan.py` | 构建器（内联三者 → `docs/floorplan.html`，含自检） |
 | `check-route.py` | 自检渲染：把路线画成 PNG 供肉眼核对，并**回读 Excel 填充色**独立复验 |
+| `gen-site-data-kt.py` | **App 侧生成器**：通道 JSON → `app/.../util/SiteData.kt`（Kotlin 常量，**勿手改**） |
 
 ## 恢复
 
@@ -39,6 +40,8 @@ python .devtools\build-floorplan.py     # 3) 构建 docs\floorplan.html（含自
 node   .devtools\test-route-core.js     # 4) 寻路核心验证（含与暴力枚举比对）
 node   .devtools\test-floorplan-page.js # 5) 页面脚本端到端（DOM 桩）
 python .devtools\check-route.py [样例.json]   # 6) 渲图供肉眼核对
+python .devtools\gen-site-data-kt.py    # 7) 生成 App 侧 SiteData.kt（Kotlin）
+# 8) 再跑 App 单测与出包（命令见 CLAUDE.md 的构建小节）
 ```
 
 ## 坐标换算（所有脚本共用）
