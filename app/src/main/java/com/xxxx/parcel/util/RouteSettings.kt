@@ -16,6 +16,7 @@ private const val KEY_AISLE_SPACING = "route_aisle_spacing"
 private const val KEY_DOOR_TO_SPINE = "route_door_to_spine"
 private const val KEY_EXIT_DEPTH = "route_exit_depth"
 private const val KEY_EXIT_LATERAL = "route_exit_lateral"
+private const val KEY_SHELF_WIDTH = "route_shelf_width"
 
 private fun routePrefs(context: Context) =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -77,10 +78,19 @@ fun saveRouteExitLateral(context: Context, value: Int) {
     routePrefs(context).edit().putInt(KEY_EXIT_LATERAL, value).apply()
 }
 
+/** 单个货架的宽度（格）——决定相邻货架号的横向间距。实测 3 格。 */
+fun getRouteShelfWidth(context: Context): Int =
+    routePrefs(context).getInt(KEY_SHELF_WIDTH, SiteLayout.default().shelfWidthTiles)
+
+fun saveRouteShelfWidth(context: Context, value: Int) {
+    routePrefs(context).edit().putInt(KEY_SHELF_WIDTH, value).apply()
+}
+
 /** 读出当前生效的场地布局。 */
 fun getSiteLayout(context: Context): SiteLayout = SiteLayout.default().copy(
     rowLetters = getRouteRowLetters(context),
     aisleSpacingTiles = getRouteAisleSpacing(context),
+    shelfWidthTiles = getRouteShelfWidth(context),
     doorToSpineTiles = getRouteDoorToSpine(context),
     exitDepthTiles = getRouteExitDepth(context),
     exitLateralTiles = getRouteExitLateral(context),

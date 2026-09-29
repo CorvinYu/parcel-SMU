@@ -122,10 +122,10 @@ class PickupRouteTest {
 
     @Test
     fun `货架到主通道的横向格数（西4东8）`() {
-        assertEquals(4, lateralTilesFor(1, layout))   // 西侧最远
-        assertEquals(1, lateralTilesFor(4, layout))   // 紧邻通道
-        assertEquals(1, lateralTilesFor(5, layout))   // 紧邻通道
-        assertEquals(8, lateralTilesFor(12, layout))  // 东侧最远
+        assertEquals(12, lateralTilesFor(1, layout))  // 西侧最远：3 + 3×3
+        assertEquals(3, lateralTilesFor(4, layout))   // 紧邻通道：半个通道 + 半个货架
+        assertEquals(3, lateralTilesFor(5, layout))   // 紧邻通道
+        assertEquals(24, lateralTilesFor(12, layout)) // 东侧最远：3 + 3×7
         assertNull(lateralTilesFor(0, layout))
         assertNull(lateralTilesFor(13, layout))
     }
@@ -138,7 +138,7 @@ class PickupRouteTest {
         assertEquals(PickupZone.MAIN, pos.zone)
         assertEquals(0, pos.aisle)
         assertEquals(0, pos.depthTiles)
-        assertEquals(4, pos.lateralTiles)
+        assertEquals(12, pos.lateralTiles)
         assertEquals(SpineSide.WEST, pos.spineSide)
         assertEquals(AisleSide.SOUTH, pos.aisleSide)
     }
@@ -148,7 +148,7 @@ class PickupRouteTest {
         val pos = locate(parseCompartmentCode("R12")!!, layout)!!
         assertEquals(7, pos.aisle)
         assertEquals(21, pos.depthTiles)      // 7 × 3
-        assertEquals(8, pos.lateralTiles)
+        assertEquals(24, pos.lateralTiles)
         assertEquals(SpineSide.EAST, pos.spineSide)
         assertEquals(AisleSide.NORTH, pos.aisleSide)
     }
@@ -178,7 +178,7 @@ class PickupRouteTest {
         // 实测样例 S3-2-2628：s3 货架、第 2 格
         val s3 = locate(parseCompartmentCode("S3-2-2628")!!, layout)!!
         assertEquals(SpineSide.EAST, s3.spineSide)
-        assertEquals(1 + 2 - 1, s3.lateralTiles)
+        assertEquals(3 + 2 - 1, s3.lateralTiles)
         assertNull(locate(parseCompartmentCode("S4-1")!!, layout))   // 只有 3 个货架
     }
 
@@ -327,16 +327,16 @@ class PickupRouteTest {
     fun `同一条通道同一侧可直接沿通道走`() {
         val a = locate(parseCompartmentCode("A1-1")!!, layout)!!   // 西侧，lateral 4
         val b = locate(parseCompartmentCode("A2-1")!!, layout)!!   // 西侧，lateral 3
-        assertEquals(1, walkTiles(a, b, layout))
-        assertEquals(1, walkTiles(b, a, layout))
+        assertEquals(3, walkTiles(a, b, layout))   // 12 - 9
+        assertEquals(3, walkTiles(b, a, layout))
     }
 
     @Test
     fun `同一条通道异侧必须绕经主通道`() {
         val a = locate(parseCompartmentCode("A4-1")!!, layout)!!   // 西，lateral 1
         val b = locate(parseCompartmentCode("A5-1")!!, layout)!!   // 东，lateral 1
-        assertEquals(2, walkTiles(a, b, layout))
-        assertEquals(2, walkTiles(b, a, layout))
+        assertEquals(6, walkTiles(a, b, layout))   // 3 + 3
+        assertEquals(6, walkTiles(b, a, layout))
     }
 
     @Test
@@ -349,16 +349,16 @@ class PickupRouteTest {
         assertEquals(AisleSide.SOUTH, a4.aisleSide)
         assertEquals(AisleSide.NORTH, b4.aisleSide)
         // 用户 2026-09-29 现场确认：背靠背挡死 ⇒ 各自回主通道 = 横向 1 + 1
-        assertEquals(2, walkTiles(a4, b4, layout))
-        assertEquals(2, walkTiles(b4, a4, layout))
+        assertEquals(6, walkTiles(a4, b4, layout))   // 3 + 3
+        assertEquals(6, walkTiles(b4, a4, layout))
 
         // 横向也要走一段时：横向「之和」（不是差）
         val b1 = locate(parseCompartmentCode("B1-1")!!, layout)!!   // 横向 4
-        assertEquals(1 + 4, walkTiles(a4, b1, layout))
+        assertEquals(3 + 12, walkTiles(a4, b1, layout))
 
         // 不同通道同样回主通道：横向 + 通道间距 + 横向
         val c4 = locate(parseCompartmentCode("C4-1")!!, layout)!!
-        assertEquals(1 + layout.aisleSpacingTiles + 1, walkTiles(a4, c4, layout))
+        assertEquals(3 + layout.aisleSpacingTiles + 3, walkTiles(a4, c4, layout))
     }
 
     @Test
@@ -374,7 +374,7 @@ class PickupRouteTest {
         )
         // 口径：横向回主通道 + |深度差| + 出口横向
         val m4 = locate(parseCompartmentCode("M4-1")!!, layout)!!   // 紧邻主通道 ⇒ lateral 1
-        val expected = 1 + kotlin.math.abs(m4.depthTiles - layout.exitDepthTiles) + layout.exitLateralTiles
+        val expected = 3 + kotlin.math.abs(m4.depthTiles - layout.exitDepthTiles) + layout.exitLateralTiles
         assertEquals(expected, exitFromTiles(m4, layout))
     }
 
@@ -425,9 +425,17 @@ class PickupRouteTest {
     @Test
     fun `不折返时最优解把最远的一件排在最后`() {
         val codes = listOf("A1-1", "A12-1", "G1-1")
+        val positions = codes.map { locate(parseCompartmentCode(it)!!, layout)!! }
+        val farthest = positions.maxByOrNull { entranceToTiles(it, layout) }!!
         val route = planPickupRoute(codes, layout, returnToEntrance = false)
-        // G 排（通道 3）比 A 排深，敞开路径应在它这里收尾
-        assertEquals('G', route.orderedCodes.last().rowLetter)
+        assertEquals(
+            "敞开路径应在「入口出发最远」的那件收尾",
+            farthest.code.toString(),
+            route.orderedCodes.last().toString(),
+        )
+        // ⚠️ 用实测尺度（一个货架 3 格）算出来的反直觉结论，值得留个记号：
+        // A12-1 横向 24 格 ⇒ 距入口 28；G1-1 深度 9 + 横向 12 = 25 ⇒ **最远的不再是排最深的那件**。
+        assertEquals('A', route.orderedCodes.last().rowLetter)
     }
 
     // ===== 异常输入 =====
