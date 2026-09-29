@@ -27,7 +27,8 @@ import kotlin.math.abs
  *    J/S 区挂在最里侧的通道 8。原图 9 条横向通道 ↔ 16 排，正好一一对应。
  * 3. **主纵向通道在货架 4 与 5 之间**（原图 `N11:N33`），入口在通道南端 ⇒ 先沿它走到目标通道，再横向到货架。
  * 4. 每排 12 个货架：通道**西侧 1~4**、**东侧 5~12**。
- * 5. **同一通道的南北两侧可以横穿**（背靠背的两排之间不必绕回主通道）。
+ * 5. **背靠背的两排之间过不去**（货架挡死）：同一条通道南北异侧必须各自回主通道（用户 2026-09-29 确认）。
+ * 6. **入口在南、出口在西**（原图 J39:M40 进、A15:A30 出）—— 取完从**西侧大门**离开，不是走回南门。
  * 6. 货架内格子编号是「每行从左到右」的阅读序 —— 但**每货架格数尚未实测**，故同一货架内先视作同一点。
  *
  * ## 特殊区（本轮起正式纳入规划）
@@ -40,13 +41,15 @@ import kotlin.math.abs
  *
  * ## 为什么用「精确 DP」而不是贪心
  *
- * 走行图是「纵向主通道 + 每条横向通道」构成的树，加上「同通道可横穿」这一条近路。
+ * 走行图就是「纵向主通道 + 每条横向通道」构成的一棵树：每条通道都从主通道分出去，
+ * 货架挂在通道上；通道之间只能经主通道相连。
  * 距离满足对称与三角不等式（有单元测试守住），因此「每件恰好访问一次」的最短路线可用
  * Held–Karp 子集 DP 求**精确最优**；DP 结果与暴力枚举逐例比对（见 `PickupRouteTest`）。
  *
  * ## 仍是近似、已如实标注的地方（只影响绝对格数，不影响相对顺序）
  *
- * - 通道间距默认 3 格、入口到主通道 4 格、横穿代价 1 格 —— 全部可在界面调整。
+ * - 通道间距默认 3 格、入口到主通道 4 格、出口位置（深度 10 / 横向 5）—— 全部可在界面调整，
+ *   待用户提供实测瓷砖格数后校准。
  * - J 六条柜列的横向距离按**列序** 1~6（j6 最靠主通道）；柜内格子沿列每格 1 格。
  * - S / Y 的格子横向按格号 1..N（踩点图是示意图，非等距）。
  * - Y 区 `y8-3`~`y8-7` 在原图写作「……」，其深度按 `y8-2` 与 `y8-8` 之间均分推断。
@@ -159,8 +162,15 @@ data class SiteLayout(
     val aisleSpacingTiles: Int = 3,
     /** 入口到主通道口的横向格数（用户口述「向右 4 块瓷砖」） */
     val doorToSpineTiles: Int = 4,
-    /** 同一条通道上、南北异侧之间横穿的代价 */
-    val crossAisleTiles: Int = 1,
+    /**
+     * 出口（**西侧大门**）的深度：沿主通道从入口方向算起的格数。
+     *
+     * 原图 `A15:A30` 跨 排 p(深度 18) ~ d(深度 3) ⇒ 取中 ≈ 10 格。
+     * **等用户实测的瓷砖格数到位后再校准**。
+     */
+    val exitDepthTiles: Int = 10,
+    /** 出口距主通道的横向格数：西侧门在货架 1 之外，默认 5 格 */
+    val exitLateralTiles: Int = 5,
     val specialShelves: List<SpecialShelf> = defaultSpecialShelves(),
 ) {
     /** 最里侧那条通道的序号（J 柜列与 S 顺丰区挂在它上面） */
@@ -408,27 +418,36 @@ private fun locateSpecial(code: CompartmentCode, layout: SiteLayout): SitePositi
 fun entranceToTiles(target: SitePosition, layout: SiteLayout): Int =
     layout.doorToSpineTiles + target.depthTiles + target.lateralTiles
 
-/** 该点 → 出口 的步数（出口与入口同一处，故与 [entranceToTiles] 相同）。 */
+/**
+ * 该点 → **西侧出口** 的步数。
+ *
+ * 用户 2026-09-29 确认：**取完从西侧大门出去**（原图 `A15:A30` 那道门），**不是走回南门**。
+ * 所以是「横向回主通道 → 沿主通道走到出口所在深度 → 再横向出去」。
+ */
 fun exitFromTiles(target: SitePosition, layout: SiteLayout): Int =
-    entranceToTiles(target, layout)
+    target.lateralTiles +
+        abs(target.depthTiles - layout.exitDepthTiles) +
+        layout.exitLateralTiles
 
 /**
  * 两点之间的步数（走行图上的最短路径）。
  *
- * - **同一条横向通道、同一侧**：直接沿通道走 `|Δ横向|`（外加 J 柜列那种沿纵向的 `|Δ深度|`）。
- * - **同一条横向通道、南北异侧**：可横穿，代价 `crossAisleTiles`。
- * - **不同通道**：必须回主纵向通道 ⇒ `横向 + |Δ深度| + 横向`。
+ * - **同一条横向通道、同一侧**（含南北同侧）：直接沿通道走 `|Δ横向|`
+ *   （外加 J 柜列那种沿纵向的 `|Δ深度|`）。
+ * - **同一条通道但南北异侧**（背靠背的两排）：**过不去，必须各自回主通道** ——
+ *   用户 2026-09-29 确认「背靠背挡死」。（0.1.8 曾当成可横穿 1 格，是错的。）
+ * - **不同通道**：同样必须回主纵向通道 ⇒ `横向 + |Δ深度| + 横向`。
  */
 fun walkTiles(a: SitePosition, b: SitePosition, layout: SiteLayout): Int {
     val depthGap = abs(a.depthTiles - b.depthTiles)
     if (a.aisle == b.aisle) {
-        val lateral = if (a.spineSide == b.spineSide) {
+        val sameSide = a.spineSide == b.spineSide && a.aisleSide == b.aisleSide
+        val lateral = if (sameSide) {
             abs(a.lateralTiles - b.lateralTiles)
         } else {
             a.lateralTiles + b.lateralTiles
         }
-        val cross = if (a.aisleSide == b.aisleSide) 0 else layout.crossAisleTiles
-        return lateral + depthGap + cross
+        return lateral + depthGap
     }
     return a.lateralTiles + depthGap + b.lateralTiles
 }
@@ -439,7 +458,7 @@ data class PickupRoute(
     val orderedCodes: List<CompartmentCode>,
     /** 总步数（格） */
     val totalTiles: Int,
-    /** 每一段的步数：第 0 段为「入口 → 第 1 件」，之后逐件；折返时最后一段为「末件 → 出口」 */
+    /** 每一段的步数：第 0 段为「入口 → 第 1 件」，之后逐件；从西门出去时最后一段为「末件 → 西门」 */
     val legTiles: List<Int>,
     /** 纯数字取件码 = 快递柜，不在人工货架路径上 */
     val lockerCodes: List<String>,
@@ -503,7 +522,7 @@ const val MAX_EXACT_ITEMS = 13
  *
  * @param rawCodes         货格号原文列表（通常来自短信解析出的 compartmentNumber）
  * @param layout           场地布局参数
- * @param returnToEntrance 取完后是否回到入口。为 false 时是「敞开路径」，
+ * @param returnToEntrance 取完后是否**从西侧大门出去**（用户确认出口在西侧）。为 false 时是「敞开路径」，
  *                         最优解会**把最远的点排在最后**，这也是顺序真正起作用的场景。
  */
 fun planPickupRoute(
