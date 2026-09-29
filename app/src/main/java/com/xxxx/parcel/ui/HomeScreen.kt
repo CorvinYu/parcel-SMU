@@ -47,7 +47,6 @@ import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.isRouteSortList
-import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomHeightDp
@@ -92,10 +91,8 @@ fun HomeScreen(
         )
     }
     var draggingBottom by remember { mutableStateOf(false) }
-    // 由列表上报「当前页内容高度（px）」，用来算出底部浮窗能占多少空白
+    // 条码铺作背景的功能已删除，这里不再需要给顶栏加垫子
     var listContentHeightPx by remember { mutableStateOf<Int?>(null) }
-    // 条码铺作背景时，文字直接压在条码上会难读 —— 给文字容器加半透明垫子
-    val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -105,14 +102,7 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             Column(
-                modifier = if (barcodeBackgroundOn) {
-                    Modifier.background(
-                        if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.74f)
-                        else Color.White.copy(alpha = 0.90f)
-                    )
-                } else {
-                    Modifier
-                }
+                modifier = Modifier
             ) {
             HomeTopBar(
                 context = context,

@@ -46,7 +46,6 @@ import com.xxxx.parcel.util.PickupPlace
 import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.classifyPickupPlace
 import com.xxxx.parcel.util.formatPickupCode
-import com.xxxx.parcel.util.isBarcodeBackgroundEnabled
 import com.xxxx.parcel.util.removeCompletedId
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import java.text.SimpleDateFormat
@@ -80,7 +79,6 @@ fun AddressCard(
     routeOrder: Int? = null,
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
-    val barcodeBackgroundOn = remember { isBarcodeBackgroundEnabled(context) }
     // 默认分类：纯数字取件码 ⇒ 快递柜（自助取件）；含字母 ⇒ 快递站（人工货架，含顺丰 S、大件 Y）
     val isLockerCard = remember(parcelData) {
         parcelData.smsDataList.any { classifyPickupPlace(it.code) == PickupPlace.LOCKER }
@@ -172,16 +170,7 @@ fun AddressCard(
                 Spacer(modifier = Modifier.height(if (hideHeader) 2.dp else 4.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        // 条码铺作背景时，卡片默认是全透明的，文字会直接压在条码上难以辨认；
-                        // 此时给卡片一张半透明垫子。未开条码背景时保持原样。
-                        containerColor = if (barcodeBackgroundOn) {
-                            if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.72f)
-                            else Color.White.copy(alpha = 0.88f)
-                        } else {
-                            Color.Transparent
-                        }
-                    ),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         displaySmsDataList.forEachIndexed { rowIndex, smsData ->
@@ -193,26 +182,38 @@ fun AddressCard(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // 取件路线序号：跟着 ①②③ 取就行（只标在卡片第一行）
-                                        if (routeOrder != null && rowIndex == 0) {
+                                        // 取件路线序号：跟着 ①②③ 取就行。
+                                        // 同一张卡里有多条取件码时（例如两条一模一样的码），
+                                        // 第 2 条起**只留出序号的位置、不再重复画数字** ——
+                                        // 否则那一行会顶到最左边，和上面的码错开、很难看（用户反馈）。
+                                        if (routeOrder != null) {
                                             Box(
                                                 modifier = Modifier
                                                     .padding(end = 8.dp)
                                                     .size(if (isSeniorMode) 44.dp else 30.dp)
-                                                    .clip(RoundedCornerShape(50))
-                                                    .background(MaterialTheme.colorScheme.primary),
+                                                    .then(
+                                                        if (rowIndex == 0) {
+                                                            Modifier
+                                                                .clip(RoundedCornerShape(50))
+                                                                .background(MaterialTheme.colorScheme.primary)
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    ),
                                                 contentAlignment = Alignment.Center,
                                             ) {
-                                                Text(
-                                                    text = "$routeOrder",
-                                                    color = MaterialTheme.colorScheme.onPrimary,
-                                                    fontWeight = FontWeight.Bold,
-                                                    style = if (isSeniorMode) {
-                                                        MaterialTheme.typography.titleLarge
-                                                    } else {
-                                                        MaterialTheme.typography.titleMedium
-                                                    },
-                                                )
+                                                if (rowIndex == 0) {
+                                                    Text(
+                                                        text = "$routeOrder",
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = if (isSeniorMode) {
+                                                            MaterialTheme.typography.titleLarge
+                                                        } else {
+                                                            MaterialTheme.typography.titleMedium
+                                                        },
+                                                    )
+                                                }
                                             }
                                         }
                                         // 快递柜：左侧用大号数字标出柜号，一眼看到去哪个柜
