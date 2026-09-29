@@ -109,7 +109,13 @@ fun saveBarcodeBottomHeightDp(context: Context, heightDp: Int) {
 const val DEFAULT_BOTTOM_HEIGHT_DP = 96
 const val DEFAULT_BOTTOM_HEIGHT_SENIOR_DP = 128
 
-// 「铺满首页背景」功能已按用户要求整条删除（含其 prefs 键与读写函数）。
+/** 铺满首页背景 */
+fun isBarcodeBackgroundEnabled(context: Context): Boolean =
+    barcodePrefs(context).getBoolean(KEY_BACKGROUND, false)
+
+fun saveBarcodeBackgroundEnabled(context: Context, enabled: Boolean) {
+    barcodePrefs(context).edit().putBoolean(KEY_BACKGROUND, enabled).apply()
+}
 
 /**
  * 原图模式：直接用截图里裁出的条码原图，不做解码重编码 ⇒ 内容 100% 保真。
