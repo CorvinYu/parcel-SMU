@@ -3,34 +3,55 @@ package com.xxxx.parcel.util
 import kotlin.math.abs
 
 /**
- * 取件最优路径引擎（纯 Kotlin，无 Android 依赖 —— 可在 JVM 单测里跑）。
+ * 取件最优路径引擎（纯 Kotlin，无 Android 依赖 —— 便于在 JVM 上跑单元测试）。
  *
- * ## 模型来源（2026-09-29 换代为**数据驱动**）
+ * ## 场地拓扑（依据用户 2026-09-29 现场踩点图 `docs/海大快递站平面布局与货位清单.xlsx`）
  *
- * 场地可走格**完全来自用户 Excel 的填充色**（[SiteData] / [SiteModel]），
- * 不再手写「排字母 / 通道间距 / 经主通道还是经东侧通道」这类假设。
- *   - 3 条纵向干线：西侧（靠闸机，列 F~J）、主通道（列 AI~AN）、东侧（列 CK~CP）
- *   - 9 条横向走廊带 + 北侧 J/S 区通道；闸机带可通行（只用于出行）
+ * ```
+ *            ↑ 北（最里侧：J 柜列 / S 顺丰区 / Y 大件区）
+ *            │
+ *   通道11 ──┼──────────────────────  ← 挂 J 柜列、S 顺丰区
+ *   R 排    ─┤        主纵向通道      ← 货架 1~4 ┃ 5~12
+ *   通道13 ──┼──────────────────────  ← 服务 Q 排（南侧）与 R 排（北侧）
+ *   Q 排    ─┤
+ *   通道16 ──┼──────────────────────  ← 服务 O 排与 P 排
+ *    ...
+ *   通道34 ──┼──────────────────────  ← 服务 A 排与 B 排（离入口最近）
+ *   A 排    ─┤
+ *            ↓ 南（入口大门 J39:M40）
+ * ```
  *
- * ## 算法
+ * 已确认的关键结构（踩点图 + 用户说明）：
+ * 1. **16 排**，由入口向里依次 `A B C D E F G H K L M N O P Q R`（**无 I、无 J**；J 是独立柜列区）。
+ * 2. **每两排背靠背、共用一条横向通道**：A/B 共用通道 0（最靠近入口），C/D 用通道 1，…，Q/R 用通道 7，
+ *    J/S 区挂在最里侧的通道 8。原图 9 条横向通道 ↔ 16 排，正好一一对应。
+ * 3. **主纵向通道在货架 4 与 5 之间**（原图 `N11:N33`），入口在通道南端 ⇒ 先沿它走到目标通道，再横向到货架。
+ * 4. 每排 12 个货架：通道**西侧 1~4**、**东侧 5~12**。
+ * 5. **同一通道的南北两侧可以横穿**（背靠背的两排之间不必绕回主通道）。
+ * 6. 货架内格子编号是「每行从左到右」的阅读序 —— 但**每货架格数尚未实测**，故同一货架内先视作同一点。
  *
- * 1. 取件点 → 合并区（等价于「货格号 → 场地坐标」）→ **绕开墙与货架**投影到最近通道格
- * 2. 最短路 = 网格 BFS（边权恒为 1 单元格 ⇒ BFS 即精确最短路；绕哪条干线自动得出）
- * 3. 排序 = **Held–Karp 子集 DP**（精确最优；>13 件退化为分块最近邻 + 2-opt 并如实标注）
+ * ## 特殊区（本轮起正式纳入规划）
  *
- * ## 顺丰规则（用户 2026-09-29 两条）
+ * | 区 | 结构 | 格子方向 |
+ * |---|---|---|
+ * | J | 北端靠西墙的 **6 条纵向柜列**：`j1 │ 通道 │ j2 j3（背靠背）│ 通道 │ j4 j5（背靠背）│ 通道 │ j6` | 沿列**向里**递增 |
+ * | S | 顺丰 3 个货架 `s1`(10) `s2`(8) `s3`(8) | 沿横向（西→东）递增 |
+ * | Y | 大件 `y1`~`y7` + `y8`（8 行 × 3 子位，`y8-<行>-<子位>`） | `y2/y4/y5/y7` **反向**（右端为 1） |
  *
- * - 「只要拿了 S，一定要先从顺丰专用闸机**出库**；若同时还有普通件，可以在顺丰出库后再去普通货架，
- *   最后从普通闸机**出库 + 出站**直接走人。」
- * - 「**顺丰的出库机不能出站**，所以要走那个出站机出站」⇒ **出库 ≠ 出站**：
- *   - 有普通件 → 终点 = `7个普通闸机`（出库 + 出站）
- *   - 只有顺丰件 → `顺丰专用闸机`出库 → `顺丰和无快递出口`出站
+ * ## 为什么用「精确 DP」而不是贪心
  *
- * ⇒ DP 状态 = `(已取件集合, 当前节点, 是否已出库)`；转到出库点的前提是「所有 S 件都已取」。
+ * 走行图是「纵向主通道 + 每条横向通道」构成的树，加上「同通道可横穿」这一条近路。
+ * 距离满足对称与三角不等式（有单元测试守住），因此「每件恰好访问一次」的最短路线可用
+ * Held–Karp 子集 DP 求**精确最优**；DP 结果与暴力枚举逐例比对（见 `PickupRouteTest`）。
+ *
+ * ## 仍是近似、已如实标注的地方（只影响绝对格数，不影响相对顺序）
+ *
+ * - 通道间距默认 3 格、入口到主通道 4 格、横穿代价 1 格 —— 全部可在界面调整。
+ * - J 六条柜列的横向距离按**列序** 1~6（j6 最靠主通道）；柜内格子沿列每格 1 格。
+ * - S / Y 的格子横向按格号 1..N（踩点图是示意图，非等距）。
+ * - Y 区 `y8-3`~`y8-7` 在原图写作「……」，其深度按 `y8-2` 与 `y8-8` 之间均分推断。
+ * - a 区排列（原图 a3 重复出现）尚未确认，故 a 排只定位到「第几个货架」，不做排内细分。
  */
-// ============================================================================
-// 货格号 / 分区 / 分类（与上游解析器配合的部分）
-// ============================================================================
 
 /** 一个货格号，形如 `D5-23`；顺丰/大件可能是三段（`S3-2-2628`、`Y8-1-3`）。 */
 data class CompartmentCode(
@@ -69,6 +90,178 @@ enum class PickupZone(val label: String) {
     }
 }
 
+/** 相对主纵向通道的一侧。 */
+enum class SpineSide(val label: String) {
+    WEST("通道西侧"),
+    EAST("通道东侧"),
+}
+
+/** 相对横向通道的一侧（背靠背的两排分属两侧）。 */
+enum class AisleSide(val label: String) {
+    SOUTH("通道南侧"),
+    NORTH("通道北侧"),
+}
+
+/** 一个可寻址点的场地坐标（相对主纵向通道与它所属的横向通道）。 */
+data class SitePosition(
+    val zone: PickupZone,
+    /** 沿主纵向通道、从入口方向算起的格数 */
+    val depthTiles: Int,
+    /** 从主纵向通道中心线横向走到该点的格数（≥1） */
+    val lateralTiles: Int,
+    val spineSide: SpineSide,
+    val aisleSide: AisleSide,
+    /** 服务它的横向通道序号（0 = 最靠近入口那条） */
+    val aisle: Int,
+    /** 给人看的描述 */
+    val label: String,
+    val code: CompartmentCode,
+)
+
+/**
+ * 特殊区里的一个「货架级」单元：J 柜列、顺丰货架、大件货架。
+ *
+ * 坐标含义见 [SitePosition]；[reversed] 用于踩点图里反向编号的 Y 货架，
+ * [cellsAlongDepth] 用于 J 柜列（格子沿纵向向里递增）。
+ */
+data class SpecialShelf(
+    val zone: PickupZone,
+    val shelfNumber: Int,
+    val maxCell: Int,
+    val depthTiles: Int,
+    val lateralBase: Int,
+    val spineSide: SpineSide,
+    val aisleSide: AisleSide,
+    val aisle: Int,
+    val reversed: Boolean = false,
+    val cellsAlongDepth: Boolean = false,
+    /** 第三段是否为「横向子位」（仅 Y8 用） */
+    val thirdSegmentIsSubSlot: Boolean = false,
+    val subSlots: Int = 1,
+    /** 非空时：第二段是「行号」，用它索引该行所在的深度（仅 Y8 用） */
+    val perRowDepths: List<Int> = emptyList(),
+    val label: String,
+)
+
+/**
+ * 场地布局参数。
+ *
+ * 默认值全部来自用户 2026-09-29 现场踩点图（见 `docs/` 下的平面布局表），
+ * 但**仍是可编辑配置**：与现场不符时改参数即可，不要改引擎逻辑。
+ */
+data class SiteLayout(
+    /** 由入口向深处的普通排字母（不含特殊区）。默认 16 排，无 I、无 J。 */
+    val rowLetters: List<Char> = DEFAULT_ROW_LETTERS,
+    val shelvesPerRow: Int = 12,
+    /** 主通道西侧的货架号上界（默认 4 ⇒ 西 1~4、东 5~12） */
+    val leftBlockEnd: Int = 4,
+    /** 相邻两条横向通道之间的纵向格数 */
+    val aisleSpacingTiles: Int = 3,
+    /** 入口到主通道口的横向格数（用户口述「向右 4 块瓷砖」） */
+    val doorToSpineTiles: Int = 4,
+    /** 同一条通道上、南北异侧之间横穿的代价 */
+    val crossAisleTiles: Int = 1,
+    val specialShelves: List<SpecialShelf> = defaultSpecialShelves(),
+) {
+    /** 最里侧那条通道的序号（J 柜列与 S 顺丰区挂在它上面） */
+    val innermostAisle: Int get() = rowLetters.size / 2
+
+    /** 每条排所属的通道序号：**每两排背靠背共用一条通道**。 */
+    fun aisleOf(rowIndex: Int): Int = rowIndex / 2
+
+    /** 同一条通道的哪一侧：偶数下标在前（南侧），奇数在后（北侧）。 */
+    fun aisleSideOf(rowIndex: Int): AisleSide =
+        if (rowIndex % 2 == 0) AisleSide.SOUTH else AisleSide.NORTH
+
+    companion object {
+        /** 由入口向里的 16 排（踩点图实测：`R Q P O N M L K H G F E D C B A` 反转，去掉 I/J）。 */
+        val DEFAULT_ROW_LETTERS: List<Char> =
+            listOf('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R')
+
+        fun default(): SiteLayout = SiteLayout()
+
+        /** 特殊区默认坐标：全部据 2026-09-29 踩点图换算（通道间距按 3 格）。 */
+        fun defaultSpecialShelves(): List<SpecialShelf> {
+            val result = mutableListOf<SpecialShelf>()
+            // ---- J 柜列：北端靠西墙的 6 条纵向柜列，j6 最靠主通道 ----
+            for (i in 1..6) {
+                result += SpecialShelf(
+                    zone = PickupZone.J_CABINET,
+                    shelfNumber = i,
+                    maxCell = 21,
+                    depthTiles = 25,          // 原图标签在第 10 行 ⇒ 通道 11 以北 1 格
+                    lateralBase = 7 - i,      // j1=6 … j6=1
+                    spineSide = SpineSide.WEST,
+                    aisleSide = AisleSide.NORTH,
+                    aisle = 8,
+                    cellsAlongDepth = true,
+                    label = "J 区 j$i 柜列",
+                )
+            }
+            // ---- S 顺丰区：3 个货架，位于主通道以东 ----
+            listOf(
+                Triple(1, 10, 28),   // s1：货位 1~10，原图第 7 行
+                Triple(2, 8, 26),    // s2：1~8，第 9 行
+                Triple(3, 8, 25),    // s3：1~8，第 10 行（紧邻通道 11）
+            ).forEach { (num, maxCell, depth) ->
+                result += SpecialShelf(
+                    zone = PickupZone.SF,
+                    shelfNumber = num,
+                    maxCell = maxCell,
+                    depthTiles = depth,
+                    lateralBase = 1,
+                    spineSide = SpineSide.EAST,
+                    aisleSide = AisleSide.NORTH,
+                    aisle = 8,
+                    label = "S 区（顺丰）s$num",
+                )
+            }
+            // ---- Y 大件区：y1~y7（y2/y4/y5/y7 反向编号） ----
+            listOf(
+                // 货架号, 格数, 深度, 是否反向, 通道序号
+                listOf(1, 9, 30, 0, 8),
+                listOf(2, 4, 28, 1, 8),
+                listOf(3, 4, 27, 0, 8),
+                listOf(4, 4, 25, 1, 8),
+                listOf(5, 7, 21, 1, 7),
+                listOf(6, 8, 21, 0, 7),
+                listOf(7, 8, 18, 1, 6),
+            ).forEach { spec ->
+                val num = spec[0]
+                result += SpecialShelf(
+                    zone = PickupZone.BULK,
+                    shelfNumber = num,
+                    maxCell = spec[1],
+                    depthTiles = spec[2],
+                    lateralBase = 9,          // 位于纵向通道 V 之东（货架 12 之外）
+                    spineSide = SpineSide.EAST,
+                    aisleSide = AisleSide.NORTH,
+                    aisle = spec[4],
+                    reversed = spec[3] == 1,
+                    label = "Y 区（大件）y$num",
+                )
+            }
+            // ---- Y 大件区 y8：8 行 × 3 子位，每行独占一行 ----
+            result += SpecialShelf(
+                zone = PickupZone.BULK,
+                shelfNumber = 8,
+                maxCell = 8,
+                depthTiles = 15,
+                lateralBase = 9,
+                spineSide = SpineSide.EAST,
+                aisleSide = AisleSide.NORTH,
+                aisle = 5,
+                thirdSegmentIsSubSlot = true,
+                subSlots = 3,
+                // y8-1、y8-2、y8-8 在原图有标注；y8-3~y8-7 原图写「……」，按两端均分推断
+                perRowDepths = listOf(15, 12, 11, 10, 9, 8, 7, 6),
+                label = "Y 区（大件）y8 柜组",
+            )
+            return result
+        }
+    }
+}
+
 /**
  * 解析货格号。容忍大小写、空格、半角/全角/长短横线，并支持三段式（顺丰 / 大件）。
  *
@@ -87,35 +280,141 @@ fun parseCompartmentCode(raw: String): CompartmentCode? {
     return CompartmentCode(row, shelf, cell, sub, raw.trim())
 }
 
-private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
-
-/**
- * 从「取件码」文本里识别**人工货架 / 顺丰 / 大件**的货格号（兜底）。
- *
- * 上游 `SmsParser` 的 `compartmentNumber` 只从「格口」「N号柜」这类**快递柜**写法里提取，
- * 人工货架短信（`请用D8-6到人工货架取包裹`）的货格号一直只被当成取件码存进 `code`。
- * 这里做兜底：**取件码本身就是货格号时，把它也当作货格号**。
- *
- * 只认「排字母 + 货架号(-格号)」，因此不会误伤快递柜与其他编号。
- */
-fun compartmentFromPickupCode(rawCode: String): String? {
-    val text = rawCode.trim()
-    if (text.isEmpty()) return null
-    for (token in text.split(',', '，', '、', ' ', '\n', '\t')) {
-        val t = token.trim()
-        if (t.isEmpty()) continue
-        if (!t.first().isAsciiLetter()) continue
-        if (parseCompartmentCode(t) == null) continue
-        return t.uppercase()
+/** 货架号 → 距主纵向通道的横向格数；越靠近通道越小。 */
+fun lateralTilesFor(shelfNumber: Int, layout: SiteLayout): Int? {
+    if (shelfNumber < 1 || shelfNumber > layout.shelvesPerRow) return null
+    return if (shelfNumber <= layout.leftBlockEnd) {
+        // 西侧：通道在西段的东端 ⇒ 4 号最近（1 格），1 号最远
+        layout.leftBlockEnd - shelfNumber + 1
+    } else {
+        // 东侧：通道在东段的西端 ⇒ 5 号最近（1 格），12 号最远
+        shelfNumber - layout.leftBlockEnd
     }
-    return null
 }
 
+/** 把货格号定位到场地坐标；无法定位（未知字母、货架号越界）返回 null。 */
+fun locate(code: CompartmentCode, layout: SiteLayout): SitePosition? =
+    locateMain(code, layout) ?: locateSpecial(code, layout)
+
+private fun locateMain(code: CompartmentCode, layout: SiteLayout): SitePosition? {
+    val rowIndex = layout.rowLetters.indexOf(code.rowLetter)
+    if (rowIndex < 0) return null
+    val lateral = lateralTilesFor(code.shelfNumber, layout) ?: return null
+    val aisle = layout.aisleOf(rowIndex)
+    val side = if (code.shelfNumber <= layout.leftBlockEnd) SpineSide.WEST else SpineSide.EAST
+    val cell = code.cellNumber
+    return SitePosition(
+        zone = PickupZone.MAIN,
+        depthTiles = aisle * layout.aisleSpacingTiles,
+        lateralTiles = lateral,
+        spineSide = side,
+        aisleSide = layout.aisleSideOf(rowIndex),
+        aisle = aisle,
+        label = "${code.rowLetter} 排 ${code.shelfNumber} 号货架" +
+            (cell?.let { " 第 $it 格" } ?: "") +
+            "（${side.label}，距通道 $lateral 格，${layout.aisleSideOf(rowIndex).label}）",
+        code = code,
+    )
+}
+
+private fun locateSpecial(code: CompartmentCode, layout: SiteLayout): SitePosition? {
+    if (code.zone == PickupZone.MAIN || code.zone == PickupZone.UNKNOWN) return null
+    val spec = layout.specialShelves.firstOrNull {
+        it.zone == code.zone && it.shelfNumber == code.shelfNumber
+    } ?: return null
+
+    val cell = code.cellNumber ?: 1
+    var depth = spec.depthTiles
+    var lateral = spec.lateralBase
+    var detail: String
+
+    when {
+        // y8：第二段是「行号」（决定深度），第三段是横向子位
+        spec.thirdSegmentIsSubSlot && spec.perRowDepths.isNotEmpty() -> {
+            val rowIndex = (cell - 1).coerceIn(0, spec.perRowDepths.size - 1)
+            depth = spec.perRowDepths[rowIndex]
+            val sub = (code.subNumber ?: 1).coerceIn(1, spec.subSlots)
+            lateral = spec.lateralBase + (sub - 1)
+            detail = "第 ${rowIndex + 1} 行 · 第 $sub 子位（横向展开）"
+        }
+        // J 柜列：格子沿列向里递增 ⇒ 影响深度
+        spec.cellsAlongDepth -> {
+            depth = spec.depthTiles + (cell - 1)
+            detail = "第 $cell 格（沿列向里递增）"
+        }
+        // Y 反向编号的货架：右端为 1
+        spec.reversed -> {
+            lateral = (spec.lateralBase + (spec.maxCell - cell)).coerceAtLeast(1)
+            detail = "第 $cell 格（右端为 1，向左递增）"
+        }
+        else -> {
+            lateral = spec.lateralBase + (cell - 1)
+            detail = "第 $cell 格（左端为 1，向右递增）"
+        }
+    }
+
+    return SitePosition(
+        zone = spec.zone,
+        depthTiles = depth,
+        lateralTiles = lateral,
+        spineSide = spec.spineSide,
+        aisleSide = spec.aisleSide,
+        aisle = spec.aisle,
+        label = "${spec.label} · $detail",
+        code = code,
+    )
+}
+
+/** 入口 → 该点 的步数。 */
+fun entranceToTiles(target: SitePosition, layout: SiteLayout): Int =
+    layout.doorToSpineTiles + target.depthTiles + target.lateralTiles
+
+/** 该点 → 出口 的步数（出口与入口同一处，故与 [entranceToTiles] 相同）。 */
+fun exitFromTiles(target: SitePosition, layout: SiteLayout): Int =
+    entranceToTiles(target, layout)
+
 /**
- * 一个件的**有效货格号**：优先用短信解析出的货格号；为空时退回「取件码本身就是货格号」。
+ * 两点之间的步数（走行图上的最短路径）。
+ *
+ * - **同一条横向通道、同一侧**：直接沿通道走 `|Δ横向|`（外加 J 柜列那种沿纵向的 `|Δ深度|`）。
+ * - **同一条横向通道、南北异侧**：可横穿，代价 `crossAisleTiles`。
+ * - **不同通道**：必须回主纵向通道 ⇒ `横向 + |Δ深度| + 横向`。
  */
-fun effectiveCompartmentNumber(compartmentNumber: String, code: String): String =
-    compartmentNumber.trim().ifBlank { compartmentFromPickupCode(code) ?: "" }
+fun walkTiles(a: SitePosition, b: SitePosition, layout: SiteLayout): Int {
+    val depthGap = abs(a.depthTiles - b.depthTiles)
+    if (a.aisle == b.aisle) {
+        val lateral = if (a.spineSide == b.spineSide) {
+            abs(a.lateralTiles - b.lateralTiles)
+        } else {
+            a.lateralTiles + b.lateralTiles
+        }
+        val cross = if (a.aisleSide == b.aisleSide) 0 else layout.crossAisleTiles
+        return lateral + depthGap + cross
+    }
+    return a.lateralTiles + depthGap + b.lateralTiles
+}
+
+/** 规划结果。 */
+data class PickupRoute(
+    /** 建议的取件顺序（已成功定位的件） */
+    val orderedCodes: List<CompartmentCode>,
+    /** 总步数（格） */
+    val totalTiles: Int,
+    /** 每一段的步数：第 0 段为「入口 → 第 1 件」，之后逐件；折返时最后一段为「末件 → 出口」 */
+    val legTiles: List<Int>,
+    /** 纯数字取件码 = 快递柜，不在人工货架路径上 */
+    val lockerCodes: List<String>,
+    /** 完全无法定位的原文 */
+    val unresolved: List<String>,
+    /** 是否为精确最优（false 表示件数过多，退化为启发式） */
+    val exact: Boolean,
+) {
+    val resolvedCount: Int get() = orderedCodes.size
+
+    /** 各分区的件数统计。 */
+    fun zoneCounts(): Map<PickupZone, Int> =
+        orderedCodes.groupingBy { it.zone }.eachCount()
+}
 
 /** 该取件码是否只是数字（快递柜）。 */
 fun isLockerCode(raw: String): Boolean {
@@ -125,6 +424,7 @@ fun isLockerCode(raw: String): Boolean {
 
 /**
  * 取件地点类型。
+ *
  * - **快递站**：取件码含字母 —— `D8-6`（人工货架）、`S3-2-2628`（顺丰）、`Y5-7-1`（大件）
  * - **快递柜**：取件码是纯数字 —— `54018314`、`69824579`
  */
@@ -141,383 +441,40 @@ enum class PickupCategory(val label: String) {
 }
 
 /**
- * 三大类判定（判据依用户真实样例）：
+ * 三大类判定。
+ *
+ * 判据（依用户真实样例）：
  * 1. 短信**正文**里出现「海事大学」⇒ 校内；否则 ⇒ 校外
  * 2. 校内 且 取件码为纯数字 ⇒ 快递柜
  * 3. 校内 且 取件码含字母 ⇒ 快递站（含顺丰 S、大件 Y、J 柜列）
  *
- * ⚠️ 必须用短信正文而不是解析后的地址（`D8-6` 那条的解析地址里没有「海事大学」）。
+ * ⚠️ 必须用短信正文而不是解析后的地址：`D8-6` 那条的解析地址是「请用D8-6到人工货架取包裹」，
+ * 里面**没有**「海事大学」，用地址判断会把它误判成校外。
  */
 fun classifyPickupCategory(code: String, smsBody: String): PickupCategory {
     if (!smsBody.contains("海事大学")) return PickupCategory.OFF_CAMPUS
     return if (isLockerCode(code)) PickupCategory.LOCKER else PickupCategory.STATION
 }
 
-// ============================================================================
-// 场地参数 / 定位结果
-// ============================================================================
-
-/**
- * 场地参数。**新模型是数据驱动的**，所以只剩一个仍属「未实测假设」的旋钮。
- */
-data class RouteOptions(
-    /**
-     * **J 柜列每列格数**。
-     *
-     * `货位清单` 里 Q1b/Q5 标着「每列实际格数与北端行号待确认」，实测只到 `j5-21`（⇒ ≥21 格）。
-     * 这里按该值把柜列纵深等比铺开：格子 1 在**靠通道的外端**，越往里越大。
-     */
-    val jCellsPerColumn: Int = 21,
-) {
-    companion object {
-        val DEFAULT = RouteOptions()
-    }
-}
-
-/** 定位好的取件点。 */
-data class PickupSpot(
-    val code: CompartmentCode,
-    /** 精确格位的瓷砖坐标（J 柜列会落在柜列纵深里；普通货架取合并区中心） */
-    val lat: Double,
-    val depth: Double,
-    /** 投影到的通道格（绕开墙与货架） */
-    val row: Int,
-    val col: Int,
-    /** 区内走位（瓷砖）：从通道格走进货架/柜列的那一小段；只有 J 柜列非 0 */
-    val stubTiles: Double,
-    /** 该区在精确版 Excel 里是一整块 ⇒ 只能定位到最近通道点（Y 区） */
-    val approximate: Boolean,
-    val label: String,
-) {
-    val zone: PickupZone get() = code.zone
-}
-
-/** 出站方式。 */
-enum class RouteExit(val label: String) {
-    /** 普通件／混合件：`7个普通闸机` —— 出库 + 出站 */
-    NORMAL_GATE("7个普通闸机（出库 + 出站）"),
-
-    /** 只有顺丰件：`顺丰专用闸机`出库**不能出站** ⇒ 还要走到 `顺丰和无快递出口` 出站 */
-    SF_EXIT("顺丰和无快递出口（出站）"),
-}
-
-/** 路线上的一个停靠点。 */
-sealed interface RouteStop {
-    /** 取件 */
-    data class Pickup(val code: CompartmentCode, val spot: PickupSpot) : RouteStop
-
-    /** 顺丰**出库**（顺丰专用闸机；取过 S 件才会出现） */
-    data object SfCheckout : RouteStop
-
-    /** 出站（终点） */
-    data class Exit(val kind: RouteExit) : RouteStop
-}
-
-/** 规划结果。 */
-data class PickupRoute(
-    /** 建议的取件顺序 */
-    val orderedCodes: List<CompartmentCode>,
-    /** 完整停靠序列：取件 / 顺丰出库 / 出站 */
-    val stops: List<RouteStop>,
-    /** 到每一站的步数（第 0 站从入口算起）；单位：瓷砖 */
-    val legTiles: List<Double>,
-    val totalTiles: Double,
-    /** 顺丰出库插在第几件之后（-1 = 不需要出库） */
-    val sfCheckoutAfter: Int,
-    val sfCheckoutCell: GridCell?,
-    val exitCell: GridCell?,
-    val exit: RouteExit,
-    /** 纯数字取件码 = 快递柜，不在人工货架路径上 */
-    val lockerCodes: List<String>,
-    /** 完全无法定位的原文 */
-    val unresolved: List<String>,
-    /** 是否为精确最优（false 表示件数过多，退化为分块启发式） */
-    val exact: Boolean,
-) {
-    val resolvedCount: Int get() = orderedCodes.size
-
-    val hasSfCheckout: Boolean get() = sfCheckoutAfter >= 0
-
-    /** 各分区的件数统计。 */
-    fun zoneCounts(): Map<PickupZone, Int> =
-        orderedCodes.groupingBy { it.zone }.eachCount()
-}
-
-/**
- * 超过这个件数就不用 O(2^n·n·2) 的精确 DP，退化为「S 块 → 出库 → 普通块」的两个种子 +
- * 2-opt（最近邻种子 / 走廊扫描种子，取更优者）。
- *
- * 上限怎么定的：n=16 时 DP 状态 = 2^16 × 17 × 2 ≈ 2.2M（FloatArray 约 9MB）＋ 同规模的前驱数组，
- * 手机上可接受；n=18 起内存翻 4 倍（>70MB）就不合适了。53 件这种量级**不可能**精确求解（2^53）。
- */
-const val MAX_EXACT_ITEMS = 16
-
-// ============================================================================
-// 场地索引（合并区 / 闸机带）
-// ============================================================================
-
-private object SiteIndex {
-
-    /** 一个合并区（同标签的多个矩形取并集后的包围盒）。 */
-    class Rect(val label: String, val c0: Int, val c1: Int, val r0: Int, val r1: Int) {
-        val lat0: Double get() = SiteModel.latOf(c0) - 0.25
-        val lat1: Double get() = SiteModel.latOf(c1) + 0.25
-        val d0: Double get() = SiteModel.depthOf(r1) - 0.25      // 南侧（小）
-        val d1: Double get() = SiteModel.depthOf(r0) + 0.25      // 北侧（大）
-        val centerRow: Double get() = (r0 + r1 + 1) / 2.0
-        val centerCol: Double get() = (c0 + c1 + 1) / 2.0
-        val cells: List<GridCell>
-            get() = buildList {
-                for (r in r0..r1) for (c in c0..c1) add(GridCell(r, c))
-            }
-    }
-
-    val rects: List<Rect> by lazy {
-        val out = ArrayList<Rect>(SiteData.rectLabels.size)
-        for (i in SiteData.rectLabels.indices) {
-            val b = i * 4
-            out += Rect(
-                SiteData.rectLabels[i].trim().uppercase(),
-                SiteData.rectBounds[b], SiteData.rectBounds[b + 1],
-                SiteData.rectBounds[b + 2], SiteData.rectBounds[b + 3],
-            )
-        }
-        out
-    }
-
-    /** 标签 → 并集包围盒（同标签多个矩形时取并集）。 */
-    private val byLabel: Map<String, Rect> by lazy {
-        val map = LinkedHashMap<String, Rect>()
-        for (r in rects) {
-            if (r.label.isEmpty()) continue
-            val old = map[r.label]
-            map[r.label] = if (old == null) r else Rect(
-                r.label,
-                minOf(old.c0, r.c0), maxOf(old.c1, r.c1),
-                minOf(old.r0, r.r0), maxOf(old.r1, r.r1),
-            )
-        }
-        map
-    }
-
-    fun rectForLabel(label: String): Rect? = byLabel[label.uppercase()]
-
-    /** 闸机带里的所有格（可通行，只用于出行）。 */
-    private val gateCells: List<GridCell> by lazy {
-        buildList {
-            var i = 0
-            while (i < SiteData.gateSpans.size) {
-                val c0 = SiteData.gateSpans[i]
-                val c1 = SiteData.gateSpans[i + 1]
-                val r0 = SiteData.gateSpans[i + 2]
-                val r1 = SiteData.gateSpans[i + 3]
-                for (r in r0..r1) for (c in c0..c1) {
-                    if (SiteModel.kindAt(r, c) != SiteModel.NONE) add(GridCell(r, c))
-                }
-                i += 4
-            }
-        }
-    }
-
-    private fun gateCellsOf(predicate: (String) -> Boolean): List<GridCell> {
-        val spans = rects.filter { it.label.isNotEmpty() && predicate(it.label) }
-        if (spans.isEmpty()) return emptyList()
-        val c0 = spans.minOf { it.c0 }
-        val c1 = spans.maxOf { it.c1 }
-        val r0 = spans.minOf { it.r0 }
-        val r1 = spans.maxOf { it.r1 }
-        return gateCells.filter { it.col in c0..c1 && it.row in r0..r1 }
-    }
-
-    /** `7个普通闸机`：普通件出库 + 出站（多格 ⇒ 作为集合就近用） */
-    val normalGates: List<GridCell> by lazy { gateCellsOf { "普通闸机" in it } }
-
-    /** 顺丰两处：含「专用」的是**出库机**，另一处（`顺丰和无快递出口`）是**出站口**。 */
-    private val sfGateRects: List<Rect> by lazy {
-        rects.filter { it.label.isNotEmpty() && "顺丰" in it.label && ("闸机" in it.label || "出口" in it.label) }
-    }
-
-    private val sfCheckoutRects: List<Rect> by lazy { sfGateRects.filter { "专用" in it.label } }
-    private val sfExitRects: List<Rect> by lazy { sfGateRects.filter { "专用" !in it.label } }
-
-    private fun centerCellOf(rectsIn: List<Rect>): GridCell? {
-        val cells = rectsIn.flatMap { it.cells }.filter { SiteModel.kindAt(it.row, it.col) != SiteModel.NONE }
-        if (cells.isEmpty()) return null
-        val cr = (rectsIn.minOf { it.r0 } + rectsIn.maxOf { it.r1 } + 1) / 2.0
-        val cc = (rectsIn.minOf { it.c0 } + rectsIn.maxOf { it.c1 } + 1) / 2.0
-        return cells.minByOrNull {
-            val dr = it.row - cr
-            val dc = it.col - cc
-            dr * dr + dc * dc
-        }
-    }
-
-    /** 顺丰**出库**节点：必须是单一格（中间停靠点），取出库闸机带的中心格。 */
-    val sfCheckoutCell: GridCell? by lazy { centerCellOf(sfCheckoutRects) }
-
-    val sfExitGates: List<GridCell> by lazy { sfExitRects.flatMap { it.cells } }
-
-    /**
-     * 入口：Excel 里用户单独用另一颜色填的入口闸机（`W59:AB59`，**不是合并区**）
-     * → 绕开墙与货架投影到最近通道格。
-     */
-    val entranceCell: GridCell? by lazy {
-        val src = ArrayList<GridCell>()
-        var centerRow = 0.0
-        var centerCol = 0.0
-        var widest = -1
-        var i = 0
-        while (i < SiteData.entranceSpans.size) {
-            val row = SiteData.entranceSpans[i]
-            val c0 = SiteData.entranceSpans[i + 1]
-            val c1 = SiteData.entranceSpans[i + 2]
-            if (c1 - c0 > widest) {          // 入口取最宽的那一段（另一段是顺丰闸机带上的单格标记）
-                widest = c1 - c0
-                src.clear()
-                for (c in c0..c1) src += GridCell(row, c)
-                centerRow = row.toDouble()
-                centerCol = (c0 + c1 + 1) / 2.0
-            }
-            i += 3
-        }
-        if (src.isEmpty()) return@lazy null
-        SiteModel.nearestWalkFrom(src, centerRow, centerCol)
-    }
-}
-
-// ============================================================================
-// 定位
-// ============================================================================
-
-/**
- * 把货格号定位到场地：
- * 1. 命中合并区（`D8`、`J5`、`S3`、`A4`…）；Y 区在精确版里是一整块（`Y区域`）⇒ 退化为整块
- * 2. 按区规则取**精确格位**：
- *    - **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增** ⇒ 横向展开
- *    - **J 柜列**：沿列**由外端（靠通道）向里递增** ⇒ 纵深展开，并把柜列内走位计入距离
- * 3. **绕开墙与货架**投影到最近通道格
- *
- * 无法定位（未知字母、货架号越界）返回 null。
- */
-fun locate(code: CompartmentCode, options: RouteOptions = RouteOptions.DEFAULT): PickupSpot? {
-    val letter = code.rowLetter.uppercaseChar()
-    // 各区的货架号范围（越界直接判为无法定位，避免 Y 区整块把 Y9 也算进来）
-    val shelfRange = when (letter) {
-        'J' -> 1..6
-        'S' -> 1..3
-        'Y' -> 1..8
-        else -> 1..12
-    }
-    if (code.shelfNumber !in shelfRange) return null
-    val rect = SiteIndex.rectForLabel("$letter${code.shelfNumber}")
-        ?: SiteIndex.rectForLabel("${letter}区域")
-        ?: return null
-    val approximate = SiteIndex.rectForLabel("$letter${code.shelfNumber}") == null
-
-    var lat = (rect.lat0 + rect.lat1) / 2.0
-    var depth = (rect.d0 + rect.d1) / 2.0
-    var posNote = ""
-
-    when (letter) {
-        'S' -> {
-            val n = if (code.shelfNumber == 1) 10 else 8          // s1 = 10 格，s2/s3 = 8 格
-            val k = ((code.cellNumber ?: 1) - 1).coerceIn(0, n - 1)
-            lat = rect.lat0 + (if (n > 1) k.toDouble() / (n - 1) else 0.0) * (rect.lat1 - rect.lat0)
-            posNote = "s${code.shelfNumber} 第${code.cellNumber ?: 1}格（共 $n 格，左端为 1）"
-        }
-        'J' -> {
-            val n = options.jCellsPerColumn.coerceAtLeast(1)
-            val k = ((code.cellNumber ?: 1) - 1).coerceIn(0, n - 1)
-            depth = rect.d0 + (if (n > 1) k.toDouble() / (n - 1) else 0.0) * (rect.d1 - rect.d0)
-            posNote = "j${code.shelfNumber} 第${code.cellNumber ?: 1}格（沿列由外端向里，按 $n 格铺开）"
-        }
-    }
-
-    // 投影：从整个合并区出发、绕开墙与货架；**决胜基准用按格位算出的精确点**
-    // （用合并区中心的话，S 区同一货架的不同格会全投到同一格，段距恒为 0 —— 踩过）
-    val cell = SiteModel.nearestWalkFrom(rect.cells, SiteModel.rowOf(depth), SiteModel.colOf(lat))
-        ?: return null
-    val (cellLat, cellDepth) = SiteModel.centerOf(cell.row, cell.col)
-    // 区内走位：J 柜列纵深必须算进距离；普通货架只有半块瓷砖深，格位归一点
-    val stub = if (letter == 'J') abs(depth - cellDepth) else 0.0
-
-    val zoneName = when (code.zone) {
-        PickupZone.MAIN -> "$letter 排 ${code.shelfNumber} 号货架"
-        PickupZone.J_CABINET -> "J 柜列 j${code.shelfNumber}"
-        PickupZone.SF -> "顺丰 s${code.shelfNumber}"
-        PickupZone.BULK -> "大件 Y 区"
-        PickupZone.UNKNOWN -> "$letter${code.shelfNumber}"
-    }
-    val label = buildString {
-        append(zoneName)
-        if (code.cellNumber != null) append(" 第").append(code.cellNumber).append("格")
-        if (posNote.isNotEmpty()) append("　").append(posNote)
-        append("　（通道格 ").append(cell.row).append(',').append(cell.col).append('）')
-        if (stub > 0.01) append("　区内走位 ").append(fmt1(stub)).append(" 格")
-        if (approximate) append("　⚠ 该区在精确版里是一整块，只定位到最近通道点")
-    }
-    return PickupSpot(
-        code = code, lat = lat, depth = depth, row = cell.row, col = cell.col,
-        stubTiles = stub, approximate = approximate, label = label,
-    )
-}
-
-private fun fmt1(value: Double): String {
-    val rounded = kotlin.math.round(value * 10.0) / 10.0
-    return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString()
-    else rounded.toString()
-}
-
-// ============================================================================
-// 规划（Held–Karp ＋ 顺丰出库先后约束）
-// ============================================================================
-
-private const val INF = 1_000_000_000
-
-/** 距离网格（瓷砖 = 单元格 × 0.5） */
-private const val CELL = SiteModel.CELL_TILES
-
-private fun bfsDistTo(bfs: SiteModel.Bfs?, row: Int, col: Int): Int {
-    if (bfs == null) return INF
-    val d = SiteModel.distTo(bfs, row, col)
-    return if (d < 0) INF else d
-}
-
-private fun minToCells(bfs: SiteModel.Bfs?, cells: List<GridCell>): Int {
-    var best = INF
-    for (c in cells) {
-        val d = bfsDistTo(bfs, c.row, c.col)
-        if (d < best) best = d
-    }
-    return best
-}
-
-/** 两组格子之间的最短距离（对 A 逐点 BFS，取到 B 的最近）。 */
-private fun minBetweenCells(a: List<GridCell>, b: List<GridCell>): Int {
-    var best = INF
-    for (x in a) {
-        val bfs = SiteModel.bfs(x.row, x.col) ?: continue
-        for (y in b) {
-            val d = bfsDistTo(bfs, y.row, y.col)
-            if (d < best) best = d
-        }
-    }
-    return best
-}
+/** 超过这个件数就不用 O(2^n·n²) 的精确 DP，退化为最近邻 + 2-opt。 */
+const val MAX_EXACT_ITEMS = 13
 
 /**
  * 规划取件路径。
  *
- * @param rawCodes 货格号原文列表（通常来自短信解析出的 compartmentNumber，或取件码兜底）
- * @param options  场地参数（目前只有 J 每列格数）
+ * @param rawCodes         货格号原文列表（通常来自短信解析出的 compartmentNumber）
+ * @param layout           场地布局参数
+ * @param returnToEntrance 取完后是否回到入口。为 false 时是「敞开路径」，
+ *                         最优解会**把最远的点排在最后**，这也是顺序真正起作用的场景。
  */
 fun planPickupRoute(
     rawCodes: List<String>,
-    options: RouteOptions = RouteOptions.DEFAULT,
+    layout: SiteLayout = SiteLayout.default(),
+    returnToEntrance: Boolean = true,
 ): PickupRoute {
     val unresolved = mutableListOf<String>()
     val lockers = mutableListOf<String>()
-    val spots = mutableListOf<PickupSpot>()
+    val located = mutableListOf<SitePosition>()
     for (raw in rawCodes) {
         if (isLockerCode(raw)) {
             lockers += raw.trim()
@@ -528,343 +485,159 @@ fun planPickupRoute(
             unresolved += raw
             continue
         }
-        val spot = locate(code, options)
-        if (spot == null) {
+        val pos = locate(code, layout)
+        if (pos == null) {
             unresolved += raw
             continue
         }
-        spots += spot
+        located += pos
     }
 
-    val entrance = SiteIndex.entranceCell
-    if (spots.isEmpty() || entrance == null) {
-        if (entrance == null && spots.isNotEmpty()) {
-            unresolved += spots.map { it.code.raw }
-        }
+    if (located.isEmpty()) {
         return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
-            sfCheckoutAfter = -1, sfCheckoutCell = SiteIndex.sfCheckoutCell, exitCell = null,
-            exit = RouteExit.NORMAL_GATE, lockerCodes = lockers, unresolved = unresolved, exact = true,
-        )
-    }
-
-    val n = spots.size
-    val sfIndexes = spots.indices.filter { spots[it].zone == PickupZone.SF }
-    val hasSf = sfIndexes.isNotEmpty()
-    val hasNormal = spots.any { it.zone != PickupZone.SF }
-    if (hasSf && SiteIndex.sfCheckoutCell == null) {
-        return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
-            sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
-            lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
-            exact = true,
-        )
-    }
-    if (hasSf && !hasNormal && SiteIndex.sfExitGates.isEmpty()) {
-        return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
-            sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
-            lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
+            orderedCodes = emptyList(),
+            totalTiles = 0,
+            legTiles = emptyList(),
+            lockerCodes = lockers,
+            unresolved = unresolved,
             exact = true,
         )
     }
 
-    // 每个取件点 / 入口各做一次 BFS
-    val bfs = arrayOfNulls<SiteModel.Bfs>(n + 1)
-    bfs[0] = SiteModel.bfs(entrance.row, entrance.col)
-    for (i in 0 until n) bfs[i + 1] = SiteModel.bfs(spots[i].row, spots[i].col)
-
-    val stubCells = DoubleArray(n) { spots[it].stubTiles / CELL }
-    val fromEntrance = DoubleArray(n) { bfsDistTo(bfs[0], spots[it].row, spots[it].col).toDouble() + stubCells[it] }
-    fun pair(i: Int, j: Int): Double =
-        stubCells[i] + bfsDistTo(bfs[i + 1], spots[j].row, spots[j].col) + stubCells[j]
-
-    val normalGates = SiteIndex.normalGates
-    val sfCell = SiteIndex.sfCheckoutCell!!
-    val sfExitGates = SiteIndex.sfExitGates
-    val toNormal = DoubleArray(n) { minToCells(bfs[it + 1], normalGates).toDouble() + stubCells[it] }
-    val toSf = DoubleArray(n) { minToCells(bfs[it + 1], listOf(sfCell)).toDouble() + stubCells[it] }
-    val sfToNormal = minBetweenCells(listOf(sfCell), normalGates).toDouble()
-    val sfToExit = if (hasSf) minBetweenCells(listOf(sfCell), sfExitGates).toDouble() else Double.MAX_VALUE
-
-    val exitKind = if (hasNormal) RouteExit.NORMAL_GATE else RouteExit.SF_EXIT
-
-    val seq: List<Int>            // 节点序列：0..n-1 = 取件点，n = 顺丰出库点
-    val totalCells: Double
-    if (n <= MAX_EXACT_ITEMS) {
-        val full = 1 shl n
-        val size = full * (n + 1) * 2
-        val dp = DoubleArray(size) { Double.MAX_VALUE }
-        val par = IntArray(size) { -1 }
-        fun id(mask: Int, last: Int, sfDone: Int) = ((mask * (n + 1) + last) shl 1) or sfDone
-        for (i in 0 until n) dp[id(1 shl i, i, 0)] = fromEntrance[i]
-        for (mask in 1 until full) {
-            for (last in 0..n) {
-                for (sfDone in 0..1) {
-                    val cur = dp[id(mask, last, sfDone)]
-                    if (cur == Double.MAX_VALUE) continue
-                    if (last == n) {
-                        for (x in 0 until n) {
-                            if (mask and (1 shl x) != 0) continue
-                            val v = cur + bfsDistTo(bfs[x + 1], sfCell.row, sfCell.col) + stubCells[x]
-                            val t = id(mask or (1 shl x), x, 1)
-                            if (v < dp[t]) {
-                                dp[t] = v; par[t] = last
-                            }
-                        }
-                    } else {
-                        for (x in 0 until n) {
-                            if (mask and (1 shl x) != 0) continue
-                            val v = cur + pair(last, x)
-                            val t = id(mask or (1 shl x), x, sfDone)
-                            if (v < dp[t]) {
-                                dp[t] = v; par[t] = last
-                            }
-                        }
-                        val allSfTaken = sfIndexes.all { mask and (1 shl it) != 0 }
-                        if (hasSf && sfDone == 0 && allSfTaken) {
-                            val v = cur + toSf[last]
-                            val t = id(mask, n, 1)
-                            if (v < dp[t]) {
-                                dp[t] = v; par[t] = last
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        var best = Double.MAX_VALUE
-        var bestLast = -1
-        var bestSf = 0
-        for (last in 0..n) {
-            for (sfDone in 0..1) {
-                val v = dp[id(full - 1, last, sfDone)]
-                if (v == Double.MAX_VALUE) continue
-                if (hasSf && sfDone == 0) continue           // 拿了 S 却没出库 ⇒ 非法
-                val endCost = when {
-                    hasNormal -> if (last == n) sfToNormal else toNormal[last]
-                    else -> {
-                        if (last != n) continue              // 只有顺丰件 ⇒ 终点只能在出库之后
-                        sfToExit
-                    }
-                }
-                if (v + endCost < best) {
-                    best = v + endCost; bestLast = last; bestSf = sfDone
-                }
-            }
-        }
-        if (bestLast < 0) {
-            return PickupRoute(
-                orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
-                sfCheckoutAfter = -1, sfCheckoutCell = sfCell, exitCell = null, exit = exitKind,
-                lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
-                exact = true,
-            )
-        }
-        val rev = ArrayList<Int>()
-        var mask = full - 1
-        var cur = bestLast
-        var sfDone = bestSf
-        while (cur >= 0) {
-            rev.add(cur)
-            val p = par[id(mask, cur, sfDone)]
-            if (cur == n) sfDone = 0 else mask = mask and (1 shl cur).inv()
-            cur = p
-        }
-        seq = rev.asReversed()
-        totalCells = best
+    val useExact = located.size <= MAX_EXACT_ITEMS
+    val order = if (useExact) {
+        solveExact(located, layout, returnToEntrance)
     } else {
-        // 启发式：S 件块 → 顺丰出库 → 普通件块，块内最近邻 + 2-opt（如实标 exact=false）
-        val sfList = sfIndexes.toMutableList()
-        val normalList = spots.indices.filter { spots[it].zone != PickupZone.SF }.toMutableList()
-
-        fun nn(list: MutableList<Int>, fromEntranceStart: Boolean): MutableList<Int> {
-            val left = list.toMutableList()
-            val out = mutableListOf<Int>()
-            var cu = -1
-            while (left.isNotEmpty()) {
-                var bi = 0
-                var bv = Double.MAX_VALUE
-                for (k in left.indices) {
-                    val x = left[k]
-                    val cand = when {
-                        cu >= 0 -> pair(cu, x)
-                        fromEntranceStart -> fromEntrance[x]
-                        else -> bfsDistTo(bfs[x + 1], sfCell.row, sfCell.col) + stubCells[x]
-                    }
-                    if (cand < bv) {
-                        bv = cand; bi = k
-                    }
-                }
-                out += left[bi]
-                cu = left[bi]
-                left.removeAt(bi)
-            }
-            return out
-        }
-
-        fun seqCost(sfSeq: List<Int>, nSeq: List<Int>): Double {
-            var t = 0.0
-            var cu = -1
-            for (x in sfSeq) {
-                t += if (cu < 0) fromEntrance[x] else pair(cu, x)
-                cu = x
-            }
-            if (hasSf) {
-                t += toSf[cu]
-                if (nSeq.isNotEmpty()) {
-                    t += bfsDistTo(bfs[nSeq[0] + 1], sfCell.row, sfCell.col) + stubCells[nSeq[0]]
-                    var cu2 = -1
-                    for (x in nSeq) {
-                        if (cu2 >= 0) t += pair(cu2, x)
-                        cu2 = x
-                    }
-                    t += toNormal[cu2]
-                } else {
-                    t += sfToExit
-                }
-            } else {
-                var cu3 = -1
-                for (x in nSeq) {
-                    t += if (cu3 < 0) fromEntrance[x] else pair(cu3, x)
-                    cu3 = x
-                }
-                t += toNormal[cu3]
-            }
-            return t
-        }
-
-        fun twoOpt(arr: MutableList<Int>, sRef: List<Int>, nRef: List<Int>, isSfBlock: Boolean) {
-            var improved = true
-            while (improved) {
-                improved = false
-                for (a in arr.indices) for (b in a + 1 until arr.size) {
-                    val cand = arr.toMutableList()
-                    cand.subList(a, b + 1).reverse()
-                    val oldCost = if (isSfBlock) seqCost(arr, nRef) else seqCost(sRef, arr)
-                    val newCost = if (isSfBlock) seqCost(cand, nRef) else seqCost(sRef, cand)
-                    if (newCost < oldCost - 1e-9) {
-                        arr.clear(); arr.addAll(cand); improved = true
-                    }
-                }
-            }
-        }
-
-        val sfSeq = nn(sfList, true)
-
-        // 普通件块用两个种子各跑一遍 2-opt，取更优者：
-        //   ① 最近邻（对小规模、聚簇场景好）
-        //   ② **走廊扫描**（按投影行从入口一侧往里、同一走廊内按横向走 —— 大件数时更像人走法）
-        val seedA = nn(normalList, !hasSf)
-        twoOpt(seedA, sfSeq, normalList, false)
-
-        val seedB = normalList.sortedWith(
-            compareByDescending<Int> { spots[it].row }.thenBy { spots[it].col }
-        ).toMutableList()
-        twoOpt(seedB, sfSeq, normalList, false)
-
-        val nSeq = if (seqCost(sfSeq, seedA) <= seqCost(sfSeq, seedB)) seedA else seedB
-        // 再用选定的普通块为参照，把 S 块的先后顺序也 2-opt 一遍
-        twoOpt(sfSeq, sfSeq, nSeq, true)
-        val built = ArrayList<Int>(n)
-        built.addAll(sfSeq)
-        if (hasSf) built.add(n)
-        built.addAll(nSeq)
-        seq = built
-        totalCells = seqCost(sfSeq, nSeq)
+        solveHeuristic(located, layout, returnToEntrance)
     }
 
-    // ---- 组装结果：停靠序列 + 逐段距离（瓷砖）----
-    val stops = mutableListOf<RouteStop>()
-    val legs = mutableListOf<Double>()
-    val orderedCodes = mutableListOf<CompartmentCode>()
-    var cursor = -1          // -1 = 入口，-2 = 顺丰出库点，>=0 = 件下标
-    for (node in seq) {
-        when {
-            node == n -> {
-                val d = if (cursor == -1) minToCells(bfs[0], listOf(sfCell)).toDouble()
-                else bfsDistTo(bfs[cursor + 1], sfCell.row, sfCell.col).toDouble() +
-                    (if (cursor >= 0) stubCells[cursor] else 0.0)
-                legs += d * CELL
-                stops += RouteStop.SfCheckout
-                cursor = -2
-            }
-            else -> {
-                val d = when {
-                    cursor == -1 -> fromEntrance[node]
-                    cursor == -2 -> bfsDistTo(bfs[node + 1], sfCell.row, sfCell.col).toDouble() + stubCells[node]
-                    else -> pair(cursor, node)
-                }
-                legs += d * CELL
-                stops += RouteStop.Pickup(spots[node].code, spots[node])
-                orderedCodes += spots[node].code
-                cursor = node
-            }
-        }
+    val legs = mutableListOf<Int>()
+    legs += entranceToTiles(order.first(), layout)
+    for (i in 0 until order.size - 1) {
+        legs += walkTiles(order[i], order[i + 1], layout)
     }
-    // 终点：出站（出库 ≠ 出站）
-    val exitCell: GridCell?
-    val exitLegTiles: Double
-    if (exitKind == RouteExit.NORMAL_GATE) {
-        if (cursor == -2) {
-            val pair = bestPair(listOf(sfCell), normalGates)
-            exitCell = pair.second
-            exitLegTiles = pair.first * CELL
-        } else {
-            val bfsCur = bfs[cursor + 1]
-            val best = normalGates.minByOrNull { bfsDistTo(bfsCur, it.row, it.col) }
-            exitCell = best
-            exitLegTiles = if (best == null) 0.0
-            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + stubCells[cursor] * CELL
-        }
-    } else {
-        if (cursor != -2) {
-            // 理论上不会发生（只有顺丰件 ⇒ 出库点必在最后）
-            val bfsCur = bfs[cursor + 1]
-            val best = sfExitGates.minByOrNull { bfsDistTo(bfsCur, it.row, it.col) }
-            exitCell = best
-            exitLegTiles = if (best == null) 0.0
-            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + stubCells[cursor] * CELL
-        } else {
-            // bestPair(from, to) 的 second 是 to 里的格 ⇒ 出站点要从 sfExitGates 里挑
-            val pair = bestPair(listOf(sfCell), sfExitGates)
-            exitCell = pair.second
-            exitLegTiles = pair.first * CELL
-        }
+    if (returnToEntrance) {
+        legs += exitFromTiles(order.last(), layout)
     }
-    legs += exitLegTiles
-    stops += RouteStop.Exit(exitKind)
-
-    val sfAfter = stops.indexOfFirst { it is RouteStop.SfCheckout }
-    val sfAfterPicks = if (sfAfter < 0) -1 else stops.take(sfAfter).count { it is RouteStop.Pickup }
 
     return PickupRoute(
-        orderedCodes = orderedCodes,
-        stops = stops,
-        legTiles = legs,
+        orderedCodes = order.map { it.code },
         totalTiles = legs.sum(),
-        sfCheckoutAfter = sfAfterPicks,
-        sfCheckoutCell = SiteIndex.sfCheckoutCell,
-        exitCell = exitCell,
-        exit = exitKind,
+        legTiles = legs,
         lockerCodes = lockers,
-        unresolved = unresolved.toList(),
-        exact = n <= MAX_EXACT_ITEMS,
+        unresolved = unresolved,
+        exact = useExact,
     )
 }
 
-/** 两组格子之间取最近的一对，返回 (距离/单元格, 终点格)。 */
-private fun bestPair(from: List<GridCell>, to: List<GridCell>): Pair<Int, GridCell?> {
-    var best = INF
-    var bestTo: GridCell? = null
-    for (a in from) {
-        val bfs = SiteModel.bfs(a.row, a.col) ?: continue
-        for (b in to) {
-            val d = bfsDistTo(bfs, b.row, b.col)
-            if (d < best) {
-                best = d; bestTo = b
+// ===== 精确求解（Held–Karp 子集 DP）=====
+
+private fun solveExact(
+    targets: List<SitePosition>,
+    layout: SiteLayout,
+    returnToEntrance: Boolean,
+): List<SitePosition> {
+    val n = targets.size
+    val full = 1 shl n
+
+    val fromEntrance = IntArray(n) { entranceToTiles(targets[it], layout) }
+    val toExit = IntArray(n) { exitFromTiles(targets[it], layout) }
+    val between = Array(n) { i -> IntArray(n) { j -> walkTiles(targets[i], targets[j], layout) } }
+
+    val inf = Int.MAX_VALUE / 4
+    val dp = Array(full) { IntArray(n) { inf } }
+    val parent = Array(full) { IntArray(n) { -1 } }
+
+    for (i in 0 until n) {
+        dp[1 shl i][i] = fromEntrance[i]
+    }
+
+    for (mask in 1 until full) {
+        for (last in 0 until n) {
+            val cur = dp[mask][last]
+            if (cur >= inf) continue
+            for (next in 0 until n) {
+                if (mask and (1 shl next) != 0) continue
+                val nextMask = mask or (1 shl next)
+                val candidate = cur + between[last][next]
+                if (candidate < dp[nextMask][next]) {
+                    dp[nextMask][next] = candidate
+                    parent[nextMask][next] = last
+                }
             }
         }
     }
-    return best to bestTo
+
+    var bestCost = inf
+    var bestLast = 0
+    for (last in 0 until n) {
+        val finish = dp[full - 1][last] + if (returnToEntrance) toExit[last] else 0
+        if (finish < bestCost) {
+            bestCost = finish
+            bestLast = last
+        }
+    }
+
+    val reversed = ArrayList<Int>(n)
+    var mask = full - 1
+    var cur = bestLast
+    while (cur >= 0) {
+        reversed += cur
+        val prev = parent[mask][cur]
+        mask = mask and (1 shl cur).inv()
+        cur = prev
+    }
+    reversed.reverse()
+    return reversed.map { targets[it] }
+}
+
+// ===== 启发式兜底（件数过多时）=====
+
+private fun solveHeuristic(
+    targets: List<SitePosition>,
+    layout: SiteLayout,
+    returnToEntrance: Boolean,
+): List<SitePosition> {
+    val n = targets.size
+    val remaining = targets.indices.toMutableList()
+    val order = ArrayList<Int>(n)
+
+    var current: SitePosition? = null
+    while (remaining.isNotEmpty()) {
+        val pick = remaining.minBy { idx ->
+            val t = targets[idx]
+            if (current == null) entranceToTiles(t, layout) else walkTiles(current, t, layout)
+        }
+        order += pick
+        remaining.remove(pick)
+        current = targets[pick]
+    }
+
+    fun totalTiles(seq: List<Int>): Int {
+        var sum = entranceToTiles(targets[seq.first()], layout)
+        for (i in 0 until seq.size - 1) sum += walkTiles(targets[seq[i]], targets[seq[i + 1]], layout)
+        if (returnToEntrance) sum += exitFromTiles(targets[seq.last()], layout)
+        return sum
+    }
+
+    var improved = true
+    var best = order.toList()
+    var bestCost = totalTiles(best)
+    while (improved) {
+        improved = false
+        outer@ for (i in 0 until n - 1) {
+            for (j in i + 2 until n) {
+                val candidate = best.toMutableList()
+                candidate.subList(i + 1, j + 1).reverse()
+                val cost = totalTiles(candidate)
+                if (cost < bestCost) {
+                    best = candidate
+                    bestCost = cost
+                    improved = true
+                    break@outer
+                }
+            }
+        }
+    }
+    return best.map { targets[it] }
 }

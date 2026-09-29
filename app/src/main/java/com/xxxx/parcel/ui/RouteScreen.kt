@@ -15,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -24,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -34,32 +34,33 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.xxxx.parcel.util.MAX_EXACT_ITEMS
-import com.xxxx.parcel.util.RouteExit
-import com.xxxx.parcel.util.RouteOptions
-import com.xxxx.parcel.util.RouteStop
-import com.xxxx.parcel.util.effectiveCompartmentNumber
-import com.xxxx.parcel.util.getRouteJCells
+import com.xxxx.parcel.util.SiteLayout
+import com.xxxx.parcel.util.getRouteAisleSpacing
+import com.xxxx.parcel.util.getRouteCrossAisle
+import com.xxxx.parcel.util.getRouteDoorToSpine
+import com.xxxx.parcel.util.getRouteRowLetters
+import com.xxxx.parcel.util.isRouteReturnToEntrance
+import com.xxxx.parcel.util.locate
 import com.xxxx.parcel.util.parseCompartmentCode
+import com.xxxx.parcel.util.parseRowLetters
 import com.xxxx.parcel.util.planPickupRoute
-import com.xxxx.parcel.util.saveRouteJCells
+import com.xxxx.parcel.util.saveRouteAisleSpacing
+import com.xxxx.parcel.util.saveRouteCrossAisle
+import com.xxxx.parcel.util.saveRouteDoorToSpine
+import com.xxxx.parcel.util.saveRouteReturnToEntrance
+import com.xxxx.parcel.util.saveRouteRowLetters
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
 /**
- * 取件路线页。
+ * 取件路线页：把当前待取件按货格号（`D5-23`、`J5-21`、`S3-2-2628`、`Y5-7-1`）排成一条最短走行路线。
  *
- * 场地模型**完全来自用户 Excel 的填充色**（可走格 3362 个），场地结构在页面里现场自检：
- * 3 条纵向干线（西侧 F~J / 主通道 AI~AN / 东侧 CK~CP）＋ 9 条横向走廊带 ＋ 3 处闸机带。
- *
- * 顺序由 `planPickupRoute` 求**精确最优**（Held–Karp；已与暴力枚举逐例比对），
- * 并遵守用户的两条顺丰规则：
- * 1. 取了 S 件必须先在`顺丰专用闸机`**出库**（有普通件时出库后继续取，最后从`7个普通闸机`出库并出站）
- * 2. **出库 ≠ 出站**：只有顺丰件时，出库后还要走到`顺丰和无快递出口`**出站**
+ * 场地结构来自用户 2026-09-29 现场踩点（16 排、每两排背靠背共用一条横向通道、主纵向通道在货架 4/5 之间、
+ * J 柜列 / S 顺丰区 / Y 大件区）。计算由 `planPickupRoute` 完成（Held–Karp 精确解，已用暴力枚举验证）。
+ * 本页只负责展示与「场地参数」校准。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,26 +71,32 @@ fun RouteScreen(
 ) {
     val successData by viewModel.successSmsData.collectAsState()
 
-    var jCellsText by remember { mutableStateOf(getRouteJCells(context).toString()) }
-    val options = remember(jCellsText) {
-        RouteOptions(jCellsPerColumn = jCellsText.toIntOrNull()?.coerceIn(1, 200) ?: 21)
+    var rowLettersText by remember { mutableStateOf(getRouteRowLetters(context).joinToString(",")) }
+    var returnToEntrance by remember { mutableStateOf(isRouteReturnToEntrance(context)) }
+    var aisleSpacingText by remember { mutableStateOf(getRouteAisleSpacing(context).toString()) }
+    var doorToSpineText by remember { mutableStateOf(getRouteDoorToSpine(context).toString()) }
+    var crossAisleText by remember { mutableStateOf(getRouteCrossAisle(context).toString()) }
+
+    val layout = remember(rowLettersText, aisleSpacingText, doorToSpineText, crossAisleText) {
+        SiteLayout.default().copy(
+            rowLetters = parseRowLetters(rowLettersText),
+            aisleSpacingTiles = aisleSpacingText.toIntOrNull()?.coerceIn(1, 20) ?: 3,
+            doorToSpineTiles = doorToSpineText.toIntOrNull()?.coerceIn(0, 50) ?: 4,
+            crossAisleTiles = crossAisleText.toIntOrNull()?.coerceIn(0, 20) ?: 1,
+        )
     }
     val pending = remember(successData) {
-        // 用「有效货格号」：解析出的货格号为空时，退回「取件码本身就是货格号」
-        successData.filter {
-            !it.isCompleted && effectiveCompartmentNumber(it.compartmentNumber, it.code).isNotBlank()
-        }
+        successData.filter { !it.isCompleted && it.compartmentNumber.isNotBlank() }
     }
-    val route = remember(pending, options) {
+    val route = remember(pending, layout, returnToEntrance) {
         planPickupRoute(
-            rawCodes = pending.map { effectiveCompartmentNumber(it.compartmentNumber, it.code) },
-            options = options,
+            rawCodes = pending.map { it.compartmentNumber },
+            layout = layout,
+            returnToEntrance = returnToEntrance,
         )
     }
     val byCode = remember(pending) {
-        pending.associateBy {
-            parseCompartmentCode(effectiveCompartmentNumber(it.compartmentNumber, it.code))
-        }
+        pending.associateBy { parseCompartmentCode(it.compartmentNumber) }
     }
     val zoneCounts = remember(route) { route.zoneCounts() }
 
@@ -128,19 +135,16 @@ fun RouteScreen(
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            "待取 ${route.resolvedCount} 件 · 全程 ${fmtTiles(route.totalTiles)} 格",
+                            "待取 ${route.resolvedCount} 件 · 全程 ${route.totalTiles} 格",
                             fontWeight = FontWeight.Medium,
                             fontSize = 18.sp,
                         )
                         Text(
-                            if (route.exact) "顺序为精确最优解（Held–Karp，≤$MAX_EXACT_ITEMS 件；已与暴力枚举逐例比对）"
-                            else "件数 >$MAX_EXACT_ITEMS ⇒ 启发式近似（最近邻 / 走廊扫描两种子 + 2-opt 取优）",
+                            if (route.exact) "顺序为精确最优解" else "件数较多，顺序为启发式近似",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "路径：入口闸机进 → 逐件取" +
-                                (if (route.hasSfCheckout) " → 顺丰专用闸机出库 → 继续逐件取" else "") +
-                                " → ${route.exit.label}",
+                            if (returnToEntrance) "路径：入口 → 逐件取 → 返回入口" else "路径：入口 → 逐件取 → 到最深一件为止",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (zoneCounts.isNotEmpty()) {
@@ -153,136 +157,50 @@ fun RouteScreen(
                 }
 
                 Text("建议顺序", fontWeight = FontWeight.Medium)
-                var pickIndex = 0
-                route.stops.forEachIndexed { stopIndex, stop ->
-                    val leg = route.legTiles.getOrNull(stopIndex)
-                    when (stop) {
-                        is RouteStop.Pickup -> {
-                            pickIndex += 1
-                            val code = stop.code
-                            val sms = byCode[code]
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = "$pickIndex",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 20.sp,
-                                        modifier = Modifier.width(32.dp),
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(code.toString(), fontWeight = FontWeight.Medium, fontSize = 17.sp)
-                                        Text(code.zone.label, style = MaterialTheme.typography.bodySmall)
-                                        Text(stop.spot.label, style = MaterialTheme.typography.bodySmall)
-                                        if (sms != null) {
-                                            if (sms.address.isNotBlank()) {
-                                                Text(sms.address, style = MaterialTheme.typography.bodySmall)
-                                            }
-                                            if (sms.code.isNotBlank()) {
-                                                Text("取件码 ${sms.code}", style = MaterialTheme.typography.bodySmall)
-                                            }
-                                        }
+                route.orderedCodes.forEachIndexed { index, code ->
+                    val sms = byCode[code]
+                    val pos = locate(code, layout)
+                    val leg = route.legTiles.getOrNull(index)
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${index + 1}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                modifier = Modifier.width(32.dp),
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(code.toString(), fontWeight = FontWeight.Medium, fontSize = 17.sp)
+                                Text(code.zone.label, style = MaterialTheme.typography.bodySmall)
+                                if (pos != null) {
+                                    Text(pos.label, style = MaterialTheme.typography.bodySmall)
+                                }
+                                if (sms != null) {
+                                    if (sms.address.isNotBlank()) {
+                                        Text(sms.address, style = MaterialTheme.typography.bodySmall)
                                     }
-                                    if (leg != null) {
-                                        Text("→ ${fmtTiles(leg)} 格", style = MaterialTheme.typography.bodySmall)
+                                    if (sms.code.isNotBlank()) {
+                                        Text("取件码 ${sms.code}", style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }
-                        }
-
-                        RouteStop.SfCheckout -> {
-                            // 橙色强调：与 HTML 版一致，一眼能认出「顺丰出库」这一站
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = Color(0xFFFFF3E0),
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        "顺丰",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = Color(0xFFE65100),
-                                        modifier = Modifier.width(44.dp),
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            "顺丰出库（顺丰专用闸机）",
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 17.sp,
-                                            color = Color(0xFFE65100),
-                                        )
-                                        Text(
-                                            "取了 S 件必须在这里出库；这台不能出站" +
-                                                (if (route.exit == RouteExit.SF_EXIT) "，出站走到顺丰出口" else "，出库后继续取普通件"),
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                        route.sfCheckoutCell?.let {
-                                            Text("通道格 ${it.row},${it.col}", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                    if (leg != null) {
-                                        Text("→ ${fmtTiles(leg)} 格", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                            }
-                        }
-
-                        is RouteStop.Exit -> {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = Color(0xFFFFEBEE),
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        "出站",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = Color(0xFFC62828),
-                                        modifier = Modifier.width(44.dp),
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            "出站：${stop.kind.label}",
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 17.sp,
-                                            color = Color(0xFFC62828),
-                                        )
-                                        Text(
-                                            if (stop.kind == RouteExit.NORMAL_GATE)
-                                                "普通闸机同时是出库口与出站口，出完直接走人"
-                                            else
-                                                "顺丰出库机不能出站 ⇒ 从顺丰出口离开",
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                        route.exitCell?.let {
-                                            Text("通道格 ${it.row},${it.col}", style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                    if (leg != null) {
-                                        Text("→ ${fmtTiles(leg)} 格", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
+                            if (leg != null) {
+                                Text("→ $leg 格", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
+                }
+
+                if (returnToEntrance && route.legTiles.size == route.resolvedCount + 1) {
+                    Text(
+                        "最后返回出口：${route.legTiles.last()} 格",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
 
                 if (route.lockerCodes.isNotEmpty()) {
@@ -306,55 +224,113 @@ fun RouteScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "这些没能对上场地里的货架合并区。可能是货架号越界（主货架 1~12、J 柜列 1~6、" +
-                            "S 区 1~3、Y 区 1~8），或短信里本就没有货格号。",
+                        "这些没能解析成「字母+货架号-格号」。可能是排字母序列填错、货架号越界" +
+                            "（主货架 1~12、J 柜列 1~6、S 区 1~3、Y 区 1~8），或短信里本就没有货格号。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
 
             HorizontalDivider()
-            Text("场地模型（由你的 Excel 自动生成）", fontWeight = FontWeight.Medium)
+            Text("场地结构（据 2026-09-29 现场踩点）", fontWeight = FontWeight.Medium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("可走格：3362 格 —— 逐格照抄你在 Excel 里给通道填的颜色", style = MaterialTheme.typography.bodySmall)
-                    Text("纵向干线 3 条：西侧（靠闸机，列 F~J）／主通道（列 AI~AN）／东侧（列 CK~CP）", style = MaterialTheme.typography.bodySmall)
-                    Text("横向走廊 9 条带（含最北 J/S 区那条）；走廊 2 格宽、货架对 1 格", style = MaterialTheme.typography.bodySmall)
-                    Text("闸机带：7个普通闸机（出库+出站）／顺丰专用闸机（出库，不能出站）／顺丰和无快递出口（出站）", style = MaterialTheme.typography.bodySmall)
-                    Text("路线只走通道格：每段都用网格最短路回溯出来的格序列，结构上不可能穿货架", style = MaterialTheme.typography.bodySmall)
+                    Text("纵向：16 排，由入口向里 ${layout.rowLetters.joinToString(" ")}", style = MaterialTheme.typography.bodySmall)
+                    Text("横向：每排 12 个货架 —— 主通道西侧 1~4、东侧 5~12", style = MaterialTheme.typography.bodySmall)
+                    Text("通道：每两排背靠背共用一条横向通道；主纵向通道在货架 4 与 5 之间", style = MaterialTheme.typography.bodySmall)
+                    Text("最里侧通道挂：J 柜列（6 条纵向柜列）、S 顺丰区（3 个货架）", style = MaterialTheme.typography.bodySmall)
+                    Text("东侧另有：Y 大件区（y1~y7 + y8 的 8 行 × 3 子位）", style = MaterialTheme.typography.bodySmall)
+                    Text("入口在南侧（J39:M40），出口在西侧（A15:A30）", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "四类分区：主货架区 / J 柜列区 / 顺丰 S 区 / 大件 Y 区 —— 全部纳入规划。",
+                        "分区：主货架区 / J 柜列区 / 顺丰 S 区 / 大件 Y 区　—— 四类都已纳入本页规划。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
 
             HorizontalDivider()
-            Text("场地参数", fontWeight = FontWeight.Medium)
+            Text("场地参数（与现场不符时改这里）", fontWeight = FontWeight.Medium)
+
+            OutlinedTextField(
+                value = rowLettersText,
+                onValueChange = { rowLettersText = it },
+                label = { Text("普通排字母序列（由入口向深处）") },
+                supportingText = { Text("用逗号分隔。J / S / Y 是特殊区，不要写进来。填错会导致对应件无法定位。") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { rowLettersText = SiteLayout.DEFAULT_ROW_LETTERS.joinToString(",") },
+                    modifier = Modifier.weight(1f),
+                ) { Text("恢复默认") }
+
+                OutlinedButton(
+                    onClick = {
+                        val letters = parseRowLetters(rowLettersText)
+                        if (letters.isNotEmpty()) {
+                            saveRouteRowLetters(context, letters)
+                            rowLettersText = letters.joinToString(",")
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("保存") }
+            }
+
             NumberField(
-                value = jCellsText,
-                onValueChange = { jCellsText = it },
-                label = "J 柜列每列格数",
-                supporting = "货位清单里标着「每列实际格数与北端行号待确认」，实测只到 j5-21（⇒ ≥21 格）。" +
-                    "柜列纵深按此值等比铺开（格子 1 在靠通道的外端），并计入走位。",
-                onSave = { saveRouteJCells(context, it) },
+                value = aisleSpacingText,
+                onValueChange = { aisleSpacingText = it },
+                label = "相邻两条横向通道之间的距离（格）",
+                supporting = "默认 3。只影响总格数与「谁更深」的权重，不影响相对顺序。",
+                onSave = { saveRouteAisleSpacing(context, it) },
+            )
+            NumberField(
+                value = doorToSpineText,
+                onValueChange = { doorToSpineText = it },
+                label = "入口到主纵向通道的距离（格）",
+                supporting = "默认 4（原图入口在 J39:M40，主通道在 N 列）。对所有件是同一常数。",
+                onSave = { saveRouteDoorToSpine(context, it) },
+            )
+            NumberField(
+                value = crossAisleText,
+                onValueChange = { crossAisleText = it },
+                label = "背靠背两排之间横穿的代价（格）",
+                supporting = "默认 1。同一条通道南北两侧可以直接横穿，不必绕回主通道。",
+                onSave = { saveRouteCrossAisle(context, it) },
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("取完折返回入口", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "关闭则按「敞开路径」算：最优解会把最深的一件排在最后，少走一段回程。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = returnToEntrance,
+                    onCheckedChange = {
+                        returnToEntrance = it
+                        saveRouteReturnToEntrance(context, it)
+                    }
+                )
+            }
+
             Text(
-                "仍是近似、已如实标注的部分：每货架实际格数尚未实测（普通排同一货架内不同格先视作同一点）；" +
-                    "Y 区在精确版 Excel 里是一整块，只能定位到东侧通道最近点；J 每列格数按上面的值铺开。",
+                "仍是估算、已如实标注的部分：每货架实际格数尚未实测（同一货架内先视作同一点）；" +
+                    "J 柜列横向按列序、S/Y 格子横向按格号；a 区排列未确认，只定位到货架号。",
                 style = MaterialTheme.typography.bodySmall,
             )
 
             Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-/** 瓷砖数显示：整数不带小数点，半格显示一位。 */
-private fun fmtTiles(value: Double): String {
-    val rounded = kotlin.math.round(value * 10.0) / 10.0
-    return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()
 }
 
 @Composable
