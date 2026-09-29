@@ -26,43 +26,15 @@ def fnt(sz, bold=False):
             except Exception: pass
     return ImageFont.load_default()
 
-# ---- 通道底纹：**直接照抄用户 Excel 的填充色**，不再硬编码行号 ----
-# 用户 2026-09-29 指出：Excel 里所有通道都用同一种颜色填了。
-#   theme3 = 通道（走廊 + 三条纵向干线）  theme1 = 边界/墙  theme9 = 货架块分隔  theme5 = 入口闸机
-# ⇒ 逐格铺色，保证「所有通道」都被标出，且与我建模用的可走格完全同源。
-ROLE_FILL = {'theme3': '#e3edfb', 'theme1': '#eef0f2', 'theme9': '#fde68a', 'theme5': '#bbf7d0'}
-
-
-def fillkey(c):
-    f = c.fill
-    if f is None or f.fill_type is None or f.fgColor is None:
-        return None
-    fg = f.fgColor
-    if fg.type == 'rgb' and fg.rgb:
-        return str(fg.rgb)
-    if fg.type == 'theme':
-        return 'theme%d' % fg.theme
-    if fg.type == 'indexed':
-        return 'indexed%d' % fg.indexed
-    return None
-
-
-walk_cells, inside_merge = 0, 0
-merged_set = set()
-for mr in ws.merged_cells.ranges:
-    for rr in range(mr.min_row, mr.max_row + 1):
-        for cc in range(mr.min_col, mr.max_col + 1):
-            merged_set.add((rr, cc))
-for row in ws.iter_rows(min_row=minrow, max_row=maxrow, min_col=mincol, max_col=maxcol):
-    for c in row:
-        k = fillkey(c)
-        if k in ROLE_FILL:
-            dr.rectangle([X(c.column), Y(c.row), X(c.column + 1), Y(c.row + 1)], fill=ROLE_FILL[k])
-        if k == 'theme3':
-            walk_cells += 1
-            if (c.row, c.column) in merged_set:
-                inside_merge += 1
-print('通道格(theme3) %d 个，其中落在合并区内的 %d 个' % (walk_cells, inside_merge))
+# ---- 参考底纹：主通道（N 列附近）由模型坐标换算仅供参考，用浅色铺一层，不覆盖 Excel ----
+# N 列 ≈ 主通道中心；V 列 ≈ 东侧纵通道。轻描即可。
+# 主通道：西侧货架止于 AH(34) 列、东侧起于 AO(41) 列 ⇒ 主通道 = 35~40 列（中心 37.5）
+# 东侧纵通道 V：东侧货架止于 CJ(88) 列、Y 区起于 CR(96) 列 ⇒ 89~95 列
+for (c0, c1) in [(35, 40), (89, 95)]:
+    dr.rectangle([X(c0), Y(minrow), X(c1+1), Y(maxrow)], fill='#eef4fb')
+# 横向走廊：货架对之间的空行（严格按 Excel 行距）
+for (r0, r1) in [(18, 21), (24, 27), (30, 33), (36, 39), (42, 45), (48, 51), (54, 57)]:
+    dr.rectangle([X(mincol), Y(r0), X(maxcol+1), Y(r1+1)], fill='#f5f8fc')
     
 # ---- 边框（墙 / 货架轮廓）----
 for row in ws.iter_rows(min_row=minrow, max_row=maxrow, min_col=mincol, max_col=maxcol):
@@ -105,7 +77,7 @@ for mr in sorted(ws.merged_cells.ranges, key=lambda r:(r.min_row, r.min_col)):
 # ---- 刻度：把 Excel 列号映射为距主通道的瓷砖数（主通道中心 ≈ N 列，即第 14 列）----
 SPINE_COL = 37.5
 dr.text((14,20), '海大快递站 平面图（上为北）· 按你的 Excel 逐格渲染', font=fnt(17,True), fill='#111111')
-dr.text((14,44), '1 单元格 = 半块瓷砖　·　黑线 = 你画的墙/轮廓　·　浅蓝 = 通道（照抄你的填充色，全部通道）　·　灰底 = 货架　·　蓝 = J/S　·　橙 = A 区　·　紫 = Y 区', font=fnt(12), fill='#666666')
+dr.text((14,44), '1 单元格 = 半块瓷砖　·　黑线 = 你画的墙/轮廓　·　灰底 = 货架　·　蓝 = J/S　·　橙 = A 区　·　紫 = Y 区', font=fnt(12), fill='#666666')
 for ci in range(mincol, maxcol+1, 6):
     lat = (ci - SPINE_COL)/2
     dr.text((X(ci)+CELL*3, Y(maxrow+1)+16), ('%+.0f' % lat), font=fnt(11), fill='#8494a8', anchor='mm')
