@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -136,7 +138,9 @@ fun RouteScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "路径：入口闸机进 → 逐件取 → ${route.exit.label}",
+                            "路径：入口闸机进 → 逐件取" +
+                                (if (route.hasSfCheckout) " → 顺丰专用闸机出库 → 继续逐件取" else "") +
+                                " → ${route.exit.label}",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (zoneCounts.isNotEmpty()) {
@@ -191,16 +195,33 @@ fun RouteScreen(
                         }
 
                         RouteStop.SfCheckout -> {
-                            Card(modifier = Modifier.fillMaxWidth()) {
+                            // 橙色强调：与 HTML 版一致，一眼能认出「顺丰出库」这一站
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFF3E0),
+                                ),
+                            ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text("SF", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.width(32.dp))
+                                    Text(
+                                        "顺丰",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFFE65100),
+                                        modifier = Modifier.width(44.dp),
+                                    )
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("顺丰出库（顺丰专用闸机）", fontWeight = FontWeight.Medium, fontSize = 17.sp)
+                                        Text(
+                                            "顺丰出库（顺丰专用闸机）",
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 17.sp,
+                                            color = Color(0xFFE65100),
+                                        )
                                         Text(
                                             "取了 S 件必须在这里出库；这台不能出站" +
                                                 (if (route.exit == RouteExit.SF_EXIT) "，出站走到顺丰出口" else "，出库后继续取普通件"),
@@ -218,16 +239,32 @@ fun RouteScreen(
                         }
 
                         is RouteStop.Exit -> {
-                            Card(modifier = Modifier.fillMaxWidth()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFEBEE),
+                                ),
+                            ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text("出", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.width(32.dp))
+                                    Text(
+                                        "出站",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFFC62828),
+                                        modifier = Modifier.width(44.dp),
+                                    )
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("出站：${stop.kind.label}", fontWeight = FontWeight.Medium, fontSize = 17.sp)
+                                        Text(
+                                            "出站：${stop.kind.label}",
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 17.sp,
+                                            color = Color(0xFFC62828),
+                                        )
                                         Text(
                                             if (stop.kind == RouteExit.NORMAL_GATE)
                                                 "普通闸机同时是出库口与出站口，出完直接走人"
