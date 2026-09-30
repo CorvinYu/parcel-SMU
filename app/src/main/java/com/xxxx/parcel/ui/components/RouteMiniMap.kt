@@ -1,7 +1,17 @@
 package com.xxxx.parcel.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,9 +35,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,17 +47,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xxxx.parcel.util.GridCell
@@ -55,16 +73,18 @@ import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.SiteData
 import com.xxxx.parcel.util.VenueGuide
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * 路线图示窗格（1/3 屏左右，**矢量绘制**，不内嵌任何图片）。
  *
- * 2026-10-01 第二版（按用户反馈改）：
- * - **只画货架格子**：路上那些密密麻麻的通道格不再填充（此前一片蓝，看不清结构），
- *   只留货架/柜列/区域的方块（带描边）＋ 闸机带 ＋ 入口，路线叠在上面
- * - 整块窗格是**一张独立的圆角卡**（自带背景与阴影），不再是一层裸内容压在别的界面上；
- *   提示文字也放进**自己的胶囊**里，不再飘在图上
- * - 可**收起**成一行胶囊（不占地方），控制键换成图标，配色统一到主题色
+ * 2026-10-01 第三版：按用户在电脑上挑定的风格落回（原型见 `docs/route-map-prototype.html`）
+ * - **亮色 = 原型 A，暗色 = 原型 B**（跟随系统 `isSystemInDarkTheme()`），两套配色都适配
+ * - **只画货架/柜列/区域的格子**（不再铺通道格），加虚线场地外框
+ * - **相机动画**：`cx/cy/scale` 三个 `Animatable` 用 `CubicBezierEasing` 串联飞行；全览 ⇄ 特写、上一站/下一站都是「飞过去」
+ * - **聚光灯聚焦**当前段（径向渐晕），**行进光点**沿当前段跑，光晕 + 圆头线
+ * - 手势：拖动平移、双指缩放、双击切换全览/特写
  */
 @Composable
 fun RouteMiniMap(
@@ -80,9 +100,14 @@ fun RouteMiniMap(
     /** 非空时在控制行显示「全屏 / 收起」按钮 */
     onExpand: (() -> Unit)? = null,
     expandLabel: String = "全屏",
+    /** 货格号 → 件号标签（首页用**稳定件号**，与卡片 ①②③ 一致；不传则用访问顺序） */
+    pickupLabels: Map<String, String> = emptyMap(),
 ) {
-    var view by remember(initialView) { mutableStateOf(initialView) }
+    val dark = isSystemInDarkTheme()
+    val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
     val measurer = rememberTextMeasurer()
+    val scope = rememberCoroutineScope()
+
     val stops = route.stops
     val idx = if (stops.isEmpty()) 0 else currentStop.coerceIn(0, stops.size - 1)
     val stop = stops.getOrNull(idx)
@@ -90,9 +115,59 @@ fun RouteMiniMap(
     val leg = route.legs.getOrNull(idx)
     val hints = remember(route, idx, target) { leg?.let { VenueGuide.describe(it, target) } ?: emptyList() }
     val mainHints = hints.filter { it.kind == VenueGuide.HintKind.MOVE || it.kind == VenueGuide.HintKind.STUB_IN }
-    val nextDir = hints.firstOrNull { it.kind == VenueGuide.HintKind.MOVE }?.dir
     val notes = hints.filter { it.kind == VenueGuide.HintKind.NOTE }
+    val nextDir = hints.firstOrNull { it.kind == VenueGuide.HintKind.MOVE }?.dir
     val oneLine = mainHints.joinToString(" → ") { if (detail == GuideDetail.FULL) it.text else it.brief }
+
+    // 标记文字：取件用件号（稳定件号优先），顺丰/出站用徽标
+    val markerLabels = remember(route, pickupLabels) {
+        var n = 0
+        route.stops.map { s ->
+            when (s) {
+                is RouteStop.Pickup -> {
+                    n += 1
+                    pickupLabels[s.code.toString()] ?: n.toString()
+                }
+                RouteStop.SfCheckout -> "SF"
+                is RouteStop.Exit -> "出"
+            }
+        }
+    }
+
+    var view by remember(initialView) { mutableStateOf(initialView) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    // 相机：格子坐标 + 每格像素；三轴用同一个缓动并联飞行
+    val camX = remember { Animatable(64f) }
+    val camY = remember { Animatable(36f) }
+    val camScale = remember { Animatable(6f) }
+    val ease = remember { CubicBezierEasing(0.22f, 0.61f, 0.36f, 1f) }
+    val flyMs = 560
+
+    LaunchedEffect(view, idx, canvasSize, route) {
+        if (canvasSize.width == 0 || stops.isEmpty()) return@LaunchedEffect
+        val t = if (view == GuideMapView.CLOSEUP) {
+            fitBounds(legBounds(route, idx), canvasSize)
+        } else {
+            fitAll(canvasSize)
+        }
+        coroutineScope {
+            launch { camX.animateTo(t.cx, tween(flyMs, easing = ease)) }
+            launch { camY.animateTo(t.cy, tween(flyMs, easing = ease)) }
+            launch { camScale.animateTo(t.scale, tween(flyMs, easing = ease)) }
+        }
+    }
+
+    // 行进光点 + 当前站呼吸：一个无限动画驱动
+    val transition = rememberInfiniteTransition(label = "mapMotion")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing)),
+        label = "phase",
+    )
+
+    val dots = remember(canvasSize) { buildDots(canvasSize) }
 
     if (collapsed) {
         Card(
@@ -111,7 +186,7 @@ fun RouteMiniMap(
                     modifier = Modifier
                         .size(10.dp)
                         .clip(CircleShape)
-                        .background(stopColor(stop)),
+                        .background(stopColor(stop, pal)),
                 )
                 Column(
                     modifier = Modifier
@@ -129,7 +204,7 @@ fun RouteMiniMap(
                         Text(
                             text = oneLine,
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF17458A),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -145,11 +220,10 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
-            // ── 标题 + 控制（控制键用图标，少占横向空间）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -166,7 +240,7 @@ fun RouteMiniMap(
                     )
                     Text(
                         text = "全程 ${fmtTiles(route.totalTiles)} 格 · " +
-                            if (view == GuideMapView.CLOSEUP) "特写" else "全览",
+                            if (view == GuideMapView.CLOSEUP) "特写 · 顶部两指缩放/拖动" else "全览 · 双击可聚焦",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,
                         maxLines = 1,
@@ -176,10 +250,7 @@ fun RouteMiniMap(
                     IconButton(onClick = { onCurrentStopChange(idx - 1) }, enabled = idx > 0) {
                         Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "上一站")
                     }
-                    IconButton(
-                        onClick = { onCurrentStopChange(idx + 1) },
-                        enabled = idx < stops.size - 1,
-                    ) {
+                    IconButton(onClick = { onCurrentStopChange(idx + 1) }, enabled = idx < stops.size - 1) {
                         Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "下一站")
                     }
                     TextButton(onClick = {
@@ -192,7 +263,6 @@ fun RouteMiniMap(
                 }
             }
 
-            // ── 提示：自己的胶囊（有底色，不飘在图上，也不挤别的界面）
             if (mainHints.isNotEmpty() || (detail == GuideDetail.FULL && notes.isNotEmpty())) {
                 Surface(
                     modifier = Modifier
@@ -206,7 +276,7 @@ fun RouteMiniMap(
                             Text(
                                 text = oneLine,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF10366B),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 maxLines = 3,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -215,7 +285,7 @@ fun RouteMiniMap(
                             Text(
                                 text = notes.joinToString("；") { it.text },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF4A5A6A),
+                                color = MaterialTheme.colorScheme.outline,
                                 maxLines = 3,
                             )
                         }
@@ -223,22 +293,50 @@ fun RouteMiniMap(
                 }
             }
 
-            // ── 图：只画货架格子，通道不再铺满（用户 2026-10-01）
-            Box(
+            Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp),
+                    .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(pal.canvasBg)
+                    .clipToBounds()
+                    .onSizeChanged { canvasSize = it }
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val s = (camScale.value * zoom).coerceIn(2f, 60f)
+                            val cx = camX.value - pan.x / s
+                            val cy = camY.value - pan.y / s
+                            scope.launch {
+                                camScale.snapTo(s)
+                                camX.snapTo(cx)
+                                camY.snapTo(cy)
+                            }
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                view = if (view == GuideMapView.OVERVIEW) {
+                                    GuideMapView.CLOSEUP
+                                } else {
+                                    GuideMapView.OVERVIEW
+                                }
+                            }
+                        )
+                    }
             ) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MAP_BG)
-                        .clipToBounds()
-                ) {
-                    drawVenue(route, idx, view, nextDir, measurer)
-                }
+                drawVenue(
+                    route = route,
+                    idx = idx,
+                    cam = Cam(camX.value, camY.value, camScale.value),
+                    pal = pal,
+                    measurer = measurer,
+                    phase = phase,
+                    markerLabels = markerLabels,
+                    nextDir = nextDir,
+                    dots = dots,
+                )
             }
         }
     }
@@ -257,11 +355,11 @@ private fun titleOf(route: PickupRoute, idx: Int): String {
     return "$prefix ${idx + 1}/${stops.size} · $what"
 }
 
-private fun stopColor(stop: RouteStop?): Color = when (stop) {
-    is RouteStop.Pickup -> COL_PICK
-    RouteStop.SfCheckout -> COL_SF
-    is RouteStop.Exit -> COL_EXIT
-    null -> COL_PICK
+private fun stopColor(stop: RouteStop?, pal: MapPalette): Color = when (stop) {
+    is RouteStop.Pickup -> pal.accent
+    RouteStop.SfCheckout -> pal.sf
+    is RouteStop.Exit -> pal.exit
+    null -> pal.accent
 }
 
 private fun fmtTiles(value: Double): String {
@@ -269,199 +367,374 @@ private fun fmtTiles(value: Double): String {
     return if (rounded == rounded.toLong().toDouble()) rounded.toLong().toString() else rounded.toString()
 }
 
-// ---------------------------------------------------------------- 绘制
+// ============================================================ 相机与配色
 
-private val MAP_BG = Color(0xFFF6F8FB)
-private val COL_SHELF = Color(0xFFE3EAF3)
-private val COL_SHELF_EDGE = Color(0xFFC3CFDF)
-private val COL_GATE = Color(0xFFFFE8C7)
-private val COL_GATE_EDGE = Color(0xFFE9B978)
-private val COL_ENTRANCE = Color(0xFFB6E2BB)
-private val COL_DONE = Color(0xFFB4BEC9)
-private val COL_TODO = Color(0xFFE06A5E)
-private val COL_NEXT = Color(0xFF1E6FE0)
-private val COL_SF = Color(0xFFE07A28)
-private val COL_EXIT = Color(0xFFC0453C)
-private val COL_PICK = Color(0xFF2C7BE5)
+private data class Cam(val cx: Float, val cy: Float, val scale: Float)
+
+private class MapPalette(
+    val canvasBg: Color,
+    val bgTop: Color,
+    val bgBottom: Color,
+    val shelf: Color,
+    val shelfEdge: Color,
+    val gate: Color,
+    val gateEdge: Color,
+    val entrance: Color,
+    val entranceInk: Color,
+    val outline: Color,
+    val texture: Color,
+    val routeDone: Color,
+    val routeTodo: Color,
+    val accent: Color,
+    val sf: Color,
+    val exit: Color,
+    val scrim: Color,
+    val shadow: Color,
+    val label: Color,
+) {
+    companion object {
+        /** 原型 A：清爽浅色 */
+        val LIGHT = MapPalette(
+            canvasBg = Color(0xFFF8FBFF),
+            bgTop = Color(0xFFF8FBFF),
+            bgBottom = Color(0xFFEFF4FB),
+            shelf = Color(0xFFE7EDF6),
+            shelfEdge = Color(0xFFD2DCE9),
+            gate = Color(0xFFFDEBD2),
+            gateEdge = Color(0xFFEFC189),
+            entrance = Color(0xFFB7E3BF),
+            entranceInk = Color(0xFF155724),
+            outline = Color(0x6680A0C8),
+            texture = Color(0x12345C8C),
+            routeDone = Color(0xFFB9C4D0),
+            routeTodo = Color(0xFF8FBCF5),
+            accent = Color(0xFF2F6FE4),
+            sf = Color(0xFFF07A2B),
+            exit = Color(0xFFD0483C),
+            scrim = Color(0xCCEEF2F8),
+            shadow = Color(0x1A1C3258),
+            label = Color(0xFF5B6B7C),
+        )
+
+        /** 原型 B：夜跑深色（不含通道横格） */
+        val DARK = MapPalette(
+            canvasBg = Color(0xFF0F1724),
+            bgTop = Color(0xFF131C2B),
+            bgBottom = Color(0xFF0F1724),
+            shelf = Color(0xFF26344A),
+            shelfEdge = Color(0xFF3A4C68),
+            gate = Color(0xFF4A3A22),
+            gateEdge = Color(0xFF7C5F2C),
+            entrance = Color(0xFF255C3B),
+            entranceInk = Color(0xFFB9F0C6),
+            outline = Color(0x5980A0C8),
+            texture = Color(0x14FFFFFF),
+            routeDone = Color(0xFF39465A),
+            routeTodo = Color(0xFF43628F),
+            accent = Color(0xFF5B95F5),
+            sf = Color(0xFFF0904A),
+            exit = Color(0xFFE06A5E),
+            scrim = Color(0xBD080C14),
+            shadow = Color(0x55000000),
+            label = Color(0xFF8FA2B8),
+        )
+    }
+}
+
+/** 全览：整个场地；特写：当前段（含上一站）包围盒。 */
+private fun siteBounds() = floatArrayOf(
+    SiteData.MIN_COL.toFloat(), SiteData.MAX_COL.toFloat(),
+    SiteData.MIN_ROW.toFloat(), SiteData.MAX_ROW.toFloat(),
+)
+
+private fun legBounds(route: PickupRoute, idx: Int): FloatArray {
+    val focus = ArrayList<GridCell>()
+    route.legs.getOrNull(idx)?.cells?.let { focus.addAll(it) }
+    route.legs.getOrNull(idx - 1)?.cells?.lastOrNull()?.let { focus.add(it) }
+    if (focus.isEmpty()) return siteBounds()
+    val pad = 6
+    return floatArrayOf(
+        (focus.minOf { it.col } - pad).coerceAtLeast(SiteData.MIN_COL).toFloat(),
+        (focus.maxOf { it.col } + pad).coerceAtMost(SiteData.MAX_COL).toFloat(),
+        (focus.minOf { it.row } - pad).coerceAtLeast(SiteData.MIN_ROW).toFloat(),
+        (focus.maxOf { it.row } + pad).coerceAtMost(SiteData.MAX_ROW).toFloat(),
+    )
+}
+
+private fun fitAll(size: IntSize): Cam {
+    val b = siteBounds()
+    return fitBounds(b, size)
+}
+
+private fun fitBounds(b: FloatArray, size: IntSize): Cam {
+    val cols = (b[1] - b[0] + 1f).coerceAtLeast(1f)
+    val rows = (b[3] - b[2] + 1f).coerceAtLeast(1f)
+    val pad = 26f
+    val w = (size.width - pad * 2).coerceAtLeast(40f)
+    val h = (size.height - pad * 2).coerceAtLeast(40f)
+    val scale = minOf(w / cols, h / rows).coerceIn(2f, 60f)
+    return Cam((b[0] + b[1] + 1f) / 2f, (b[2] + b[3] + 1f) / 2f, scale)
+}
+
+/** 点阵底纹（与原型一致；每 14px 一个点）。 */
+private fun buildDots(size: IntSize): List<Offset> {
+    if (size.width <= 0 || size.height <= 0) return emptyList()
+    val out = ArrayList<Offset>(1024)
+    var y = 7f
+    while (y < size.height) {
+        var x = 7f
+        while (x < size.width) {
+            out.add(Offset(x, y))
+            x += 14f
+        }
+        y += 14f
+    }
+    return out
+}
+
+// ============================================================ 绘制
 
 private fun DrawScope.drawVenue(
     route: PickupRoute,
     idx: Int,
-    view: GuideMapView,
-    nextDir: VenueGuide.Dir?,
+    cam: Cam,
+    pal: MapPalette,
     measurer: TextMeasurer,
+    phase: Float,
+    markerLabels: List<String>,
+    nextDir: VenueGuide.Dir?,
+    dots: List<Offset>,
 ) {
-    val siteC0 = SiteData.MIN_COL
-    val siteC1 = SiteData.MAX_COL
-    val siteR0 = SiteData.MIN_ROW
-    val siteR1 = SiteData.MAX_ROW
+    fun px(col: Float): Float = size.width / 2f + (col - cam.cx) * cam.scale
+    fun py(row: Float): Float = size.height / 2f + (row - cam.cy) * cam.scale
+    val cell = cam.scale
 
-    // 视窗范围：全览 = 整场地；特写 = 当前段（含上一站）包围盒 + 边距
-    var bC0 = siteC0
-    var bC1 = siteC1
-    var bR0 = siteR0
-    var bR1 = siteR1
-    if (view == GuideMapView.CLOSEUP) {
-        val focus = ArrayList<GridCell>()
-        route.legs.getOrNull(idx)?.cells?.let { focus.addAll(it) }
-        route.legs.getOrNull(idx - 1)?.cells?.lastOrNull()?.let { focus.add(it) }
-        if (focus.isNotEmpty()) {
-            val pad = 5
-            bC0 = (focus.minOf { it.col } - pad).coerceAtLeast(siteC0)
-            bC1 = (focus.maxOf { it.col } + pad).coerceAtMost(siteC1)
-            bR0 = (focus.minOf { it.row } - pad).coerceAtLeast(siteR0)
-            bR1 = (focus.maxOf { it.row } + pad).coerceAtMost(siteR1)
-        }
+    // ① 背景（柔和竖向渐变）
+    drawRect(Brush.verticalGradient(listOf(pal.bgTop, pal.bgBottom)))
+
+    // ② 点阵底纹
+    if (dots.isNotEmpty()) {
+        drawPoints(
+            points = dots,
+            pointMode = PointMode.Points,
+            color = pal.texture,
+            strokeWidth = 2.4f,
+            cap = StrokeCap.Round,
+        )
     }
-    val cols = (bC1 - bC0 + 1).toFloat()
-    val rows = (bR1 - bR0 + 1).toFloat()
-    val scale = minOf(size.width / cols, size.height / rows)
-    val ox = (size.width - cols * scale) / 2f
-    val oy = (size.height - rows * scale) / 2f
 
-    fun px(col: Int): Float = ox + ((col - bC0) * scale)
-    fun py(row: Int): Float = oy + ((row - bR0) * scale)
+    // ③ 虚线场地外框（让图不飘在白底上）
+    val siteL = px(SiteData.MIN_COL.toFloat()) - 4f
+    val siteT = py(SiteData.MIN_ROW.toFloat()) - 4f
+    val siteR = px((SiteData.MAX_COL + 1).toFloat()) + 4f
+    val siteB = py((SiteData.MAX_ROW + 1).toFloat()) + 4f
+    drawRoundRect(
+        color = pal.outline,
+        topLeft = Offset(siteL, siteT),
+        size = Size(siteW(siteL, siteR), siteH(siteT, siteB)),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(14f, 14f),
+        style = Stroke(width = 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))),
+    )
 
-    // 1) 底图：**只画货架/柜列/区域的格子**（带描边）＋ 闸机带 ＋ 入口。
-    //    路上那些通道格不再铺底色（用户 2026-10-01：中间的无必要格子去掉，只留货架）
+    // ④ 只画货架 / 柜列 / 区域（带描边与极淡阴影）；通道格不再铺色
+    val radius = (cell / 2.6f).coerceIn(1.5f, 7f)
     var i = 0
     while (i < SiteData.rectBounds.size) {
         val c0 = SiteData.rectBounds[i]
         val c1 = SiteData.rectBounds[i + 1]
         val r0 = SiteData.rectBounds[i + 2]
         val r1 = SiteData.rectBounds[i + 3]
-        val w = (c1 - c0 + 1) * scale
-        val h = (r1 - r0 + 1) * scale
-        val topLeft = Offset(px(c0), py(r0))
-        val isGate = SiteData.rectLabels.getOrNull(i)?.let { lab ->
-            lab.contains("闸机") || lab.contains("出口")
-        } == true
-        drawRect(
-            color = if (isGate) COL_GATE else COL_SHELF,
-            topLeft = topLeft,
-            size = Size(w, h),
-        )
-        drawRect(
-            color = if (isGate) COL_GATE_EDGE else COL_SHELF_EDGE,
-            topLeft = topLeft,
-            size = Size(w, h),
-            style = Stroke(width = 1f),
-        )
+        val x = px(c0.toFloat())
+        val y = py(r0.toFloat())
+        val w = (c1 - c0 + 1) * cell
+        val h = (r1 - r0 + 1) * cell
+        if (x <= size.width + 40f && y <= size.height + 40f && x + w >= -40f && y + h >= -40f) {
+            val isGate = SiteData.rectLabels.getOrNull(i)?.let { lab ->
+                lab.contains("闸机") || lab.contains("出口")
+            } == true
+            drawRoundRect(
+                color = pal.shadow,
+                topLeft = Offset(x, y + 2f),
+                size = Size(w, h),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+            )
+            drawRoundRect(
+                color = if (isGate) pal.gate else pal.shelf,
+                topLeft = Offset(x, y),
+                size = Size(w, h),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+            )
+            drawRoundRect(
+                color = if (isGate) pal.gateEdge else pal.shelfEdge,
+                topLeft = Offset(x, y),
+                size = Size(w, h),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+                style = Stroke(width = 1f),
+            )
+            val label = SiteData.rectLabels.getOrNull(i)?.trim().orEmpty()
+            if (cell >= 11f && label.isNotEmpty()) {
+                val layout = measurer.measure(label, style = TextStyle(color = pal.label, fontSize = 9.sp), maxLines = 1)
+                drawText(
+                    layout,
+                    topLeft = Offset(x + w / 2f - layout.size.width / 2f, y + h / 2f - layout.size.height / 2f),
+                )
+            }
+        }
         i += 4
     }
+    // 入口
     i = 0
     while (i < SiteData.entranceSpans.size) {
         val row = SiteData.entranceSpans[i]
         val c0 = SiteData.entranceSpans[i + 1]
         val c1 = SiteData.entranceSpans[i + 2]
-        drawRect(
-            COL_ENTRANCE,
-            Offset(px(c0), py(row)),
-            Size((c1 - c0 + 1) * scale, scale),
+        drawRoundRect(
+            color = pal.entrance,
+            topLeft = Offset(px(c0.toFloat()), py(row.toFloat())),
+            size = Size((c1 - c0 + 1) * cell, cell),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
         )
         i += 3
     }
 
-    // 2) 路线：未走（浅红）→ 下一段（蓝，带光晕）→ 已走过（浅灰）
+    // ⑤ 路线：已走过（灰）/ 当前段（蓝 + 光晕）/ 之后（浅蓝），圆头线
+    val lineW = (cell * 0.8f).coerceIn(2.5f, 7f)
     route.legs.forEachIndexed { legIndex, leg ->
+        val cells = leg.cells
+        if (cells.size < 2) return@forEachIndexed
         val color = when {
-            legIndex < idx -> COL_DONE
-            legIndex == idx -> COL_NEXT
-            else -> COL_TODO
+            legIndex < idx -> pal.routeDone
+            legIndex == idx -> pal.accent
+            else -> pal.routeTodo
         }
-        val stroke = if (legIndex == idx) (scale * 0.85f).coerceIn(2.5f, 6.5f) else (scale * 0.6f).coerceIn(1.5f, 4f)
-        for (k in 0 until leg.cells.size - 1) {
-            val a = leg.cells[k]
-            val b = leg.cells[k + 1]
-            val start = Offset(px(a.col) + scale / 2f, py(a.row) + scale / 2f)
-            val end = Offset(px(b.col) + scale / 2f, py(b.row) + scale / 2f)
-            if (legIndex == idx) {
-                drawLine(COL_NEXT.copy(alpha = 0.18f), start, end, strokeWidth = stroke * 2.6f, cap = StrokeCap.Round)
-            }
-            drawLine(color, start, end, strokeWidth = stroke, cap = StrokeCap.Round)
+        val w = if (legIndex == idx) lineW else lineW * 0.8f
+        if (legIndex == idx) {
+            drawPathOf(cells, ::px, ::py, cell, pal.accent.copy(alpha = 0.18f), w * 2.6f)
         }
+        drawPathOf(cells, ::px, ::py, cell, color, w)
     }
 
-    // 3) 各站圆点：取件 ①②③ / SF 出库 / 出（白圈 + 彩色填充，当前站带光晕）
-    var pickupNo = 0
+    // ⑥ 行进光点：沿当前段跑（像外卖 App）
+    route.legs.getOrNull(idx)?.cells?.takeIf { it.size > 1 }?.let { cells ->
+        val k = phase * (cells.size - 1)
+        val i0 = k.toInt().coerceIn(0, cells.size - 1)
+        val f = k - i0
+        val a = cells[i0]
+        val b = cells[(i0 + 1).coerceAtMost(cells.size - 1)]
+        val x = px(a.col + (b.col - a.col) * f + 0.5f)
+        val y = py(a.row + (b.row - a.row) * f + 0.5f)
+        val halo = (cell * 2.2f).coerceIn(8f, 22f)
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(pal.accent.copy(alpha = 0.40f), Color.Transparent),
+                center = Offset(x, y),
+                radius = halo,
+            ),
+            radius = halo,
+            center = Offset(x, y),
+        )
+        drawCircle(Color.White, radius = (cell * 0.75f).coerceIn(3f, 7f), center = Offset(x, y))
+        drawCircle(pal.accent, radius = (cell * 0.5f).coerceIn(2f, 5f), center = Offset(x, y))
+    }
+
+    // ⑦ 聚光灯：把当前段以外的区域柔和压暗（径向渐晕）
+    run {
+        val b = legBounds(route, idx)
+        val cx = (px(b[0]) + px(b[1] + 1f)) / 2f
+        val cy = (py(b[2]) + py(b[3] + 1f)) / 2f
+        val rx = (px(b[1] + 1f) - px(b[0])) / 2f + 46f
+        val ry = (py(b[3] + 1f) - py(b[2])) / 2f + 38f
+        val rad = maxOf(rx, ry).coerceAtLeast(70f) * 1.75f
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(Color.Transparent, pal.scrim),
+                center = Offset(cx, cy),
+                radius = rad,
+            ),
+        )
+    }
+
+    // ⑧ 站点标记（取件用件号；顺丰/出站用徽标）
     route.stops.forEachIndexed { stopIndex, stop ->
-        val cell = route.legs.getOrNull(stopIndex)?.cells?.lastOrNull() ?: return@forEachIndexed
-        val cx = px(cell.col) + scale / 2f
-        val cy = py(cell.row) + scale / 2f
-        val label: String
-        val color: Color
-        when (stop) {
-            is RouteStop.Pickup -> {
-                pickupNo += 1
-                label = "$pickupNo"
-                color = COL_PICK
-            }
-            RouteStop.SfCheckout -> {
-                label = "SF"
-                color = COL_SF
-            }
-            is RouteStop.Exit -> {
-                label = "出"
-                color = COL_EXIT
-            }
+        val cellPos = route.legs.getOrNull(stopIndex)?.cells?.lastOrNull() ?: return@forEachIndexed
+        val x = px(cellPos.col + 0.5f)
+        val y = py(cellPos.row + 0.5f)
+        val label = markerLabels.getOrNull(stopIndex) ?: "?"
+        val color = stopColor(stop, pal)
+        val r = (cell * 1.5f).coerceIn(9f, 15f) * if (stopIndex == idx) 1.06f else 1f
+        if (stopIndex == idx) {
+            val t = ((phase * 1.4f) % 1f)
+            drawCircle(pal.accent.copy(alpha = 0.22f * (1f - t)), radius = r * (1.6f + t * 0.9f), center = Offset(x, y))
         }
-        val radius = (scale * 2.0f).coerceIn(9f, 18f)
-        if (stopIndex == idx) drawCircle(COL_NEXT.copy(alpha = 0.20f), radius * 2.0f, Offset(cx, cy))
-        drawCircle(color, radius, Offset(cx, cy))
-        drawCircle(Color.White, radius, Offset(cx, cy), style = Stroke(width = 2f))
+        drawCircle(pal.shadow, radius = r, center = Offset(x, y + 2f))
+        drawCircle(color, radius = r, center = Offset(x, y))
+        drawCircle(Color.White, radius = r, center = Offset(x, y), style = Stroke(width = 2f))
         val layout = measurer.measure(
             label,
-            style = TextStyle(color = Color.White, fontSize = (radius * 1.0f).toSp(), fontWeight = FontWeight.Bold),
+            style = TextStyle(color = Color.White, fontSize = (r * 0.95f).toSp(), fontWeight = FontWeight.Bold),
+            maxLines = 1,
         )
-        drawText(layout, topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f))
+        drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
     }
 
-    // 4) 入口标记
-    val ent = route.legs.firstOrNull()?.cells?.firstOrNull()
-    if (ent != null) {
-        val cx = px(ent.col) + scale / 2f
-        val cy = py(ent.row) + scale / 2f
-        val radius = (scale * 1.9f).coerceIn(9f, 16f)
-        drawCircle(COL_ENTRANCE, radius, Offset(cx, cy))
-        drawCircle(Color.White, radius, Offset(cx, cy), style = Stroke(width = 2f))
+    // ⑨ 入口标记（绿色圆角方块 + 入）
+    route.legs.firstOrNull()?.cells?.firstOrNull()?.let { e ->
+        val x = px(e.col + 0.5f)
+        val y = py(e.row + 0.5f)
+        val r = (cell * 1.4f).coerceIn(9f, 15f)
+        drawRoundRect(
+            color = pal.entrance,
+            topLeft = Offset(x - r, y - r),
+            size = Size(r * 2, r * 2),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r * 0.5f, r * 0.5f),
+        )
+        drawRoundRect(
+            color = Color.White,
+            topLeft = Offset(x - r, y - r),
+            size = Size(r * 2, r * 2),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r * 0.5f, r * 0.5f),
+            style = Stroke(width = 2f),
+        )
         val layout = measurer.measure(
             "入",
-            style = TextStyle(color = Color(0xFF1B5E20), fontSize = (radius * 1.0f).toSp(), fontWeight = FontWeight.Bold),
+            style = TextStyle(color = pal.entranceInk, fontSize = (r * 0.95f).toSp(), fontWeight = FontWeight.Bold),
+            maxLines = 1,
         )
-        drawText(layout, topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f))
+        drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
     }
 
-    // 5) 下一步方向的箭头（放在「下一段」首个同向段的终点，带白描边更醒目）
+    // ⑩ 下一步方向箭头（当前段首个同向段的终点）
     if (nextDir != null) {
-        firstRunEnd(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { cell ->
+        firstRunEnd(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
             drawArrow(
-                px(cell.col) + scale / 2f,
-                py(cell.row) + scale / 2f,
+                px(c.col + 0.5f),
+                py(c.row + 0.5f),
                 nextDir,
-                (scale * 3.0f).coerceIn(12f, 24f),
+                (cell * 1.6f).coerceIn(9f, 20f),
+                pal.accent,
             )
         }
     }
+}
 
-    // 6) 特写时给货架/区域标名字（全览放不下）
-    if (scale >= 11f) {
-        var k = 0
-        while (k < SiteData.rectLabels.size) {
-            val label = SiteData.rectLabels[k].trim()
-            val b = k * 4
-            val c0 = SiteData.rectBounds[b]
-            val c1 = SiteData.rectBounds[b + 1]
-            val r0 = SiteData.rectBounds[b + 2]
-            val r1 = SiteData.rectBounds[b + 3]
-            if (label.isNotEmpty() && c1 >= bC0 && c0 <= bC1 && r1 >= bR0 && r0 <= bR1) {
-                val cx = px(c0) + (c1 - c0 + 1) * scale / 2f
-                val cy = py(r0) + (r1 - r0 + 1) * scale / 2f
-                val layout = measurer.measure(label, style = TextStyle(color = Color(0xFF5B6B7C), fontSize = 9.sp))
-                drawText(layout, topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f))
-            }
-            k++
-        }
+private fun siteW(l: Float, r: Float): Float = (r - l).coerceAtLeast(1f)
+private fun siteH(t: Float, b: Float): Float = (b - t).coerceAtLeast(1f)
+
+private fun DrawScope.drawPathOf(
+    cells: List<GridCell>,
+    px: (Float) -> Float,
+    py: (Float) -> Float,
+    cell: Float,
+    color: Color,
+    width: Float,
+) {
+    val path = Path()
+    cells.forEachIndexed { i, c ->
+        val x = px(c.col + 0.5f)
+        val y = py(c.row + 0.5f)
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
     }
+    drawPath(path, color = color, style = Stroke(width = width, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
 }
 
 /** 首个「同方向段」的终点格（与 [VenueGuide] 的压缩规则一致）。 */
@@ -479,7 +752,7 @@ private fun firstRunEnd(cells: List<GridCell>): GridCell? {
     return cells[j + 1]
 }
 
-private fun DrawScope.drawArrow(cx: Float, cy: Float, dir: VenueGuide.Dir, sizePx: Float) {
+private fun DrawScope.drawArrow(cx: Float, cy: Float, dir: VenueGuide.Dir, sizePx: Float, color: Color) {
     val p = Path()
     when (dir) {
         VenueGuide.Dir.NORTH -> {
@@ -504,6 +777,6 @@ private fun DrawScope.drawArrow(cx: Float, cy: Float, dir: VenueGuide.Dir, sizeP
         }
     }
     p.close()
-    drawPath(p, Color(0xFF0D47A1))
+    drawPath(p, color)
     drawPath(p, Color.White, style = Stroke(width = 2f))
 }

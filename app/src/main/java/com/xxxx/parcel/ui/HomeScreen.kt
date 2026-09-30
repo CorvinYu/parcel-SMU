@@ -111,6 +111,7 @@ fun HomeScreen(
     val guideMapPlacement = getGuideMapPlacement(context)
     val guideDetail = getGuideDetail(context)
     var homeRoute by remember { mutableStateOf<PickupRoute?>(null) }
+    var homePickupLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var homeStop by remember { mutableIntStateOf(0) }
     var homeFullMap by remember { mutableStateOf(false) }
     var homeMapCollapsed by remember { mutableStateOf(false) }
@@ -241,8 +242,9 @@ fun HomeScreen(
                         isTimeSort = isTimeSort,
                         routeSortEnabled = isRouteSort,
                         onListContentHeightPx = { listContentHeightPx = it },
-                        onRouteComputed = {
-                            homeRoute = it
+                        onRouteComputed = { route, labels ->
+                            homeRoute = route
+                            homePickupLabels = labels
                             homeStop = 0
                         },
                         // 地图改成占位（不遮挡内容）⇒ 列表不再需要底部留白
@@ -274,6 +276,7 @@ fun HomeScreen(
                             onCollapsedChange = { homeMapCollapsed = it },
                             onCurrentStopChange = { homeStop = it },
                             onExpand = { homeFullMap = true },
+                            pickupLabels = homePickupLabels,
                         )
                     }
                 } else if (homeMapEnabled && hasPermission) {
@@ -346,6 +349,7 @@ fun HomeScreen(
                             onCurrentStopChange = { homeStop = it },
                             onExpand = { homeFullMap = false },
                             expandLabel = "收起",
+                            pickupLabels = homePickupLabels,
                         )
                     }
                 }

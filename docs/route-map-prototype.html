@@ -120,18 +120,20 @@
     </div>
 
     <div class="group">
-      <div class="lbl">主题</div>
+      <div class="lbl">主题（跟随系统 = 亮/暗都适配）</div>
       <div class="chips" data-key="theme">
-        <span class="chip on" data-v="light">浅色</span><span class="chip" data-v="dark">深色</span>
+        <span class="chip on" data-v="light">浅色</span>
+        <span class="chip" data-v="dark">深色</span>
+        <span class="chip" data-v="auto">跟随系统</span>
       </div>
     </div>
 
     <div class="group">
-      <div class="lbl">底图</div>
+      <div class="lbl">底图（方案 B 已改成「只画货架」）</div>
       <div class="chips" data-key="base">
         <span class="chip on" data-v="shelf">只画货架</span>
-        <span class="chip" data-v="outline">货架 + 通道轮廓</span>
         <span class="chip" data-v="minimal">极简（仅路线）</span>
+        <span class="chip" data-v="outline">含通道横格（不推荐）</span>
       </div>
     </div>
 
@@ -900,9 +902,15 @@
     const q=new URLSearchParams(location.search);
     ['theme','base','route','marker','view','texture','focus'].forEach(k=>{ if(q.get(k)) OPT[k]=q.get(k); });
     ['radius','dur','ease'].forEach(k=>{ if(q.get(k)!==null) OPT[k]=+q.get(k); });
-    document.body.dataset.theme=OPT.theme;
+    applyTheme();
     document.documentElement.style.setProperty('--radius-card',OPT.radius+'px');
   })();
+
+  // 主题解析：light / dark / auto(跟随系统)
+  const mq=window.matchMedia('(prefers-color-scheme: dark)');
+  function effectiveTheme(){ return OPT.theme==='auto' ? (mq.matches?'dark':'light') : OPT.theme; }
+  function applyTheme(){ document.body.dataset.theme=effectiveTheme(); }
+  mq.addEventListener&&mq.addEventListener('change',()=>{ if(OPT.theme==='auto'){applyTheme(); render();} });
 
   /* ---------- 场地与规划（与 App 一致的那套准备代码） ---------- */
   const GATE_SPANS=COR.rects.filter(r=>r.label&&/(闸机|出口)/.test(r.label)).map(r=>[r.r0,r.r1,r.c0,r.c1]);
@@ -1051,7 +1059,7 @@
 
   function draw(){
     ctx.clearRect(0,0,W,H);
-    const dark=OPT.theme==='dark';
+    const dark=effectiveTheme()==='dark';
     // 背景（柔和径向渐变，现代一点的底）
     const g=ctx.createLinearGradient(0,0,0,H);
     g.addColorStop(0,dark?'#131C2B':'#F8FBFF'); g.addColorStop(1,dark?'#0F1724':'#EFF4FB');
@@ -1310,7 +1318,8 @@
       `底纹 <b>${OPT.texture==='none'?'无':OPT.texture==='dots'?'点阵':'浅网格'}</b> · `+
       `聚焦 <b>${OPT.focus==='on'?'开':'关'}</b><br>`+
       `路线 <b>${OPT.route==='solid'?'实线+光晕':OPT.route==='flow'?'流动虚线':'行进光点'}</b> · `+
-      `标记 <b>${OPT.marker==='dot'?'圆点编号':OPT.marker==='pill'?'胶囊标签':'图钉'}</b> · 主题 <b>${OPT.theme==='dark'?'深色':'浅色'}</b>`;
+      `标记 <b>${OPT.marker==='dot'?'圆点编号':OPT.marker==='pill'?'胶囊标签':'图钉'}</b> · `+
+      `主题 <b>${OPT.theme==='auto'?'跟随系统':OPT.theme==='dark'?'深色':'浅色'}</b>`;
   }
   function paintChips(){
     document.querySelectorAll('.chips[data-key]').forEach(g=>{
@@ -1326,7 +1335,7 @@
     g.addEventListener('click',e=>{
       const c=e.target.closest('.chip'); if(!c) return;
       const key=g.dataset.key; OPT[key]=c.dataset.v; paintChips();
-      if(key==='theme'){document.body.dataset.theme=OPT.theme;}
+      if(key==='theme'){ applyTheme(); }
       render();
     });
   });
@@ -1344,15 +1353,15 @@
   // 三套预设：方便你只说「我喜欢 B」
   const PRESETS={
     A:{theme:'light',base:'shelf',texture:'dots',focus:'on',route:'dot',marker:'dot',radius:24,dur:560,ease:1},
-    B:{theme:'dark',base:'outline',texture:'grid',focus:'on',route:'flow',marker:'pill',radius:28,dur:640,ease:2},
-    C:{theme:'light',base:'minimal',texture:'none',focus:'off',route:'solid',marker:'dot',radius:20,dur:420,ease:1}
+    B:{theme:'dark',base:'shelf',texture:'grid',focus:'on',route:'flow',marker:'pill',radius:28,dur:640,ease:2},
+    C:{theme:'auto',base:'minimal',texture:'none',focus:'off',route:'solid',marker:'dot',radius:20,dur:420,ease:1}
   };
   ['A','B','C'].forEach(k=>{
     const btn=$('preset'+k);
     if(!btn) return;
     btn.onclick=()=>{
       Object.assign(OPT,PRESETS[k]);
-      document.body.dataset.theme=OPT.theme;
+      applyTheme();
       document.documentElement.style.setProperty('--radius-card',OPT.radius+'px');
       $('radius').value=OPT.radius; $('radiusV').textContent=OPT.radius+'px';
       $('dur').value=OPT.dur; $('durV').textContent=OPT.dur+'ms';

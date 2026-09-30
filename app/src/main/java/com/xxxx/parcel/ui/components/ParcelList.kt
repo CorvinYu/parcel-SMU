@@ -60,16 +60,20 @@ import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.assignStableNumbers
 import com.xxxx.parcel.util.classifyPickupCategory
+import com.xxxx.parcel.util.compactNumbers
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.loadStableNumbers
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.routeAnchorCode
 import com.xxxx.parcel.util.saveCodeNote
+import com.xxxx.parcel.util.saveStableNumbers
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import kotlinx.coroutines.launch
 
@@ -191,8 +195,8 @@ fun ParcelList(
     routeSortEnabled: Boolean = false,
     /** 上报「当前页列表内容高度（px；列表可滚动时为 null）」，用于底部条码自动让位 */
     onListContentHeightPx: (Int?) -> Unit = {},
-    /** 上报规划出来的取件路线（供首页图示窗格复用，**不重复规划**） */
-    onRouteComputed: (PickupRoute?) -> Unit = {},
+    /** 上报规划出来的取件路线与「货格号 → 件号」标签（供首页图示窗格复用，**不重复规划**） */
+    onRouteComputed: (PickupRoute?, Map<String, String>) -> Unit = { _, _ -> },
     /** 列表底部留白（首页开启图示浮层时给窗格让位） */
     listBottomPadding: Dp = 0.dp,
 ) {
@@ -263,22 +267,61 @@ fun ParcelList(
             routeOptions,
         )
     }
-    val routeOrder = if (routeSortEnabled) stationRoute.order else emptyMap()
     val homeRoute = stationRoute.route
-    LaunchedEffect(homeRoute) { onRouteComputed(homeRoute) }
 
-    // 文字提示（首页开关打开时）：取件序号 → 一行「怎么走」；顺丰出库那一段单独给
-    val pickupHints: Map<Int, String> = remember(homeRoute, guideText) {
-        val out = LinkedHashMap<Int, String>()
+    // ---- 稳定件号（用户 2026-10-01）----
+    //   不隐藏已取件 ⇒ 取完的那条**留在原地、保留原号**（此前会掉到最末尾）；
+    //   隐藏已取件   ⇒ 取完消失、编号从 1 紧凑重排（原本就是这个行为，保持）
+    val stationParcels = categoryParcels[0]
+    val stickyNumbers = remember { loadStableNumbers(context) }
+    val routeNumbers: Map<String, Int> = remember(
+        stationParcels, stationRoute.orderedAddresses, routeSortEnabled, showCompleted,
+    ) {
+        if (!routeSortEnabled) {
+            emptyMap()
+        } else {
+            val numbers = if (showCompleted) {
+                assignStableNumbers(
+                    stationParcels.map { it.address },
+                    stationRoute.orderedAddresses,
+                    stickyNumbers,
+                )
+            } else {
+                compactNumbers(stationRoute.orderedAddresses, stickyNumbers)
+            }
+            saveStableNumbers(context, numbers)
+            numbers
+        }
+    }
+
+    // 地图标记要用的「货格号 → 件号」（与卡片上的 ①②③ 同一个号；没有稳定号时退回访问顺序）
+    val pickupLabels: Map<String, String> = remember(homeRoute, stationRoute, routeNumbers) {
+        val out = LinkedHashMap<String, String>()
+        val r = homeRoute ?: return@remember out
+        var visitOrder = 0
+        r.stops.forEach { stop ->
+            if (stop is RouteStop.Pickup) {
+                visitOrder += 1
+                val address = stationRoute.addressByCode[stop.code.toString()]
+                val number = address?.let { routeNumbers[it] } ?: visitOrder
+                out[stop.code.toString()] = number.toString()
+            }
+        }
+        out
+    }
+    LaunchedEffect(homeRoute, pickupLabels) { onRouteComputed(homeRoute, pickupLabels) }
+
+    // 文字提示（首页开关打开时）：**按地址**挂一行「怎么走」（与件号解耦）；顺丰出库那一段单独给
+    val hintByAddress: Map<String, String> = remember(homeRoute, guideText, stationRoute) {
+        val out = LinkedHashMap<String, String>()
         val r = homeRoute
         if (r == null || !guideText.onHome) return@remember out
-        var no = 0
         r.stops.forEachIndexed { i, stop ->
             if (stop is RouteStop.Pickup) {
-                no += 1
                 val leg = r.legs.getOrNull(i) ?: return@forEachIndexed
+                val address = stationRoute.addressByCode[stop.code.toString()] ?: return@forEachIndexed
                 val text = VenueGuide.summarize(leg, stop.spot)
-                if (text.isNotEmpty()) out[no] = text
+                if (text.isNotEmpty()) out[address] = text
             }
         }
         out
@@ -288,6 +331,14 @@ fun ParcelList(
         if (r == null || !guideText.onHome) return@remember null
         val i = r.stops.indexOfFirst { it is RouteStop.SfCheckout }
         if (i < 0) null else r.legs.getOrNull(i)?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
+    }
+    // 顺丰出库那一步要插在「最后一个 S 件」对应的卡片之后（按地址定位，与件号无关）
+    val sfAfterAddress: String? = remember(homeRoute, stationRoute) {
+        val r = homeRoute ?: return@remember null
+        val sfIdx = r.stops.indexOfFirst { it is RouteStop.SfCheckout }
+        if (sfIdx < 0) return@remember null
+        val lastPick = r.stops.take(sfIdx).filterIsInstance<RouteStop.Pickup>().lastOrNull()
+        lastPick?.let { stationRoute.addressByCode[it.code.toString()] }
     }
     val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
     val pagerState = rememberPagerState(
@@ -355,25 +406,25 @@ fun ParcelList(
                 .fillMaxSize()
                 .weight(1f),
         ) { page ->
-            // 快递站（第 0 页）：按取件路线排序时重排；其余页保持原顺序
-            val pageParcels = if (page == 0 && routeOrder.isNotEmpty()) {
-                categoryParcels[page].sortedBy { routeOrder[it.address] ?: Int.MAX_VALUE }
+            // 快递站（第 0 页）：按**稳定件号**排序（已取件的条目因此留在原地、序号不变）；其余页保持原顺序
+            val pageParcels = if (page == 0 && routeNumbers.isNotEmpty()) {
+                categoryParcels[page].sortedBy { routeNumbers[it.address] ?: Int.MAX_VALUE }
             } else {
                 categoryParcels[page]
             }
             // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不再重复「自助取件」
             val entries = ArrayList<ParcelListItem>(pageParcels.size + 1)
             pageParcels.forEach { parcel ->
-                val order = routeOrder[parcel.address]
+                val number = routeNumbers[parcel.address]
                 entries.add(
                     ParcelListItem.Card(
                         ParcelListEntry(
                             parcel = parcel,
                             hideHeader = page == 0,
                             showLockerTag = page != 1,
-                            routeOrder = order,
-                            hint = if (guideText.onHome && routeSortEnabled && order != null) {
-                                pickupHints[order]
+                            routeOrder = number,
+                            hint = if (guideText.onHome && routeSortEnabled) {
+                                hintByAddress[parcel.address]
                             } else {
                                 null
                             },
@@ -382,11 +433,9 @@ fun ParcelList(
                 )
             }
             // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后
-            if (page == 0 && routeSortEnabled && homeRoute != null && homeRoute.hasSfCheckout) {
-                val after = homeRoute.sfCheckoutAfter
+            if (page == 0 && routeSortEnabled && homeRoute?.hasSfCheckout == true && sfAfterAddress != null) {
                 val anchor = entries.indexOfLast {
-                    val o = (it as? ParcelListItem.Card)?.entry?.routeOrder
-                    o != null && o <= after
+                    (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
                 }
                 if (anchor >= 0) {
                     entries.add(anchor + 1, ParcelListItem.SfCheckout(sfCheckoutHint))
@@ -547,42 +596,48 @@ private fun SfCheckoutListItem(hint: String?) {
     }
 }
 
-/** 首页要用的规划结果：取件序号表（地址 → ①②③）＋ 完整路线（图示窗格复用）。 */
-private data class StationRoute(val order: Map<String, Int>, val route: PickupRoute?)
+/** 首页要用的规划结果：完整路线（图示窗格复用）＋ 地址↔货格号的对照。 */
+private data class StationRoute(
+    val route: PickupRoute?,
+    /** 未取件的地址，按最优取件顺序（稳定件号的分配顺序） */
+    val orderedAddresses: List<String> = emptyList(),
+    /** 货格号 → 地址（把路线上的停靠点映射回列表卡片） */
+    val addressByCode: Map<String, String> = emptyMap(),
+)
 
 /**
- * 计算「快递站」列表的取件顺序：地址 → ①②③…
+ * 计算「快递站」列表的取件顺序。
  *
- * 每个地址分组取它第一个未取件的**有效货格号**（`compartmentNumber`，为空时用取件码兜底），
- * 一起交给路径引擎求最优顺序，再把最优顺序映射回地址。定位不了的地址不出现在表里。
+ * 每个地址分组只取它**尚未取件**的**有效货格号**（`compartmentNumber`，为空时用取件码兜底），
+ * 一起交给路径引擎求最优顺序。**已取完的地址不参与规划**（会从路线与地图上消失）。
  */
 private fun planStationRoute(
     parcels: List<ParcelData>,
     options: RouteOptions,
 ): StationRoute {
-    val pairs = parcels.mapNotNull { parcel ->
-        // 🔴 只把**未取件**的短信交给规划：全取完的地址返回 null ⇒ 从顺序与地图上消失
-        // （此前兜底取了已取件那条 ⇒ 标记已取件后地图不同步，用户 2026-10-01 反馈）
+    val pending = parcels.mapNotNull { parcel ->
+        // 🔴 只把**未取件**的短信交给规划：全取完的地址返回 null
         val uncompleted = parcel.smsDataList
             .filter { !it.isCompleted }
             .map { it.compartmentNumber to it.code }
         val code = routeAnchorCode(uncompleted) ?: return@mapNotNull null
-        parcel.address to code
+        Triple(parcel.address, code, parcel)
     }
-    if (pairs.isEmpty()) return StationRoute(emptyMap(), null)
+    if (pending.isEmpty()) return StationRoute(null)
 
-    val route = planPickupRoute(pairs.map { it.second }, options)
-    val remaining = pairs.toMutableList()
-    val order = LinkedHashMap<String, Int>()
-    var seq = 0
+    val route = planPickupRoute(pending.map { it.second }, options)
+    val remaining = pending.toMutableList()
+    val orderedAddresses = ArrayList<String>(remaining.size)
+    val addressByCode = LinkedHashMap<String, String>()
     route.orderedCodes.forEach { code ->
         val idx = remaining.indexOfFirst { it.second == code.toString() }
         if (idx >= 0) {
-            order[remaining[idx].first] = ++seq
+            orderedAddresses += remaining[idx].first
+            addressByCode[code.toString()] = remaining[idx].first
             remaining.removeAt(idx)
         }
     }
-    return StationRoute(order, route)
+    return StationRoute(route, orderedAddresses, addressByCode)
 }
 
 /** 该地址分组属于哪一大类（同组取第一条短信的正文判定）。 */
