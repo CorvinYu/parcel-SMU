@@ -75,7 +75,8 @@ fun MapPageScreen(
     // 当前件在序列里的位置（null = 还没选过 ⇒ 第一件未取的）；允许停在已取的那一件上翻看
     var currentPickup by remember { mutableStateOf<Int?>(null) }
     val cur = trip.clampCurrent(currentPickup)
-    val currentStopIndex = trip.stopIndexOf(cur)
+    // 🔴 全取完之后要跳到「前往出口」那一站（用户 2026-10-01）
+    val currentStopIndex = trip.focusStopIndex(cur)
     // 刚取完的那一件 ⇒ 图上留个灰 ✓
     val checkoutOrigin = remember(successData, options) { lastCheckoutOrigin(context, options) }
     var barcodeFull by remember { mutableStateOf(false) }

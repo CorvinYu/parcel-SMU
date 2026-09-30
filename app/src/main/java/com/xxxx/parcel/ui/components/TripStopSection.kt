@@ -78,6 +78,19 @@ data class TripView(
         pickups.isNotEmpty() -> pickups.last().first
         else -> 0
     }
+
+    /**
+     * 地图/提示该高亮的那一站。
+     *
+     * 🔴 用户 2026-10-01：**全部取完之后地图要跳到「前往出口」**（原来停在最后一件取件格上）——
+     * 所以全取完时返回「最后一件取件点**之后**的那一站」＝ 顺丰出库（若有）或出站口。
+     */
+    fun focusStopIndex(current: Int): Int {
+        if (firstPending >= 0) return stopIndexOf(current)
+        val lastPickupStop = pickups.lastOrNull()?.first ?: 0
+        val after = lastPickupStop + 1
+        return if (after in route.stops.indices) after else route.stops.lastIndex.coerceAtLeast(0)
+    }
 }
 
 /** 由短信列表算出 [TripView]（地图取件页与首页全屏地图共用同一套口径）。 */
@@ -135,7 +148,9 @@ fun TripStopSection(
         view.byCompartment[parseCompartmentCode(code)]?.address.orEmpty()
     }
 
-    // 点击当前件：未取 ⇒ 标记（**同货架一起**）；已取 ⇒ 再点一下恢复为未取件
+    // 点击当前件：未取 ⇒ 标记**这一件**；已取 ⇒ 再点一下恢复为未取件
+    // 🔴 用户 2026-10-01 纠正：原来「同货架一起标记」，一个货架两件时点一下两件都变已取、
+    //    很容易漏件（人以为还有一件要拿，其实已被标掉）⇒ 现在**一次只标记一件**。
     val toggle: (String) -> Unit = { code ->
         val parsed = parseCompartmentCode(code)
         val target = parsed?.let { view.byCompartment[it] }
@@ -143,23 +158,14 @@ fun TripStopSection(
             parsed == null || target == null -> Unit
             target.isCompleted -> removeCompletedId(context, viewModel, target.sms, target.code)
             else -> {
-                val shelf = "${parsed.rowLetter.uppercaseChar()}${parsed.shelfNumber}"
-                val targets = view.byCompartment.filterKeys { k ->
-                    k.zone == parsed.zone && "${k.rowLetter.uppercaseChar()}${k.shelfNumber}" == shelf
-                }.values.filterNot { it.isCompleted }.distinct()
-                if (targets.isNotEmpty()) {
-                    addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
-                    // **显式前进一格**（1/50 → 2/50）：从当前位置往后找第一件还没取的
-                    val nowDone = view.completed + targets.map { t ->
-                        parseCompartmentCode(effectiveCompartmentNumber(t.compartmentNumber, t.code))
-                            ?.toString() ?: t.code
-                    }
-                    val from = if (cur in view.pickups.indices) cur else 0
-                    val size = view.pickups.size
-                    val next = ((from + 1) until size).firstOrNull { view.pickups[it].second !in nowDone }
-                        ?: (0 until size).firstOrNull { view.pickups[it].second !in nowDone }
-                    onCurrentChange(next ?: from)
-                }
+                addCompletedIds(context, viewModel, listOf(target.sms), listOf(target.code))
+                // **显式前进一格**（1/50 → 2/50）：从当前位置往后找第一件还没取的
+                val nowDone = view.completed + code
+                val from = if (cur in view.pickups.indices) cur else 0
+                val size = view.pickups.size
+                val next = ((from + 1) until size).firstOrNull { view.pickups[it].second !in nowDone }
+                    ?: (0 until size).firstOrNull { view.pickups[it].second !in nowDone }
+                onCurrentChange(next ?: from)
             }
         }
     }
@@ -171,7 +177,7 @@ fun TripStopSection(
             completed = view.completed,
             allDone = allDone,
             addressOf = addressOf,
-            legTiles = view.route.legs.getOrNull(view.stopIndexOf(cur))?.tiles,
+            legTiles = view.route.legs.getOrNull(view.focusStopIndex(cur))?.tiles,
             totalTiles = view.route.totalTiles,
             onJump = { onCurrentChange(it) },
             onToggleCompleted = toggle,

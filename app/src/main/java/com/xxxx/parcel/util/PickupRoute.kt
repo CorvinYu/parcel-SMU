@@ -465,7 +465,11 @@ private object SiteIndex {
     /** 顺丰**出库**节点：必须是单一格（中间停靠点），取出库闸机带的中心格。 */
     val sfCheckoutCell: GridCell? by lazy { centerCellOf(sfCheckoutRects) }
 
-    val sfExitGates: List<GridCell> by lazy { sfExitRects.flatMap { it.cells } }
+    val sfExitGates: List<GridCell> by lazy {
+        // 🔴 只保留**真正可通行**的格：闸机带现在只在紧挨通道的那一格可走（门口），
+        //    不带过滤的话会选到带内部走不到的格 ⇒ 末段路径为空。
+        sfExitRects.flatMap { it.cells }.filter { SiteModel.kindAt(it.row, it.col) != SiteModel.NONE }
+    }
 
     /**
      * 入口：Excel 里用户单独用另一颜色填的入口闸机（`W59:AB59`，**不是合并区**）

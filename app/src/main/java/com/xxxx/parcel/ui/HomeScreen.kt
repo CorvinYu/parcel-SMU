@@ -350,8 +350,13 @@ fun HomeScreen(
                         listBottomPadding = if (mapActive) mapHeight + paneGap else 0.dp,
                         // 下拉刷新信号：列表据此重排未取件的①②③
                         refreshSignal = refreshSignal,
-                        // 入口 / 出站卡片：点一下进**全屏条码**（没设置过也先进这一屏，由全屏页引导去导入）
-                        onShowBarcode = { homeBarcodeFull = true },
+                        // 入口 / 出站卡片：**没设置条码时直接进条码设置页**（用户 2026-10-01 要求；
+                        // 已设置才进全屏出示）。这里在点按那一刻才读预置，避免每帧读盘。
+                        onShowBarcode = {
+                            val ready = getBarcodePayload(context) != null ||
+                                hasBarcodeOriginalImage(context)
+                            if (ready) homeBarcodeFull = true else navController.navigate("barcode")
+                        },
                         // 「顺丰出库」卡片右侧的件数提醒
                         showSfCheckoutCount = sfCountEnabled,
                     ) else

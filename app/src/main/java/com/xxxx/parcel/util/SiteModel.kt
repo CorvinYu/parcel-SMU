@@ -52,7 +52,12 @@ internal object SiteModel {
             val r1 = SiteData.gateSpans[i + 3]
             for (r in r0..r1) for (c in c0..c1) {
                 val k = index(r, c)
-                if (k >= 0 && kind[k] == NONE) kind[k] = GATE
+                if (k < 0 || kind[k] != NONE) continue
+                // 🔴 闸机带**只在紧挨通道的那一格算「门口」**（可通行），带内部不算通道。
+                //    否则寻路会顺着闸机带内部走（实测：顺丰出库→出站整段都在带内的 col 4），
+                //    地图上看起来就是「道路压在闸机上」（用户 2026-10-01 反馈）。
+                //    门口格保留 ⇒ 仍然走得到闸机前出库/出站。
+                if (adjacentToWalk(r, c)) kind[k] = GATE
             }
             i += 4
         }
@@ -89,6 +94,11 @@ internal object SiteModel {
         val k = index(row, col)
         return if (k < 0) NONE else kind[k]
     }
+
+    /** 该格是否**四邻有通道格**（用于判定闸机带的「门口」）。 */
+    private fun adjacentToWalk(row: Int, col: Int): Boolean =
+        kindAt(row - 1, col) == WALK || kindAt(row + 1, col) == WALK ||
+            kindAt(row, col - 1) == WALK || kindAt(row, col + 1) == WALK
 
     fun isWalkable(row: Int, col: Int): Boolean = kindAt(row, col) != NONE
 
