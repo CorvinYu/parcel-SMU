@@ -98,12 +98,6 @@ import kotlinx.coroutines.launch
  * - **聚光灯聚焦**当前段（径向渐晕），**行进光点**沿当前段跑，光晕 + 圆头线
  * - 手势：拖动平移、双指缩放、双击切换全览/特写
  */
-/**
- * 顶部把手「快速向下甩 ⇒ 收起」的速度阈值（px/s）。
- * 用户 2026-10-01：展开时按住高度调节快速下滑，应该等价于右上角的收起按钮。
- */
-private const val FLING_COLLAPSE_VELOCITY = 900f
-
 @Composable
 fun RouteMiniMap(
     route: PickupRoute,
@@ -130,10 +124,10 @@ fun RouteMiniMap(
     /** 顶部把手上下拖动时回调（dy 为像素位移，向上为负）——用于调窗格高度 */
     onResizeDelta: ((Float) -> Unit)? = null,
     /**
-     * 展开态**上沿不要圆角**（用户 2026-10-01：首页地图窗格上沿的 R 角会直接露出背景，
-     * 把列表最下面那条胶囊「切」了一下）。首页传 true ⇒ 上沿是一条直边，紧贴列表、不再有缺口。
+     * 是否在窗格内显示那条**紫色「怎么走」提示**。
+     * 地图取件页不传（用户 2026-10-01：顶部已有取件码卡，紫色文字描述路线是重复的）。
      */
-    squareTop: Boolean = false,
+    showHintPill: Boolean = true,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -265,17 +259,7 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        // 上沿是否留圆角（见 squareTop 说明）
-        shape = if (squareTop) {
-            RoundedCornerShape(
-                topStart = 0.dp,
-                topEnd = 0.dp,
-                bottomStart = Corners.card,
-                bottomEnd = Corners.card,
-            )
-        } else {
-            Corners.cardShape
-        },
+        shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -296,8 +280,6 @@ fun RouteMiniMap(
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 var lastScreenY = down.position.y + handleTopInRoot
-                                var lastTime = down.uptimeMillis
-                                var lastSpeed = 0f
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -305,14 +287,12 @@ fun RouteMiniMap(
                                     val screenY = change.position.y + handleTopInRoot
                                     val dy = screenY - lastScreenY
                                     lastScreenY = screenY
-                                    val dtMs = (change.uptimeMillis - lastTime).coerceAtLeast(1L)
-                                    lastTime = change.uptimeMillis
-                                    lastSpeed = dy / (dtMs / 1000f)
                                     if (dy != 0f) resizeCb?.invoke(dy)
                                     change.consume()
                                 }
-                                // 手指抬起：快速向下甩 ⇒ 收起（等价右上角 ▼）
-                                if (lastSpeed > FLING_COLLAPSE_VELOCITY) onCollapsedChange?.invoke(true)
+                                // 🔴 用户 2026-10-01：原来「快速下滑 ⇒ 收起」已被**彻底删除**
+                                //    （那个行为会让普通的下滑拖动在松手时突然最小化，看着就是「不跟手」）。
+                                //    收起只保留右上角那个 ▼ 按钮。
                             }
                         },
                     contentAlignment = Alignment.Center,
@@ -370,8 +350,8 @@ fun RouteMiniMap(
             }
 
             // 🔴 用户 2026-10-01：这个紫色提示块里那行**灰色小字**（走廊名/地标的补充注记）无意义 ⇒ 删掉，
-            //    只留一行「怎么走」。其他类似的冗余文案也一并清理（见下方标题行的说明）。
-            if (mainHints.isNotEmpty()) {
+            //    只留一行「怎么走」。地图取件页整块都不显示（顶部已有取件码卡，重复）。
+            if (showHintPill && mainHints.isNotEmpty()) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()

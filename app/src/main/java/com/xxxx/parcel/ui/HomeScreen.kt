@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,6 +48,7 @@ import com.xxxx.parcel.ui.components.HomeTopBar
 import com.xxxx.parcel.ui.components.HomeRouteInfo
 import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.RouteMiniMap
+import com.xxxx.parcel.ui.components.RouteStopHeader
 import com.xxxx.parcel.ui.components.TimeFilterSheet
 import com.xxxx.parcel.ui.components.timeFilterOptions
 import com.xxxx.parcel.ui.theme.Corners
@@ -359,12 +361,11 @@ fun HomeScreen(
                             detail = guideDetail,
                             // 用户 2026-10-01：首页地图也默认特写（跟随「地图视图」设置，可切回全览）
                             initialView = getGuideMapView(context),
-                            // 用户 2026-10-01：首页窗格上沿不要 R 角（R 角处会直接露出背景，
-                            // 把列表最下面那条胶囊「切」了一下）
-                            squareTop = true,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(start = 10.dp, end = 10.dp, bottom = paneGap)
+                                // 左右与底部间距保持一致（用户 2026-10-01）：左右 10dp、底部 6dp +
+                                // 条码卡上方 4dp = 10dp ⇒ 三个方向的视觉留白相同
+                                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
                                 .height(mapHeight),
                             collapsed = homeMapCollapsed,
                             onCollapsedChange = { homeMapCollapsed = it },
@@ -468,22 +469,35 @@ fun HomeScreen(
                     properties = DialogProperties(usePlatformDefaultWidth = false),
                 ) {
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        RouteMiniMap(
-                            route = route,
-                            currentStop = homeStop,
-                            detail = guideDetail,
-                            // 全屏也跟随「地图视图」设置（默认特写）
-                            initialView = getGuideMapView(context),
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(10.dp),
-                            onCurrentStopChange = { homeStop = it },
-                            onExpand = { homeFullMap = false },
-                            expandLabel = "收起",
-                            pickupLabels = homePickupLabels,
-                            showStopCodes = true,
-                            completedMarkers = homeCompletedMarkers,
-                        )
+                        ) {
+                            // 用户 2026-10-01：全屏地图**最上面**要有一块和地图取件页一样的当前取件码
+                            RouteStopHeader(
+                                route = route,
+                                stopIndex = homeStop,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            RouteMiniMap(
+                                route = route,
+                                currentStop = homeStop,
+                                detail = guideDetail,
+                                // 全屏也跟随「地图视图」设置（默认特写）
+                                initialView = getGuideMapView(context),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                onCurrentStopChange = { homeStop = it },
+                                onExpand = { homeFullMap = false },
+                                expandLabel = "收起",
+                                pickupLabels = homePickupLabels,
+                                showStopCodes = true,
+                                completedMarkers = homeCompletedMarkers,
+                            )
+                        }
                     }
                 }
             }

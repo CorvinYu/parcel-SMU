@@ -244,6 +244,9 @@ fun MapPageScreen(
                         .weight(1f)
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     initialView = mapView,
+                    // 用户 2026-10-01：地图取件页**不显示**窗格里那条紫色「怎么走」提示
+                    //（顶部取件码卡已经把该说的话说完了，重复）
+                    showHintPill = false,
                     // 🔴 地图上的 ◀ ▶ 传的是**站在 route.stops 里的下标**（含顺丰出库/出站这种非取件站），
                     //    而这里存的是**件在序列里的下标** ⇒ 必须反过来映射一次，否则一按就跳错件。
                     onCurrentStopChange = { stopIdx ->

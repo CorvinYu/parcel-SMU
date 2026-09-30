@@ -3,6 +3,7 @@ package com.xxxx.parcel.ui.components
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -105,20 +106,30 @@ fun HomeTopBar(
             //    （内容内边距 2dp、中间隔 16dp）＋ 一个 34dp 圆图标（隔 8dp），三者高矮胖瘦都不一样。
             //    现在：同高 34dp（老人模式 44dp）、同一胶囊形状、彼此固定 8dp。
             val badgeHeight = if (isSeniorMode) Corners.controlSenior else Corners.control
+            // 用户 2026-10-01：原来的纯绿 / 品红太「土」⇒ 换成**浅底深字**的柔和色调
+            //（暗色模式换成深底浅字），地图仍保持实心蓝 —— 它是主操作入口。
+            val dark = isSystemInDarkTheme()
+            val okBg = if (dark) Color(0xFF1E4634) else Color(0xFFE3F3E8)
+            val okFg = if (dark) Color(0xFF9BE3BD) else Color(0xFF1F6B3B)
+            val badBg = if (dark) Color(0xFF4A2E1C) else Color(0xFFFCE8DE)
+            val badFg = if (dark) Color(0xFFFFC59B) else Color(0xFF9C4A1B)
+            val mapBg = if (dark) Color(0xFF3B62D6) else Color(0xFF2F6FE4)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 CountBadge(
                     count = successCount,
-                    container = Color(0xFF25AF22),
+                    container = okBg,
+                    content = okFg,
                     height = badgeHeight,
                     isSeniorMode = isSeniorMode,
                     onClick = onSuccessCountClick,
                 )
                 CountBadge(
                     count = failedCount,
-                    container = Color(0xFFAB1A65),
+                    container = badBg,
+                    content = badFg,
                     height = badgeHeight,
                     isSeniorMode = isSeniorMode,
                     onClick = onFailedCountClick,
@@ -128,7 +139,7 @@ fun HomeTopBar(
                     modifier = Modifier
                         .size(badgeHeight)
                         .clip(Corners.pillShape)
-                        .background(Color(0xFF2F6FE4))
+                        .background(mapBg)
                         .clickable(onClick = onOpenMapPage),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -487,6 +498,7 @@ private fun SheetSectionTitle(text: String) {
 private fun CountBadge(
     count: Int,
     container: Color,
+    content: Color,
     height: Dp,
     isSeniorMode: Boolean,
     onClick: () -> Unit,
@@ -503,7 +515,7 @@ private fun CountBadge(
     ) {
         Text(
             text = count.toString(),
-            color = Color.White,
+            color = content,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge,
