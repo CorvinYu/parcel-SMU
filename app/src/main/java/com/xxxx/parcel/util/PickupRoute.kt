@@ -201,6 +201,48 @@ enum class RouteExit(val label: String) {
     SF_EXIT("顺丰和无快递出口（出站）"),
 }
 
+/** 一段路线的性质（与 HTML 侧 `legs[].kind` 一一对应）。 */
+enum class LegKind {
+    /** 入口闸机 → 第一件 */
+    ENTRANCE,
+
+    /** 件 → 件 */
+    PICK,
+
+    /** 件 → 顺丰专用闸机（**出库**，不是出站） */
+    SF_CHECKOUT,
+
+    /** → 出站口（终点；普通闸机或顺丰侧出口） */
+    EXIT,
+}
+
+/**
+ * 一段路线的几何：从 `from` 走到 `to`。
+ *
+ * 🔴 **单位铁律**：`cells` 是网格**单元格**序列，`stub*Tiles` 是区内走位（**瓷砖**，1 瓷砖 = 2 单元格）。
+ * 两者必须分开记账 —— 恒等式（单测钉死）：
+ * ```
+ * tiles == stubFromTiles + (cells.size - 1) * 0.5 + stubToTiles
+ * ```
+ * 历史上「stub 只算 1 次」那类 bug 就是这条不成立暴露出来的。
+ */
+data class RouteLeg(
+    val from: String,
+    val to: String,
+    val kind: LegKind,
+    /**
+     * BFS 回溯出的通道格序列（每步相邻 ⇒ 结构上不可能穿货架、不可能斜穿）。
+     * 同一格（零步）时只有一个元素；目标不可达时为空列表（界面如实说明，不编指引）。
+     */
+    val cells: List<GridCell>,
+    /** 段长（瓷砖，含两端区内走位） */
+    val tiles: Double,
+    /** 从上一件货架/柜列走回通道的那一段（瓷砖） */
+    val stubFromTiles: Double,
+    /** 走进本件货架/柜列的那一段（瓷砖） */
+    val stubToTiles: Double,
+)
+
 /** 路线上的一个停靠点。 */
 sealed interface RouteStop {
     /** 取件 */
@@ -219,8 +261,8 @@ data class PickupRoute(
     val orderedCodes: List<CompartmentCode>,
     /** 完整停靠序列：取件 / 顺丰出库 / 出站 */
     val stops: List<RouteStop>,
-    /** 到每一站的步数（第 0 站从入口算起）；单位：瓷砖 */
-    val legTiles: List<Double>,
+    /** 逐段几何：第 i 段 = 走到第 i 站的到达段（第 0 段从入口算起）；供步行提示与图示使用 */
+    val legs: List<RouteLeg>,
     val totalTiles: Double,
     /** 顺丰出库插在第几件之后（-1 = 不需要出库） */
     val sfCheckoutAfter: Int,
@@ -234,6 +276,9 @@ data class PickupRoute(
     /** 是否为精确最优（false 表示件数过多，退化为分块启发式） */
     val exact: Boolean,
 ) {
+    /** 到每一站的步数（第 0 站从入口算起）；单位：瓷砖 —— 由 [legs] 派生，避免两份数据漂移 */
+    val legTiles: List<Double> get() = legs.map { it.tiles }
+
     val resolvedCount: Int get() = orderedCodes.size
 
     val hasSfCheckout: Boolean get() = sfCheckoutAfter >= 0
@@ -542,7 +587,7 @@ fun planPickupRoute(
             unresolved += spots.map { it.code.raw }
         }
         return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
+            orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
             sfCheckoutAfter = -1, sfCheckoutCell = SiteIndex.sfCheckoutCell, exitCell = null,
             exit = RouteExit.NORMAL_GATE, lockerCodes = lockers, unresolved = unresolved, exact = true,
         )
@@ -554,7 +599,7 @@ fun planPickupRoute(
     val hasNormal = spots.any { it.zone != PickupZone.SF }
     if (hasSf && SiteIndex.sfCheckoutCell == null) {
         return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
+            orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
             sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
             lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
             exact = true,
@@ -562,7 +607,7 @@ fun planPickupRoute(
     }
     if (hasSf && !hasNormal && SiteIndex.sfExitGates.isEmpty()) {
         return PickupRoute(
-            orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
+            orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
             sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
             lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
             exact = true,
@@ -655,7 +700,7 @@ fun planPickupRoute(
         }
         if (bestLast < 0) {
             return PickupRoute(
-                orderedCodes = emptyList(), stops = emptyList(), legTiles = emptyList(), totalTiles = 0.0,
+                orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
                 sfCheckoutAfter = -1, sfCheckoutCell = sfCell, exitCell = null, exit = exitKind,
                 lockerCodes = lockers, unresolved = (unresolved + spots.map { it.code.raw }).toList(),
                 exact = true,
@@ -774,18 +819,48 @@ fun planPickupRoute(
         totalCells = seqCost(sfSeq, nSeq)
     }
 
-    // ---- 组装结果：停靠序列 + 逐段距离（瓷砖）----
+    // ---- 组装结果：停靠序列 + 逐段几何（含**通道格序列**，供步行提示与图示使用）----
     val stops = mutableListOf<RouteStop>()
-    val legs = mutableListOf<Double>()
+    val legList = mutableListOf<RouteLeg>()
     val orderedCodes = mutableListOf<CompartmentCode>()
     var cursor = -1          // -1 = 入口，-2 = 顺丰出库点，>=0 = 件下标
+
+    /** 顺丰出库点出发的 BFS：出库后继续取件/去出站时回溯格序列用（无向图，距离与反向一致） */
+    val bfsSf = SiteModel.bfs(sfCell.row, sfCell.col)
+
+    fun cellsOf(source: SiteModel.Bfs?, row: Int, col: Int): List<GridCell> =
+        if (source == null) emptyList() else (SiteModel.path(source, row, col) ?: emptyList())
+
+    /** 当前位置的 BFS 源：-1 入口 / -2 顺丰出库点 / >=0 第 cursor 件 */
+    fun sourceBfs(): SiteModel.Bfs? = when {
+        cursor == -1 -> bfs[0]
+        cursor == -2 -> bfsSf
+        else -> bfs[cursor + 1]
+    }
+
+    /** 当前位置若是取件点，则它在货架/柜列里的区内走位（瓷砖） */
+    fun cursorStub(): Double = if (cursor >= 0) spots[cursor].stubTiles else 0.0
+
+    fun cursorLabel(): String = when (cursor) {
+        -1 -> "入口闸机"
+        -2 -> "顺丰出库（顺丰专用闸机）"
+        else -> spots[cursor].code.toString()
+    }
+
     for (node in seq) {
         when {
             node == n -> {
                 val d = if (cursor == -1) minToCells(bfs[0], listOf(sfCell)).toDouble()
-                else bfsDistTo(bfs[cursor + 1], sfCell.row, sfCell.col).toDouble() +
-                    (if (cursor >= 0) stubCells[cursor] else 0.0)
-                legs += d * CELL
+                else bfsDistTo(bfs[cursor + 1], sfCell.row, sfCell.col).toDouble() + stubCells[cursor]
+                legList += RouteLeg(
+                    from = cursorLabel(),
+                    to = "顺丰出库（顺丰专用闸机）",
+                    kind = LegKind.SF_CHECKOUT,
+                    cells = cellsOf(sourceBfs(), sfCell.row, sfCell.col),
+                    tiles = d * CELL,
+                    stubFromTiles = cursorStub(),
+                    stubToTiles = 0.0,
+                )
                 stops += RouteStop.SfCheckout
                 cursor = -2
             }
@@ -795,7 +870,15 @@ fun planPickupRoute(
                     cursor == -2 -> bfsDistTo(bfs[node + 1], sfCell.row, sfCell.col).toDouble() + stubCells[node]
                     else -> pair(cursor, node)
                 }
-                legs += d * CELL
+                legList += RouteLeg(
+                    from = cursorLabel(),
+                    to = spots[node].code.toString(),
+                    kind = if (cursor == -1) LegKind.ENTRANCE else LegKind.PICK,
+                    cells = cellsOf(sourceBfs(), spots[node].row, spots[node].col),
+                    tiles = d * CELL,
+                    stubFromTiles = cursorStub(),
+                    stubToTiles = spots[node].stubTiles,
+                )
                 stops += RouteStop.Pickup(spots[node].code, spots[node])
                 orderedCodes += spots[node].code
                 cursor = node
@@ -805,17 +888,21 @@ fun planPickupRoute(
     // 终点：出站（出库 ≠ 出站）
     val exitCell: GridCell?
     val exitLegTiles: Double
+    val exitCells: List<GridCell>
+    val exitStubFrom = cursorStub()
     if (exitKind == RouteExit.NORMAL_GATE) {
         if (cursor == -2) {
             val pair = bestPair(listOf(sfCell), normalGates)
             exitCell = pair.second
             exitLegTiles = pair.first * CELL
+            exitCells = pair.second?.let { cellsOf(bfsSf, it.row, it.col) } ?: emptyList()
         } else {
             val bfsCur = bfs[cursor + 1]
             val best = normalGates.minByOrNull { bfsDistTo(bfsCur, it.row, it.col) }
             exitCell = best
             exitLegTiles = if (best == null) 0.0
-            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + stubCells[cursor] * CELL
+            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + exitStubFrom
+            exitCells = best?.let { cellsOf(bfsCur, it.row, it.col) } ?: emptyList()
         }
     } else {
         if (cursor != -2) {
@@ -824,15 +911,25 @@ fun planPickupRoute(
             val best = sfExitGates.minByOrNull { bfsDistTo(bfsCur, it.row, it.col) }
             exitCell = best
             exitLegTiles = if (best == null) 0.0
-            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + stubCells[cursor] * CELL
+            else bfsDistTo(bfsCur, best.row, best.col).toDouble() * CELL + exitStubFrom
+            exitCells = best?.let { cellsOf(bfsCur, it.row, it.col) } ?: emptyList()
         } else {
             // bestPair(from, to) 的 second 是 to 里的格 ⇒ 出站点要从 sfExitGates 里挑
             val pair = bestPair(listOf(sfCell), sfExitGates)
             exitCell = pair.second
             exitLegTiles = pair.first * CELL
+            exitCells = pair.second?.let { cellsOf(bfsSf, it.row, it.col) } ?: emptyList()
         }
     }
-    legs += exitLegTiles
+    legList += RouteLeg(
+        from = cursorLabel(),
+        to = exitKind.label,
+        kind = LegKind.EXIT,
+        cells = exitCells,
+        tiles = exitLegTiles,
+        stubFromTiles = exitStubFrom,
+        stubToTiles = 0.0,
+    )
     stops += RouteStop.Exit(exitKind)
 
     val sfAfter = stops.indexOfFirst { it is RouteStop.SfCheckout }
@@ -841,8 +938,8 @@ fun planPickupRoute(
     return PickupRoute(
         orderedCodes = orderedCodes,
         stops = stops,
-        legTiles = legs,
-        totalTiles = legs.sum(),
+        legs = legList,
+        totalTiles = legList.sumOf { it.tiles },
         sfCheckoutAfter = sfAfterPicks,
         sfCheckoutCell = SiteIndex.sfCheckoutCell,
         exitCell = exitCell,

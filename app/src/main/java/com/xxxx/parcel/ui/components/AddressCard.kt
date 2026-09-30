@@ -77,6 +77,8 @@ fun AddressCard(
     hideHeader: Boolean = false,
     /** 「按取件路线排序」时的取件序号（1 起）；null 表示不显示 */
     routeOrder: Int? = null,
+    /** 一行「怎么走」短提示（首页文字提示开关打开时才传；如「向北（往里）3 格 → 向东 5 格」） */
+    guideHint: String? = null,
 ) {
     val isAllCompleted = parcelData.smsDataList.find { !it.isCompleted } == null
     // 默认分类：纯数字取件码 ⇒ 快递柜（自助取件）；含字母 ⇒ 快递站（人工货架，含顺丰 S、大件 Y）
@@ -166,6 +168,17 @@ fun AddressCard(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
+                // 怎么走：跟在序号后面的一行短提示（由取件路线那一套格序列压出来）
+                if (guideHint != null) {
+                    Text(
+                        text = "→ $guideHint",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF1565C0),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                    )
+                }
                 // 隐藏了地址头时就不再需要上面那条空隙，避免叠出一层多余留白
                 Spacer(modifier = Modifier.height(if (hideHeader) 2.dp else 4.dp))
                 Card(

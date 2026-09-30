@@ -2,9 +2,12 @@ package com.xxxx.parcel.ui.components
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,9 +21,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
@@ -37,21 +43,29 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.util.PickupCategory
+import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteOptions
+import com.xxxx.parcel.util.RouteStop
+import com.xxxx.parcel.util.VenueGuide
 import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
+import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveCodeNote
@@ -176,6 +190,10 @@ fun ParcelList(
     routeSortEnabled: Boolean = false,
     /** 上报「当前页列表内容高度（px；列表可滚动时为 null）」，用于底部条码自动让位 */
     onListContentHeightPx: (Int?) -> Unit = {},
+    /** 上报规划出来的取件路线（供首页图示窗格复用，**不重复规划**） */
+    onRouteComputed: (PickupRoute?) -> Unit = {},
+    /** 列表底部留白（首页开启图示浮层时给窗格让位） */
+    listBottomPadding: Dp = 0.dp,
 ) {
     val parcelsData by viewModel.parcelsData.collectAsState()
     val failedMessages by viewModel.failedMessages.collectAsState()
@@ -229,19 +247,46 @@ fun ParcelList(
         orderedParcelsData.filter { it.categoryOf() == PickupCategory.OFF_CAMPUS },
     )
     val categoryCounts = categoryParcels.map { it.size }
+    val routeOptions = remember { getRouteOptions(context) }
     // 「按取件路线排序」：把「快递站」页里能定位的件按最优取件顺序排开（①②③…），
     // 定位不了的（无货格号、货架号越界）保持原顺序排在后面。
-    // 布局参数与「取件路线」页共用同一套。
-    val routeOptions = remember { getRouteOptions(context) }
-    val routeOrder: Map<String, Int> = remember(filteredParcelsData, routeSortEnabled, routeOptions) {
+    // 布局参数与「取件路线」页共用同一套；路线本身也上报给首页（图示窗格复用，避免二次规划）。
+    val guideText = remember { getGuideTextPlacement(context) }
+    val stationRoute = remember(filteredParcelsData, routeSortEnabled, routeOptions) {
         if (!routeSortEnabled) {
-            emptyMap()
+            StationRoute(emptyMap(), null)
         } else {
-            stationRouteOrder(
+            planStationRoute(
                 filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
                 routeOptions,
             )
         }
+    }
+    val routeOrder = stationRoute.order
+    val homeRoute = stationRoute.route
+    LaunchedEffect(homeRoute) { onRouteComputed(homeRoute) }
+
+    // 文字提示（首页开关打开时）：取件序号 → 一行「怎么走」；顺丰出库那一段单独给
+    val pickupHints: Map<Int, String> = remember(homeRoute, guideText) {
+        val out = LinkedHashMap<Int, String>()
+        val r = homeRoute
+        if (r == null || !guideText.onHome) return@remember out
+        var no = 0
+        r.stops.forEachIndexed { i, stop ->
+            if (stop is RouteStop.Pickup) {
+                no += 1
+                val leg = r.legs.getOrNull(i) ?: return@forEachIndexed
+                val text = VenueGuide.summarize(leg, stop.spot)
+                if (text.isNotEmpty()) out[no] = text
+            }
+        }
+        out
+    }
+    val sfCheckoutHint: String? = remember(homeRoute, guideText) {
+        val r = homeRoute
+        if (r == null || !guideText.onHome) return@remember null
+        val i = r.stops.indexOfFirst { it is RouteStop.SfCheckout }
+        if (i < 0) null else r.legs.getOrNull(i)?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
     }
     val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
     val pagerState = rememberPagerState(
@@ -316,13 +361,31 @@ fun ParcelList(
                 categoryParcels[page]
             }
             // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不再重复「自助取件」
-            val entries = pageParcels.map { parcel ->
-                ParcelListEntry(
-                    parcel = parcel,
-                    hideHeader = page == 0,
-                    showLockerTag = page != 1,
-                    routeOrder = routeOrder[parcel.address],
+            val entries = ArrayList<ParcelListItem>(pageParcels.size + 1)
+            pageParcels.forEach { parcel ->
+                val order = routeOrder[parcel.address]
+                entries.add(
+                    ParcelListItem.Card(
+                        ParcelListEntry(
+                            parcel = parcel,
+                            hideHeader = page == 0,
+                            showLockerTag = page != 1,
+                            routeOrder = order,
+                            hint = if (guideText.onHome && order != null) pickupHints[order] else null,
+                        )
+                    )
                 )
+            }
+            // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后
+            if (page == 0 && homeRoute != null && homeRoute.hasSfCheckout) {
+                val after = homeRoute.sfCheckoutAfter
+                val anchor = entries.indexOfLast {
+                    val o = (it as? ParcelListItem.Card)?.entry?.routeOrder
+                    o != null && o <= after
+                }
+                if (anchor >= 0) {
+                    entries.add(anchor + 1, ParcelListItem.SfCheckout(sfCheckoutHint))
+                }
             }
             val pageListState = rememberLazyListState()
             val layoutInfo = pageListState.layoutInfo
@@ -352,32 +415,41 @@ fun ParcelList(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),
+                    contentPadding = PaddingValues(bottom = listBottomPadding),
                     verticalArrangement = Arrangement.Top,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    items(entries, key = { it.key }) { entry ->
-                        val result = entry.parcel
-                        val isExpanded = expandedStates.value[result.address] ?: true
-                        AddressCard(
-                            context = context,
-                            viewModel = viewModel,
-                            navController = navController,
-                            updateAllWidget = updateAllWidget,
-                            showCompleted = showCompleted,
-                            showCodeTime = showCodeTime,
-                            showCompartment = showCompartment,
-                            parcelData = result,
-                            expandedStates = expandedStates,
-                            isExpanded = isExpanded,
-                            preferLockerAddress = preferLockerAddress,
-                            isSeniorMode = isSeniorMode,
-                            isTimeSort = isTimeSort,
-                            codeNotes = codeNotes,
-                            onLongPressCode = { noteTarget = it },
-                            showLockerTag = entry.showLockerTag,
-                            hideHeader = entry.hideHeader,
-                            routeOrder = entry.routeOrder,
-                        )
+                    items(entries, key = { it.key }) { item ->
+                        when (item) {
+                            is ParcelListItem.Card -> {
+                                val entry = item.entry
+                                val result = entry.parcel
+                                val isExpanded = expandedStates.value[result.address] ?: true
+                                AddressCard(
+                                    context = context,
+                                    viewModel = viewModel,
+                                    navController = navController,
+                                    updateAllWidget = updateAllWidget,
+                                    showCompleted = showCompleted,
+                                    showCodeTime = showCodeTime,
+                                    showCompartment = showCompartment,
+                                    parcelData = result,
+                                    expandedStates = expandedStates,
+                                    isExpanded = isExpanded,
+                                    preferLockerAddress = preferLockerAddress,
+                                    isSeniorMode = isSeniorMode,
+                                    isTimeSort = isTimeSort,
+                                    codeNotes = codeNotes,
+                                    onLongPressCode = { noteTarget = it },
+                                    showLockerTag = entry.showLockerTag,
+                                    hideHeader = entry.hideHeader,
+                                    routeOrder = entry.routeOrder,
+                                    guideHint = entry.hint,
+                                )
+                            }
+
+                            is ParcelListItem.SfCheckout -> SfCheckoutListItem(hint = item.hint)
+                        }
                     }
                     if (showUnparsedHint) {
                         item(key = "unparsed_hint") {
@@ -405,27 +477,91 @@ private data class ParcelListEntry(
     val showLockerTag: Boolean,
     /** 「按取件路线排序」时的取件序号（1 起）；null 表示这件不在路线里（无货格号等） */
     val routeOrder: Int? = null,
+    /** 一行「怎么走」短提示（首页开关打开时才有） */
+    val hint: String? = null,
 ) {
     val key: String get() = "card:${parcel.address}"
 }
 
+/** 列表项：地址卡片，或**顺丰出库**这个显式步骤（与 HTML 版停靠序列一致）。 */
+private sealed interface ParcelListItem {
+    val key: String
+
+    data class Card(val entry: ParcelListEntry) : ParcelListItem {
+        override val key: String get() = entry.key
+    }
+
+    data class SfCheckout(val hint: String?) : ParcelListItem {
+        override val key: String get() = "sf_checkout"
+    }
+}
+
+/** 顺丰出库步骤卡（橙色，与「取件路线」页同一套说法）。 */
+@Composable
+private fun SfCheckoutListItem(hint: String?) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE65100)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("SF", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 10.dp),
+            ) {
+                Text(
+                    "顺丰出库（顺丰专用闸机）",
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFFE65100),
+                )
+                Text(
+                    "取了顺丰件必须先在这里出库；这台不能出站",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (hint != null) {
+                    Text("→ $hint", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1565C0))
+                }
+            }
+        }
+    }
+}
+
+/** 首页要用的规划结果：取件序号表（地址 → ①②③）＋ 完整路线（图示窗格复用）。 */
+private data class StationRoute(val order: Map<String, Int>, val route: PickupRoute?)
+
 /**
- * 计算「快递站」列表的取件序号表：地址 → ①②③…
+ * 计算「快递站」列表的取件顺序：地址 → ①②③…
  *
  * 每个地址分组取它第一个未取件的**有效货格号**（`compartmentNumber`，为空时用取件码兜底），
  * 一起交给路径引擎求最优顺序，再把最优顺序映射回地址。定位不了的地址不出现在表里。
  */
-private fun stationRouteOrder(
+private fun planStationRoute(
     parcels: List<ParcelData>,
     options: RouteOptions,
-): Map<String, Int> {
+): StationRoute {
     val pairs = parcels.mapNotNull { parcel ->
         val sms = parcel.smsDataList.firstOrNull { !it.isCompleted }
             ?: parcel.smsDataList.firstOrNull()
         val code = sms?.let { effectiveCompartmentNumber(it.compartmentNumber, it.code) } ?: ""
         if (code.isEmpty()) null else parcel.address to code
     }
-    if (pairs.isEmpty()) return emptyMap()
+    if (pairs.isEmpty()) return StationRoute(emptyMap(), null)
 
     val route = planPickupRoute(pairs.map { it.second }, options)
     val remaining = pairs.toMutableList()
@@ -438,7 +574,7 @@ private fun stationRouteOrder(
             remaining.removeAt(idx)
         }
     }
-    return order
+    return StationRoute(order, route)
 }
 
 /** 该地址分组属于哪一大类（同组取第一条短信的正文判定）。 */

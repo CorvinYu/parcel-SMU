@@ -12,15 +12,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.animation.core.snap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,17 +34,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
 import com.xxxx.parcel.ui.components.BarcodeStrip
 import com.xxxx.parcel.ui.components.HomeTopBar
 import com.xxxx.parcel.ui.components.ParcelList
+import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.ui.components.TimeFilterSheet
 import com.xxxx.parcel.ui.components.timeFilterOptions
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_DP
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_SENIOR_DP
+import com.xxxx.parcel.util.GuideMapPlacement
+import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.getBarcodeBottomHeightDp
+import com.xxxx.parcel.util.getGuideDetail
+import com.xxxx.parcel.util.getGuideMapPlacement
 import com.xxxx.parcel.util.getHorizontalLayout
 import com.xxxx.parcel.util.getPreferLockerAddress
 import com.xxxx.parcel.util.getShowCodeTime
@@ -93,6 +105,14 @@ fun HomeScreen(
     var draggingBottom by remember { mutableStateOf(false) }
     // 条码铺作背景的功能已删除，这里不再需要给顶栏加垫子
     var listContentHeightPx by remember { mutableStateOf<Int?>(null) }
+
+    // 路线图示窗格（首页浮层）：路线由 ParcelList 规划后上报，这里直接用，不重复规划
+    val guideMapPlacement = getGuideMapPlacement(context)
+    val guideDetail = getGuideDetail(context)
+    var homeRoute by remember { mutableStateOf<PickupRoute?>(null) }
+    var homeStop by remember { mutableIntStateOf(0) }
+    var homeFullMap by remember { mutableStateOf(false) }
+    val homeMapEnabled = guideMapPlacement == GuideMapPlacement.HOME_OVERLAY
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -182,6 +202,9 @@ fun HomeScreen(
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
+            // 图示窗格高度：容器高度的 1/3 左右
+            val mapPaneHeight = maxHeight * 0.34f
+            val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
             // 手动可调的上限：最多占容器一半，别把列表挤没
             val maxBarcodeHeight = maxHeight * 0.5f
             val userHeight = bottomHeightDp.dp.coerceIn(minBarcodeHeight, maxBarcodeHeight)
@@ -214,7 +237,13 @@ fun HomeScreen(
                         isSeniorMode = isSeniorMode,
                         isTimeSort = isTimeSort,
                         routeSortEnabled = isRouteSort,
-                        onListContentHeightPx = { listContentHeightPx = it }
+                        onListContentHeightPx = { listContentHeightPx = it },
+                        onRouteComputed = {
+                            homeRoute = it
+                            homeStop = 0
+                        },
+                        // 浮层开启时给列表底部留白，最后一张卡不会被窗格压住
+                        listBottomPadding = if (mapActive) mapPaneHeight else 0.dp,
                     ) else
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -225,6 +254,29 @@ fun HomeScreen(
                                 Text("获取短信权限")
                             }
                         }
+
+                    // 路线图示浮层：贴在列表区底部（在底部条码浮窗**之上**，两者同时开也不叠在一起）
+                    if (mapActive) {
+                        homeRoute?.let { route ->
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(mapPaneHeight),
+                                color = MaterialTheme.colorScheme.surface,
+                                shadowElevation = 10.dp,
+                            ) {
+                                RouteMiniMap(
+                                    route = route,
+                                    currentStop = homeStop,
+                                    detail = guideDetail,
+                                    modifier = Modifier.fillMaxSize(),
+                                    onCurrentStopChange = { homeStop = it },
+                                    onExpand = { homeFullMap = true },
+                                )
+                            }
+                        }
+                    }
                 }
 
                 if (barcodeBottomEnabled) {
@@ -260,6 +312,27 @@ fun HomeScreen(
             },
             onDismiss = { showBottomSheet = false }
         )
+
+        if (homeFullMap) {
+            homeRoute?.let { route ->
+                Dialog(
+                    onDismissRequest = { homeFullMap = false },
+                    properties = DialogProperties(usePlatformDefaultWidth = false),
+                ) {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        RouteMiniMap(
+                            route = route,
+                            currentStop = homeStop,
+                            detail = guideDetail,
+                            modifier = Modifier.fillMaxSize(),
+                            onCurrentStopChange = { homeStop = it },
+                            onExpand = { homeFullMap = false },
+                            expandLabel = "收起",
+                        )
+                    }
+                }
+            }
+        }
     }
 
 }
