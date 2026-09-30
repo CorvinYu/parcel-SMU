@@ -120,14 +120,18 @@ private object TestGates2 {
         return out
     }
 
-    private fun cellsOf(b: IntArray): List<GridCell> = buildList {
+    /** 闸机**门口**的通道格（带外那一格）—— 与生产代码同规则、各自实现。 */
+    private fun mouthsOf(b: IntArray): List<GridCell> = buildList {
         for (r in b[2]..b[3]) for (c in b[0]..b[1]) {
-            if (SiteModel.kindAt(r, c) != SiteModel.NONE) add(GridCell(r, c))
+            if (SiteModel.kindAt(r - 1, c) == SiteModel.WALK) add(GridCell(r - 1, c))
+            if (SiteModel.kindAt(r + 1, c) == SiteModel.WALK) add(GridCell(r + 1, c))
+            if (SiteModel.kindAt(r, c - 1) == SiteModel.WALK) add(GridCell(r, c - 1))
+            if (SiteModel.kindAt(r, c + 1) == SiteModel.WALK) add(GridCell(r, c + 1))
         }
-    }
+    }.distinct()
 
     fun normalGates(): List<GridCell> =
-        labelled().filter { it.first.contains("普通闸机") }.flatMap { cellsOf(it.second) }
+        labelled().filter { it.first.contains("普通闸机") }.flatMap { mouthsOf(it.second) }.distinct()
 
     fun entrance(): GridCell? {
         val src = ArrayList<GridCell>()

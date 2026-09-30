@@ -95,14 +95,21 @@ data class TripView(
 
 /** 由短信列表算出 [TripView]（地图取件页与首页全屏地图共用同一套口径）。 */
 @Composable
-fun rememberTripView(successData: List<SmsData>, options: RouteOptions): TripView {
+fun rememberTripView(
+    successData: List<SmsData>,
+    options: RouteOptions,
+    /** 顺丰是否已出库（用户点过「顺丰出库」卡片）⇒ 路线不再绕出库机 */
+    sfCheckedOut: Boolean = false,
+): TripView {
     val tripCodes = remember(successData) {
         successData
             .map { effectiveCompartmentNumber(it.compartmentNumber, it.code) }
             .filter { it.isNotBlank() }
             .distinct()
     }
-    val route = remember(tripCodes, options) { planPickupRoute(rawCodes = tripCodes, options = options) }
+    val route = remember(tripCodes, options, sfCheckedOut) {
+        planPickupRoute(rawCodes = tripCodes, options = options, sfCheckedOut = sfCheckedOut)
+    }
     val completed = remember(successData) {
         successData
             .filter { it.isCompleted }

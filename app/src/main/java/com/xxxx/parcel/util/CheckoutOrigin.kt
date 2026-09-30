@@ -14,6 +14,7 @@ import java.net.URLEncoder
  */
 private const val PREFS = "parcel_prefs"
 private const val KEY_CHECKOUT = "route_checkout_origin"
+private const val KEY_SF_DONE = "sf_checkout_done_at"
 private const val KEEP = 12
 
 /** 默认时间窗：3 小时内算「同一场次」。 */
@@ -128,6 +129,41 @@ fun lastCheckoutOrigin(
 fun clearCheckoutOrigin(context: Context) {
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_CHECKOUT).apply()
 }
+
+// ---------------------------------------------------------------- 顺丰「已出库」
+
+/**
+ * 标记「顺丰已出库」——用户 2026-10-01：**点一下「顺丰出库」卡片就代表已经出库**。
+ *
+ * 语义：没标记时，路线会**动态**把顺丰出库点安排在「所有 S 件之后」的合法位置里最优的一处，
+ * 并且**保底排在最终出站之前**；点了之后路线就直接取件 → 出站，不再绕出库机。
+ * 存时间戳 ⇒ 与「同一场次」窗口一致（隔夜自动失效）。
+ */
+fun markSfCheckoutDone(context: Context, at: Long = System.currentTimeMillis()) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_SF_DONE, at).apply()
+}
+
+fun clearSfCheckoutDone(context: Context) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_SF_DONE).apply()
+}
+
+/** 纯逻辑：标记时间是否还在窗口内（`markedAt == 0` = 从没标记过）。 */
+fun isSfDoneFresh(
+    markedAt: Long,
+    now: Long,
+    windowMs: Long = CHECKOUT_ORIGIN_WINDOW_MS,
+): Boolean = markedAt > 0 && now - markedAt in 0..windowMs
+
+/** 本次行程是否已标记「顺丰已出库」。 */
+fun isSfCheckoutDone(
+    context: Context,
+    windowMs: Long = CHECKOUT_ORIGIN_WINDOW_MS,
+    now: Long = System.currentTimeMillis(),
+): Boolean = isSfDoneFresh(
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_SF_DONE, 0L),
+    now,
+    windowMs,
+)
 
 // ---------------------------------------------------------------- 存储
 

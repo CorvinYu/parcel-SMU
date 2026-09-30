@@ -75,14 +75,17 @@ import com.xxxx.parcel.util.compactNumbers
 import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.containsSfCheckout
 import com.xxxx.parcel.util.countSfCheckouts
+import com.xxxx.parcel.util.clearSfCheckoutDone
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.isSfCheckoutDone
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.loadStableNumbers
+import com.xxxx.parcel.util.markSfCheckoutDone
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.recentCheckoutEntries
@@ -291,8 +294,15 @@ fun ParcelList(
     // 键用 filteredParcelsData：每次标记/取消已取件它都会变 ⇒ 记录变了就能立刻重算。
     val recentCheckouts = remember(filteredParcelsData) { recentCheckoutEntries(context) }
     val sfTakenThisTrip = remember(recentCheckouts) { containsSfCheckout(recentCheckouts) }
-    // 「顺丰出库」卡片右侧的件数提醒（测试功能、默认关闭）：窗口内取过、待出库的顺丰件数
+    // 「顺丰出库」卡片右侧的件数提醒：窗口内取过、待出库的顺丰件数
     val sfPendingCount = remember(recentCheckouts) { countSfCheckouts(recentCheckouts) }
+    // 顺丰是否**已经出库**（用户 2026-10-01：点卡片即代表已出库）；tick 用于点击后立刻重算
+    var sfDoneTick by remember { mutableIntStateOf(0) }
+    val sfDone = remember(filteredParcelsData, sfDoneTick) { isSfCheckoutDone(context) }
+    val toggleSfDone: () -> Unit = {
+        if (sfDone) clearSfCheckoutDone(context) else markSfCheckoutDone(context)
+        sfDoneTick += 1
+    }
     // 全部取完时路线为空（homeRoute == null），出站口去哪一台要按**本次行程取过什么**推断：
     // 只取过顺丰件 ⇒ 顺丰侧出站口；否则走 7 个普通闸机（出库 + 出站）。
     val exitLabelFallback = if (
@@ -303,11 +313,12 @@ fun ParcelList(
     } else {
         RouteExit.NORMAL_GATE.label
     }
-    val stationRoute = remember(filteredParcelsData, routeOptions, checkoutOrigin) {
+    val stationRoute = remember(filteredParcelsData, routeOptions, checkoutOrigin, sfDone) {
         planStationRoute(
             filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
             routeOptions,
             checkoutOrigin,
+            sfCheckedOut = sfDone,
         )
     }
     val homeRoute = stationRoute.route
@@ -514,32 +525,24 @@ fun ParcelList(
                 )
             }
             // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后。
-            // 🔴 只要**本次行程取过顺丰件**就必须一直显示（用户 2026-10-01 实测：把 S 件的取件码标记为已取后，
-            //    路线里就没有 S 件了 ⇒ hasSfCheckout 变 false ⇒ 这一步凭空消失，可人还没去闸机出库）。
-            //    所以条件是「路线里还有 S 件」**或**「时间窗内取过 S 区的件」。
-            val sfStepVisible = homeRoute?.hasSfCheckout == true || sfTakenThisTrip
+            // 🔴 只要**本次行程取过顺丰件**就必须一直显示（实测：把 S 件标记为已取后路线里就没有 S 件了，
+            //    这一步会凭空消失）。用户点了它 = 已出库 ⇒ 路线不再绕出库机，但卡片保留（可撤销）。
+            fun sfStepItem() = ParcelListItem.Step(
+                kind = StepKind.SF_CHECKOUT,
+                hint = sfCheckoutHint,
+                count = if (showSfCheckoutCount && !sfDone) sfPendingCount else null,
+                done = sfDone,
+            )
+            val sfStepVisible = homeRoute?.hasSfCheckout == true || sfTakenThisTrip || sfDone
             if (page == 0 && routeSortEnabled && sfStepVisible) {
                 val anchor = entries.indexOfLast {
                     (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
                 }
                 if (anchor >= 0) {
-                    entries.add(
-                        anchor + 1,
-                        ParcelListItem.Step(
-                            StepKind.SF_CHECKOUT,
-                            sfCheckoutHint,
-                            count = if (showSfCheckoutCount) sfPendingCount else null,
-                        ),
-                    )
+                    entries.add(anchor + 1, sfStepItem())
                 } else {
                     // S 件已经被取完（或者列表隐藏了已取件）⇒ 找不到锚点，放到普通件之后、出站之前
-                    entries.add(
-                        ParcelListItem.Step(
-                            StepKind.SF_CHECKOUT,
-                            sfCheckoutHint,
-                            count = if (showSfCheckoutCount) sfPendingCount else null,
-                        ),
-                    )
+                    entries.add(sfStepItem())
                 }
             }
             // 出站：路线永远终于出站口（出库 ≠ 出站）；**全部取完后也必须在**
@@ -617,10 +620,9 @@ fun ParcelList(
                             }
 
                             is ParcelListItem.Step -> Column(modifier = Modifier.fillMaxWidth()) {
-                                // 用户 2026-10-01：「怎么走」不要塞在步骤卡里面，而是放在卡的**上方**，
-                                // 与取件卡那一行提示同一套样式（顺丰出库 / 出站都同理）。
+                                // 「怎么走」放在卡的**上方**，与取件卡那一行提示同一套样式
                                 item.hint?.let { StepHintChip(it) }
-                                RouteStepCard(item, onShowBarcode)
+                                RouteStepCard(item, onShowBarcode, toggleSfDone)
                             }
                         }
                     }
@@ -670,8 +672,10 @@ private sealed interface ParcelListItem {
         val hint: String? = null,
         /** 附加标签：出站用路线给出的闸机名 */
         val label: String? = null,
-        /** 顺丰出库：右侧提醒**还有几件要出库**（测试功能，默认关闭 ⇒ 为 null 不显示） */
+        /** 顺丰出库：右侧提醒**还有几件要出库**；已出库时为 null（不再提醒） */
         val count: Int? = null,
+        /** 顺丰出库：**已出库**（用户点过卡片）⇒ 卡片显示「已出库 · 点击撤销」 */
+        val done: Boolean = false,
     ) : ParcelListItem {
         override val key: String get() = "step:${kind.name}"
     }
@@ -705,7 +709,11 @@ private enum class StepKind {
  * 「从当前位置继续」那一种**已删除**（判定经常出错）。
  */
 @Composable
-private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) {
+private fun RouteStepCard(
+    step: ParcelListItem.Step,
+    onShowBarcode: () -> Unit,
+    onToggleSfDone: () -> Unit,
+) {
     val badge: String
     val badgeColor: Color
     val container: Color
@@ -726,15 +734,15 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
         StepKind.SF_CHECKOUT -> "顺丰出库（顺丰专用闸机）"
         StepKind.EXIT -> "出站" + (step.label?.let { "：$it" } ?: "")
     }
-    // 只有「入口」「出站」需要出示条码（顺丰出库那台不刷这个码）
-    val tappable = step.kind == StepKind.ENTRANCE || step.kind == StepKind.EXIT
+    // 入口/出站：点击出示条码；顺丰出库：点击 = 标记已出库（再点撤销）
+    val action: () -> Unit = if (step.kind == StepKind.SF_CHECKOUT) onToggleSfDone else onShowBarcode
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             // 列表项之间的间距由 LazyColumn 的 spacedBy(8dp) 统一给，这里不再自带
             .padding(vertical = 0.dp)
-            .then(if (tappable) Modifier.clickable(onClick = onShowBarcode) else Modifier),
+            .clickable(onClick = action),
         shape = Corners.cardShape,
         colors = CardDefaults.cardColors(containerColor = container),
     ) {
@@ -794,7 +802,7 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
                     }
                 }
 
-                // 2 行版式：标题 + 说明；右侧可挂「N 件待出库」（测试开关，默认关闭）
+                // 2 行版式：标题 + 说明；右侧可挂「N 件待出库」；**点击 = 标记已出库**（再点撤销）
                 StepKind.SF_CHECKOUT -> {
                     Column(
                         modifier = Modifier
@@ -803,24 +811,50 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
                     ) {
                         Text(title, fontWeight = FontWeight.Medium, color = titleColor)
                         Text(
-                            text = "取了顺丰件先在这里出库；这台不能出站",
+                            text = if (step.done) {
+                                "已经出库了；点击可撤销"
+                            } else {
+                                "取了顺丰件先在这里出库；这台不能出站"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        Text(
+                            text = if (step.done) "已出库 ✓" else "点击表示已出库",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = badgeColor,
+                        )
                     }
-                    step.count?.takeIf { it > 0 }?.let { n ->
-                        Box(
-                            modifier = Modifier
-                                .clip(Corners.chipShape)
-                                .background(badgeColor)
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                    if (step.done) {
+                        Surface(
+                            shape = Corners.pillShape,
+                            color = Color(0xFF1B8A2E),
+                            modifier = Modifier.clickable(onClick = onToggleSfDone),
                         ) {
                             Text(
-                                text = "$n 件待出库",
+                                text = "已出库 · 撤销",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
+                        }
+                    } else {
+                        step.count?.takeIf { it > 0 }?.let { n ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(Corners.chipShape)
+                                    .background(badgeColor)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = "$n 件待出库",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
                 }
@@ -878,6 +912,7 @@ private fun planStationRoute(
     parcels: List<ParcelData>,
     options: RouteOptions,
     origin: CheckoutOrigin? = null,
+    sfCheckedOut: Boolean = false,
 ): StationRoute {
     val pending = parcels.mapNotNull { parcel ->
         // 🔴 只把**未取件**的短信交给规划：全取完的地址返回 null
@@ -895,6 +930,7 @@ private fun planStationRoute(
         options = options,
         startCell = origin?.cell,
         startLabel = origin?.label ?: "入口闸机",
+        sfCheckedOut = sfCheckedOut,
     )
     val remaining = pending.toMutableList()
     val orderedAddresses = ArrayList<String>(remaining.size)

@@ -80,6 +80,7 @@ import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.isRouteSortList
 import com.xxxx.parcel.util.isSfCheckoutCountEnabled
+import com.xxxx.parcel.util.isSfCheckoutDone
 import com.xxxx.parcel.util.saveSfCheckoutCountEnabled
 import com.xxxx.parcel.util.isBarcodeBottomPinned
 import com.xxxx.parcel.util.isMapPageEnabled
@@ -162,10 +163,8 @@ fun HomeScreen(
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
     val successData by viewModel.successSmsData.collectAsState()
-    // 首页「全屏地图」用**与地图取件页完全一样**的整段行程视图（取件码卡 + 可点标记 + 横向序列）
+    // 首页「全屏地图」用**与地图取件页完全一样**的整段行程视图（见下面的 Dialog）
     val mapOptions = remember { getRouteOptions(context) }
-    val tripView = rememberTripView(successData, mapOptions)
-    var fsCurrent by remember { mutableStateOf<Int?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -350,12 +349,15 @@ fun HomeScreen(
                         listBottomPadding = if (mapActive) mapHeight + paneGap else 0.dp,
                         // 下拉刷新信号：列表据此重排未取件的①②③
                         refreshSignal = refreshSignal,
-                        // 入口 / 出站卡片：**没设置条码时直接进条码设置页**（用户 2026-10-01 要求；
-                        // 已设置才进全屏出示）。这里在点按那一刻才读预置，避免每帧读盘。
+                        // 入口 / 出站卡片：**没设置条码时直接进条码设置页**（用户 2026-10-01 两次要求）。
+                        // 🔴 判定只看**解码出来的条码内容**：之前把「有原图」也算成已设置，
+                        //    于是清掉内容后点它仍然进全屏页（用户看到的还是「没实现」）。
                         onShowBarcode = {
-                            val ready = getBarcodePayload(context) != null ||
-                                hasBarcodeOriginalImage(context)
-                            if (ready) homeBarcodeFull = true else navController.navigate("barcode")
+                            if (getBarcodePayload(context) != null) {
+                                homeBarcodeFull = true
+                            } else {
+                                navController.navigate("barcode")
+                            }
                         },
                         // 「顺丰出库」卡片右侧的件数提醒
                         showSfCheckoutCount = sfCountEnabled,
@@ -491,6 +493,10 @@ fun HomeScreen(
                     ),
                 ) {
                     Surface(modifier = Modifier.fillMaxSize()) {
+                        // 每次打开都重新读「顺丰已出库」状态（在列表页点过卡片后这里要立刻生效）
+                        val sfDoneTrip = isSfCheckoutDone(context)
+                        val tripView = rememberTripView(successData, mapOptions, sfDoneTrip)
+                        var fsCurrent by remember { mutableStateOf<Int?>(null) }
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()

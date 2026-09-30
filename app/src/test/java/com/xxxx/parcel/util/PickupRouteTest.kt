@@ -239,6 +239,51 @@ class PickupRouteTest {
         println("20 件启发式：共 ${route.totalTiles} 格，${route.stops.size} 站，sfAfter=${route.sfCheckoutAfter}")
     }
 
+    // ------------------------------------------------------------ 顺丰「已出库」 + 不压闸机带
+
+    @Test
+    fun `顺丰已出库时路线不再绕出库机`() {
+        val codes = listOf("S1-1-1", "D8-6")
+        val notYet = planPickupRoute(codes, options)
+        assertTrue("没标记「已出库」时应保留顺丰出库节点", notYet.hasSfCheckout)
+
+        val done = planPickupRoute(codes, options, sfCheckedOut = true)
+        assertFalse("标记已出库后不该再有顺丰出库节点", done.hasSfCheckout)
+        assertTrue("路线仍以出站结尾", done.stops.last() is RouteStop.Exit)
+        assertEquals("停靠点 = 件数 + 出站", codes.size + 1, done.stops.size)
+        assertEquals("逐段和 == 总距离", done.totalTiles, done.legTiles.sum(), 1e-9)
+    }
+
+    @Test
+    fun `只有顺丰件且已出库时终点是顺丰侧出站口`() {
+        val r = planPickupRoute(listOf("S1-1-1"), options, sfCheckedOut = true)
+        assertFalse(r.hasSfCheckout)
+        assertEquals(RouteExit.SF_EXIT, r.exit)
+        assertTrue("停在出站口", r.stops.last() is RouteStop.Exit)
+    }
+
+    /** 回归：闸机带（列 3~5）不可通行 ⇒ 路线**不会压在闸机上**（用户 2026-10-01 两次反馈）。 */
+    @Test
+    fun `路线不进入闸机带`() {
+        val samples = listOf(
+            listOf("S1-1-1"),
+            listOf("D8-6"),
+            listOf("S1-1-1", "D8-6"),
+            listOf("J5-21", "S2-1-5728", "D8-6"),
+        )
+        for (codes in samples) {
+            for (done in listOf(false, true)) {
+                val r = planPickupRoute(codes, options, sfCheckedOut = done)
+                r.legs.forEach { leg ->
+                    assertTrue(
+                        "闸机带（col 3~5）不可通行，路线不该出现这些格：codes=$codes done=$done leg=${leg.kind}",
+                        leg.cells.none { it.col in 3..5 },
+                    )
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ 最优性（与独立暴力枚举比对）
 
     /**
@@ -382,22 +427,30 @@ private object TestGates {
         return out
     }
 
-    private fun cellsOf(b: IntArray): List<GridCell> = buildList {
+    /**
+     * 闸机**门口**的通道格（站在闸机前那一格，在闸机带**外面**）。
+     * 与生产代码 `PickupRoute.gateMouths` **同一规则、各自实现**（闸机带本身不可通行）。
+     */
+    private fun mouthsOf(b: IntArray): List<GridCell> = buildList {
         for (r in b[2]..b[3]) for (c in b[0]..b[1]) {
-            if (SiteModel.kindAt(r, c) != SiteModel.NONE) add(GridCell(r, c))
+            if (SiteModel.kindAt(r - 1, c) == SiteModel.WALK) add(GridCell(r - 1, c))
+            if (SiteModel.kindAt(r + 1, c) == SiteModel.WALK) add(GridCell(r + 1, c))
+            if (SiteModel.kindAt(r, c - 1) == SiteModel.WALK) add(GridCell(r, c - 1))
+            if (SiteModel.kindAt(r, c + 1) == SiteModel.WALK) add(GridCell(r, c + 1))
         }
-    }
+    }.distinct()
 
     fun normalGates(): List<GridCell> =
-        labelled().filter { it.first.contains("普通闸机") }.flatMap { cellsOf(it.second) }
+        labelled().filter { it.first.contains("普通闸机") }.flatMap { mouthsOf(it.second) }.distinct()
 
     fun sfExitGates(): List<GridCell> = labelled()
         .filter { it.first.contains("顺丰") && it.first.contains("出口") }
-        .flatMap { cellsOf(it.second) }
+        .flatMap { mouthsOf(it.second) }
+        .distinct()
 
     fun sfCheckoutCell(): GridCell? {
         val sf = labelled().filter { it.first.contains("顺丰") && it.first.contains("专用") }
-        val cells = sf.flatMap { cellsOf(it.second) }
+        val cells = sf.flatMap { mouthsOf(it.second) }.distinct()
         if (cells.isEmpty()) return null
         val cr = (sf.minOf { it.second[2] } + sf.maxOf { it.second[3] } + 1) / 2.0
         val cc = (sf.minOf { it.second[0] } + sf.maxOf { it.second[1] } + 1) / 2.0

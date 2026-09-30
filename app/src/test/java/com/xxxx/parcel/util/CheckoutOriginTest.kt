@@ -76,4 +76,18 @@ class CheckoutOriginTest {
     fun `同一条记录重复出现只算一件`() {
         assertEquals(1, countSfCheckouts(listOf("S3-2-2628" to 2L, "S3-2-2628" to 1L)))
     }
+
+    // ───────── 顺丰「已出库」（点卡片标记） ─────────
+
+    @Test
+    fun `顺丰已出库标记只在时间窗内有效`() {
+        val now = 10_000_000L
+        assertTrue("刚标记 ⇒ 有效", isSfDoneFresh(now - 1000L, now, windowMs = 3_600_000L))
+        assertFalse("从没标记过（0）⇒ 无效", isSfDoneFresh(0L, now, windowMs = 3_600_000L))
+        assertFalse(
+            "超出窗口（隔夜）⇒ 自动失效，第二天仍要走顺丰出库",
+            isSfDoneFresh(now - 3_600_001L, now, windowMs = 3_600_000L),
+        )
+        assertFalse("时间戳在未来（设备改时间）⇒ 无效", isSfDoneFresh(now + 1000L, now, windowMs = 3_600_000L))
+    }
 }

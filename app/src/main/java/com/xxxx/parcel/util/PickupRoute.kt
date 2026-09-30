@@ -412,35 +412,30 @@ private object SiteIndex {
 
     fun rectForLabel(label: String): Rect? = byLabel[label.uppercase()]
 
-    /** 闸机带里的所有格（可通行，只用于出行）。 */
-    private val gateCells: List<GridCell> by lazy {
-        buildList {
-            var i = 0
-            while (i < SiteData.gateSpans.size) {
-                val c0 = SiteData.gateSpans[i]
-                val c1 = SiteData.gateSpans[i + 1]
-                val r0 = SiteData.gateSpans[i + 2]
-                val r1 = SiteData.gateSpans[i + 3]
-                for (r in r0..r1) for (c in c0..c1) {
-                    if (SiteModel.kindAt(r, c) != SiteModel.NONE) add(GridCell(r, c))
-                }
-                i += 4
+    /**
+     * 闸机**门口**的通道格（＝站在闸机前的那一格，**在闸机带外面**）。
+     *
+     * 🔴 用户 2026-10-01 两次反馈「地图上道路和闸机重叠」：停靠点原本取闸机带**内部**的格子
+     *    （带中心），画出来就是路线压在闸机带上。改成用带外紧邻的通道格当停靠点 ⇒
+     *    路线只走到门口为止，不再进入闸机带。
+     */
+    private fun gateMouths(rectsIn: List<Rect>): List<GridCell> {
+        val out = LinkedHashSet<GridCell>()
+        for (rect in rectsIn) {
+            for (r in rect.r0..rect.r1) for (c in rect.c0..rect.c1) {
+                if (SiteModel.kindAt(r - 1, c) == SiteModel.WALK) out += GridCell(r - 1, c)
+                if (SiteModel.kindAt(r + 1, c) == SiteModel.WALK) out += GridCell(r + 1, c)
+                if (SiteModel.kindAt(r, c - 1) == SiteModel.WALK) out += GridCell(r, c - 1)
+                if (SiteModel.kindAt(r, c + 1) == SiteModel.WALK) out += GridCell(r, c + 1)
             }
         }
-    }
-
-    private fun gateCellsOf(predicate: (String) -> Boolean): List<GridCell> {
-        val spans = rects.filter { it.label.isNotEmpty() && predicate(it.label) }
-        if (spans.isEmpty()) return emptyList()
-        val c0 = spans.minOf { it.c0 }
-        val c1 = spans.maxOf { it.c1 }
-        val r0 = spans.minOf { it.r0 }
-        val r1 = spans.maxOf { it.r1 }
-        return gateCells.filter { it.col in c0..c1 && it.row in r0..r1 }
+        return out.toList()
     }
 
     /** `7个普通闸机`：普通件出库 + 出站（多格 ⇒ 作为集合就近用） */
-    val normalGates: List<GridCell> by lazy { gateCellsOf { "普通闸机" in it } }
+    val normalGates: List<GridCell> by lazy {
+        gateMouths(rects.filter { it.label.isNotEmpty() && "普通闸机" in it.label })
+    }
 
     /** 顺丰两处：含「专用」的是**出库机**，另一处（`顺丰和无快递出口`）是**出站口**。 */
     private val sfGateRects: List<Rect> by lazy {
@@ -450,26 +445,21 @@ private object SiteIndex {
     private val sfCheckoutRects: List<Rect> by lazy { sfGateRects.filter { "专用" in it.label } }
     private val sfExitRects: List<Rect> by lazy { sfGateRects.filter { "专用" !in it.label } }
 
-    private fun centerCellOf(rectsIn: List<Rect>): GridCell? {
-        val cells = rectsIn.flatMap { it.cells }.filter { SiteModel.kindAt(it.row, it.col) != SiteModel.NONE }
-        if (cells.isEmpty()) return null
-        val cr = (rectsIn.minOf { it.r0 } + rectsIn.maxOf { it.r1 } + 1) / 2.0
-        val cc = (rectsIn.minOf { it.c0 } + rectsIn.maxOf { it.c1 } + 1) / 2.0
-        return cells.minByOrNull {
+    /** 顺丰**出库**节点：必须是单一格（中间停靠点）⇒ 取带外门口里**离带中心最近**的那一格。 */
+    val sfCheckoutCell: GridCell? by lazy {
+        val mouths = gateMouths(sfCheckoutRects)
+        if (mouths.isEmpty() || sfCheckoutRects.isEmpty()) return@lazy null
+        val cr = (sfCheckoutRects.minOf { it.r0 } + sfCheckoutRects.maxOf { it.r1 } + 1) / 2.0
+        val cc = (sfCheckoutRects.minOf { it.c0 } + sfCheckoutRects.maxOf { it.c1 } + 1) / 2.0
+        mouths.minByOrNull {
             val dr = it.row - cr
             val dc = it.col - cc
             dr * dr + dc * dc
         }
     }
 
-    /** 顺丰**出库**节点：必须是单一格（中间停靠点），取出库闸机带的中心格。 */
-    val sfCheckoutCell: GridCell? by lazy { centerCellOf(sfCheckoutRects) }
-
-    val sfExitGates: List<GridCell> by lazy {
-        // 🔴 只保留**真正可通行**的格：闸机带现在只在紧挨通道的那一格可走（门口），
-        //    不带过滤的话会选到带内部走不到的格 ⇒ 末段路径为空。
-        sfExitRects.flatMap { it.cells }.filter { SiteModel.kindAt(it.row, it.col) != SiteModel.NONE }
-    }
+    /** 顺丰出站口：带外门口那些格（就近选一个） */
+    val sfExitGates: List<GridCell> by lazy { gateMouths(sfExitRects) }
 
     /**
      * 入口：Excel 里用户单独用另一颜色填的入口闸机（`W59:AB59`，**不是合并区**）
@@ -633,6 +623,13 @@ fun planPickupRoute(
     options: RouteOptions = RouteOptions.DEFAULT,
     startCell: GridCell? = null,
     startLabel: String = "入口闸机",
+    /**
+     * 顺丰是否**已经出库**（用户 2026-10-01：在「顺丰出库」卡片上点一下就代表已出库）。
+     * true ⇒ 路线**不再插入顺丰出库节点**（直接取件 → 出站）；
+     * false ⇒ 保留出库节点，由 Held–Karp 在「所有 S 件之后」的合法位置里挑最优的一个，
+     * 并且**一定排在最终出站之前**（保底）。
+     */
+    sfCheckedOut: Boolean = false,
 ): PickupRoute {
     val unresolved = mutableListOf<String>()
     val lockers = mutableListOf<String>()
@@ -671,8 +668,10 @@ fun planPickupRoute(
     val n = spots.size
     val sfIndexes = spots.indices.filter { spots[it].zone == PickupZone.SF }
     val hasSf = sfIndexes.isNotEmpty()
+    /** 是否**还需要**去顺丰专用闸机出库：有 S 件 且 用户还没点「已出库」 */
+    val needsSfCheckout = hasSf && !sfCheckedOut
     val hasNormal = spots.any { it.zone != PickupZone.SF }
-    if (hasSf && SiteIndex.sfCheckoutCell == null) {
+    if (needsSfCheckout && SiteIndex.sfCheckoutCell == null) {
         return PickupRoute(
             orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
             sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
@@ -680,7 +679,7 @@ fun planPickupRoute(
             exact = true,
         )
     }
-    if (hasSf && !hasNormal && SiteIndex.sfExitGates.isEmpty()) {
+    if (needsSfCheckout && !hasNormal && SiteIndex.sfExitGates.isEmpty()) {
         return PickupRoute(
             orderedCodes = emptyList(), stops = emptyList(), legs = emptyList(), totalTiles = 0.0,
             sfCheckoutAfter = -1, sfCheckoutCell = null, exitCell = null, exit = RouteExit.NORMAL_GATE,
@@ -700,12 +699,25 @@ fun planPickupRoute(
         stubCells[i] + bfsDistTo(bfs[i + 1], spots[j].row, spots[j].col) + stubCells[j]
 
     val normalGates = SiteIndex.normalGates
-    val sfCell = SiteIndex.sfCheckoutCell!!
+    // 已出库时用不到顺丰出库点 ⇒ 允许为空（不再 `!!`）
+    val sfCell = SiteIndex.sfCheckoutCell
     val sfExitGates = SiteIndex.sfExitGates
     val toNormal = DoubleArray(n) { minToCells(bfs[it + 1], normalGates).toDouble() + stubCells[it] }
-    val toSf = DoubleArray(n) { minToCells(bfs[it + 1], listOf(sfCell)).toDouble() + stubCells[it] }
-    val sfToNormal = minBetweenCells(listOf(sfCell), normalGates).toDouble()
-    val sfToExit = if (hasSf) minBetweenCells(listOf(sfCell), sfExitGates).toDouble() else Double.MAX_VALUE
+    val toSf = DoubleArray(n) {
+        if (sfCell == null) Double.MAX_VALUE
+        else minToCells(bfs[it + 1], listOf(sfCell)).toDouble() + stubCells[it]
+    }
+    val toSfExit = DoubleArray(n) { minToCells(bfs[it + 1], sfExitGates).toDouble() + stubCells[it] }
+    val sfToNormal = if (sfCell == null) Double.MAX_VALUE
+    else minBetweenCells(listOf(sfCell), normalGates).toDouble()
+    val sfToExit = if (needsSfCheckout && sfCell != null) {
+        minBetweenCells(listOf(sfCell), sfExitGates).toDouble()
+    } else {
+        Double.MAX_VALUE
+    }
+
+    /** 需要出库时前面已校验非空；DP 与装配里用到它的分支都只在「需要出库」时才走到。 */
+    fun sfPoint(): GridCell = sfCell ?: error("需要顺丰出库时出库点不应为空")
 
     val exitKind = if (hasNormal) RouteExit.NORMAL_GATE else RouteExit.SF_EXIT
 
@@ -726,7 +738,7 @@ fun planPickupRoute(
                     if (last == n) {
                         for (x in 0 until n) {
                             if (mask and (1 shl x) != 0) continue
-                            val v = cur + bfsDistTo(bfs[x + 1], sfCell.row, sfCell.col) + stubCells[x]
+                            val v = cur + bfsDistTo(bfs[x + 1], sfPoint().row, sfPoint().col) + stubCells[x]
                             val t = id(mask or (1 shl x), x, 1)
                             if (v < dp[t]) {
                                 dp[t] = v; par[t] = last
@@ -742,7 +754,7 @@ fun planPickupRoute(
                             }
                         }
                         val allSfTaken = sfIndexes.all { mask and (1 shl it) != 0 }
-                        if (hasSf && sfDone == 0 && allSfTaken) {
+                        if (needsSfCheckout && sfDone == 0 && allSfTaken) {
                             val v = cur + toSf[last]
                             val t = id(mask, n, 1)
                             if (v < dp[t]) {
@@ -760,13 +772,15 @@ fun planPickupRoute(
             for (sfDone in 0..1) {
                 val v = dp[id(full - 1, last, sfDone)]
                 if (v == Double.MAX_VALUE) continue
-                if (hasSf && sfDone == 0) continue           // 拿了 S 却没出库 ⇒ 非法
+                if (needsSfCheckout && sfDone == 0) continue   // 拿了 S 却没出库 ⇒ 非法
                 val endCost = when {
                     hasNormal -> if (last == n) sfToNormal else toNormal[last]
-                    else -> {
+                    needsSfCheckout -> {
                         if (last != n) continue              // 只有顺丰件 ⇒ 终点只能在出库之后
                         sfToExit
                     }
+                    // 已出库 + 只有顺丰件 ⇒ 直接去顺丰侧出站口
+                    else -> toSfExit[last]
                 }
                 if (v + endCost < best) {
                     best = v + endCost; bestLast = last; bestSf = sfDone
@@ -794,9 +808,13 @@ fun planPickupRoute(
         seq = rev.asReversed()
         totalCells = best
     } else {
-        // 启发式：S 件块 → 顺丰出库 → 普通件块，块内最近邻 + 2-opt（如实标 exact=false）
-        val sfList = sfIndexes.toMutableList()
-        val normalList = spots.indices.filter { spots[it].zone != PickupZone.SF }.toMutableList()
+        // 启发式：**需要出库时** S 件块 → 顺丰出库 → 普通件块；已出库时所有件合成一块走 2-opt
+        val sfList = if (needsSfCheckout) sfIndexes.toMutableList() else mutableListOf()
+        val normalList = if (needsSfCheckout) {
+            spots.indices.filter { spots[it].zone != PickupZone.SF }.toMutableList()
+        } else {
+            spots.indices.toMutableList()
+        }
 
         fun nn(list: MutableList<Int>, fromEntranceStart: Boolean): MutableList<Int> {
             val left = list.toMutableList()
@@ -810,7 +828,7 @@ fun planPickupRoute(
                     val cand = when {
                         cu >= 0 -> pair(cu, x)
                         fromEntranceStart -> fromEntrance[x]
-                        else -> bfsDistTo(bfs[x + 1], sfCell.row, sfCell.col) + stubCells[x]
+                        else -> bfsDistTo(bfs[x + 1], sfPoint().row, sfPoint().col) + stubCells[x]
                     }
                     if (cand < bv) {
                         bv = cand; bi = k
@@ -830,10 +848,10 @@ fun planPickupRoute(
                 t += if (cu < 0) fromEntrance[x] else pair(cu, x)
                 cu = x
             }
-            if (hasSf) {
+            if (needsSfCheckout) {
                 t += toSf[cu]
                 if (nSeq.isNotEmpty()) {
-                    t += bfsDistTo(bfs[nSeq[0] + 1], sfCell.row, sfCell.col) + stubCells[nSeq[0]]
+                    t += bfsDistTo(bfs[nSeq[0] + 1], sfPoint().row, sfPoint().col) + stubCells[nSeq[0]]
                     var cu2 = -1
                     for (x in nSeq) {
                         if (cu2 >= 0) t += pair(cu2, x)
@@ -849,7 +867,7 @@ fun planPickupRoute(
                     t += if (cu3 < 0) fromEntrance[x] else pair(cu3, x)
                     cu3 = x
                 }
-                t += toNormal[cu3]
+                t += if (hasNormal) toNormal[cu3] else toSfExit[cu3]
             }
             return t
         }
@@ -875,7 +893,7 @@ fun planPickupRoute(
         // 普通件块用两个种子各跑一遍 2-opt，取更优者：
         //   ① 最近邻（对小规模、聚簇场景好）
         //   ② **走廊扫描**（按投影行从入口一侧往里、同一走廊内按横向走 —— 大件数时更像人走法）
-        val seedA = nn(normalList, !hasSf)
+        val seedA = nn(normalList, !needsSfCheckout)
         twoOpt(seedA, sfSeq, normalList, false)
 
         val seedB = normalList.sortedWith(
@@ -888,7 +906,7 @@ fun planPickupRoute(
         twoOpt(sfSeq, sfSeq, nSeq, true)
         val built = ArrayList<Int>(n)
         built.addAll(sfSeq)
-        if (hasSf) built.add(n)
+        if (needsSfCheckout) built.add(n)
         built.addAll(nSeq)
         seq = built
         totalCells = seqCost(sfSeq, nSeq)
@@ -900,8 +918,11 @@ fun planPickupRoute(
     val orderedCodes = mutableListOf<CompartmentCode>()
     var cursor = -1          // -1 = 入口，-2 = 顺丰出库点，>=0 = 件下标
 
-    /** 顺丰出库点出发的 BFS：出库后继续取件/去出站时回溯格序列用（无向图，距离与反向一致） */
-    val bfsSf = SiteModel.bfs(sfCell.row, sfCell.col)
+    /**
+     * 顺丰出库点出发的 BFS：出库后继续取件/去出站时回溯格序列用（无向图，距离与反向一致）。
+     * **已出库时不存在这个点** ⇒ 为 null（`sourceBfs()` 只在 cursor == -2 时才用它）。
+     */
+    val bfsSf = sfCell?.let { SiteModel.bfs(it.row, it.col) }
 
     fun cellsOf(source: SiteModel.Bfs?, row: Int, col: Int): List<GridCell> =
         if (source == null) emptyList() else (SiteModel.path(source, row, col) ?: emptyList())
@@ -925,13 +946,13 @@ fun planPickupRoute(
     for (node in seq) {
         when {
             node == n -> {
-                val d = if (cursor == -1) minToCells(bfs[0], listOf(sfCell)).toDouble()
-                else bfsDistTo(bfs[cursor + 1], sfCell.row, sfCell.col).toDouble() + stubCells[cursor]
+                val d = if (cursor == -1) minToCells(bfs[0], listOf(sfPoint())).toDouble()
+                else bfsDistTo(bfs[cursor + 1], sfPoint().row, sfPoint().col).toDouble() + stubCells[cursor]
                 legList += RouteLeg(
                     from = cursorLabel(),
                     to = "顺丰出库（顺丰专用闸机）",
                     kind = LegKind.SF_CHECKOUT,
-                    cells = cellsOf(sourceBfs(), sfCell.row, sfCell.col),
+                    cells = cellsOf(sourceBfs(), sfPoint().row, sfPoint().col),
                     tiles = d * CELL,
                     stubFromTiles = cursorStub(),
                     stubToTiles = 0.0,
@@ -942,7 +963,7 @@ fun planPickupRoute(
             else -> {
                 val d = when {
                     cursor == -1 -> fromEntrance[node]
-                    cursor == -2 -> bfsDistTo(bfs[node + 1], sfCell.row, sfCell.col).toDouble() + stubCells[node]
+                    cursor == -2 -> bfsDistTo(bfs[node + 1], sfPoint().row, sfPoint().col).toDouble() + stubCells[node]
                     else -> pair(cursor, node)
                 }
                 legList += RouteLeg(
@@ -967,7 +988,7 @@ fun planPickupRoute(
     val exitStubFrom = cursorStub()
     if (exitKind == RouteExit.NORMAL_GATE) {
         if (cursor == -2) {
-            val pair = bestPair(listOf(sfCell), normalGates)
+            val pair = bestPair(listOfNotNull(sfCell), normalGates)
             exitCell = pair.second
             exitLegTiles = pair.first * CELL
             exitCells = pair.second?.let { cellsOf(bfsSf, it.row, it.col) } ?: emptyList()
@@ -990,7 +1011,7 @@ fun planPickupRoute(
             exitCells = best?.let { cellsOf(bfsCur, it.row, it.col) } ?: emptyList()
         } else {
             // bestPair(from, to) 的 second 是 to 里的格 ⇒ 出站点要从 sfExitGates 里挑
-            val pair = bestPair(listOf(sfCell), sfExitGates)
+            val pair = bestPair(listOfNotNull(sfCell), sfExitGates)
             exitCell = pair.second
             exitLegTiles = pair.first * CELL
             exitCells = pair.second?.let { cellsOf(bfsSf, it.row, it.col) } ?: emptyList()

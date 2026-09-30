@@ -39,6 +39,7 @@ import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getMapBarcodeHeightDp
 import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
+import com.xxxx.parcel.util.isSfCheckoutDone
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.saveMapBarcodeHeightDp
 import com.xxxx.parcel.viewmodel.ParcelViewModel
@@ -69,7 +70,9 @@ fun MapPageScreen(
 ) {
     val successData by viewModel.successSmsData.collectAsState()
     val options = remember { getRouteOptions(context) }
-    val trip = rememberTripView(successData, options)
+    // 顺丰是否已出库（用户点过首页「顺丰出库」卡片）⇒ 整段行程里不再有出库节点
+    val sfDone = remember(successData) { isSfCheckoutDone(context) }
+    val trip = rememberTripView(successData, options, sfDone)
     val detail = getGuideDetail(context)
     val mapView = getGuideMapView(context)
     // 当前件在序列里的位置（null = 还没选过 ⇒ 第一件未取的）；允许停在已取的那一件上翻看
