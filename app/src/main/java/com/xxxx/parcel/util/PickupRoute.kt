@@ -354,6 +354,14 @@ fun groupRouteStops(route: PickupRoute): List<StopGroup> {
 private fun shelfKey(code: CompartmentCode): String =
     "${code.rowLetter.uppercaseChar()}${code.shelfNumber}"
 
+/**
+ * 场地**入口闸机**投影到的通道格。
+ *
+ * 地图上的「入口」标志必须固定画在这里 —— 用户 2026-10-01：起点改成「刚取完的那一点」之后，
+ * 入口标志跟着起点跑了（看起来像入口被搬走），那是错的。
+ */
+fun siteEntranceCell(): GridCell? = SiteIndex.entranceCell
+
 // ============================================================================
 // 场地索引（合并区 / 闸机带）
 // ============================================================================

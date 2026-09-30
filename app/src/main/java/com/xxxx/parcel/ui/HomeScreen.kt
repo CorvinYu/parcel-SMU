@@ -58,6 +58,7 @@ import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapHeightDp
 import com.xxxx.parcel.util.getGuideMapPlacement
 import com.xxxx.parcel.util.saveGuideMapHeightDp
+import com.xxxx.parcel.util.saveMapPageEnabled
 import com.xxxx.parcel.util.getHorizontalLayout
 import com.xxxx.parcel.util.getPreferLockerAddress
 import com.xxxx.parcel.util.getShowCodeTime
@@ -65,10 +66,12 @@ import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.isRouteSortList
+import com.xxxx.parcel.util.isBarcodeBottomPinned
 import com.xxxx.parcel.util.isMapPageEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomHeightDp
+import com.xxxx.parcel.util.saveBarcodeBottomPinned
 import com.xxxx.parcel.util.saveHorizontalLayout
 import com.xxxx.parcel.util.saveIndex
 import com.xxxx.parcel.util.savePreferLockerAddress
@@ -110,6 +113,8 @@ fun HomeScreen(
         )
     }
     var draggingBottom by remember { mutableStateOf(false) }
+    // 底部条码窗格是否已被用户钉住高度（钉住后不再自动伸缩，避免与地图窗格互相挤）
+    var barcodePinned by remember { mutableStateOf(isBarcodeBottomPinned(context)) }
     // 条码铺作背景的功能已删除，这里不再需要给顶栏加垫子
     var listContentHeightPx by remember { mutableStateOf<Int?>(null) }
 
@@ -121,6 +126,8 @@ fun HomeScreen(
     var homeCompletedMarkers by remember { mutableStateOf<List<CompletedMarker>>(emptyList()) }
     var homeStop by remember { mutableIntStateOf(0) }
     var homeBarcodeFull by remember { mutableStateOf(false) }
+    // 「地图取件模式」：菜单里可直接开关（用户 2026-10-01）
+    var mapPageEnabled by remember { mutableStateOf(isMapPageEnabled(context)) }
     // 地图窗格高度（0 = 用默认比例；用户上下拖动后持久化，用户 2026-10-01）
     var mapHeightDp by remember { mutableIntStateOf(getGuideMapHeightDp(context)) }
     var homeFullMap by remember { mutableStateOf(false) }
@@ -192,8 +199,13 @@ fun HomeScreen(
                     showCompartment = new
                 },
                 onSeniorModeChanged = onSeniorModeChanged,
-                mapPageEnabled = isMapPageEnabled(context),
+                mapPageEnabled = mapPageEnabled,
                 onOpenMapPage = { navController.navigate("map_page") },
+                onToggleMapPage = {
+                    val next = !mapPageEnabled
+                    saveMapPageEnabled(context, next)
+                    mapPageEnabled = next
+                },
             )
                 if (barcodeStripEnabled) {
                     BarcodeStrip(
@@ -226,12 +238,15 @@ fun HomeScreen(
             // 手动可调的上限：最多占容器一半，别把列表挤没
             val maxBarcodeHeight = maxHeight * 0.5f
             val userHeight = bottomHeightDp.dp.coerceIn(minBarcodeHeight, maxBarcodeHeight)
-            // 空 8dp 余量，避免「浮窗变高 → 列表视口变矮 → 列表变成可滚动 → 浮窗又缩回」的来回震荡
-            val availableBlank = contentHeightDp?.let { (maxHeight - it - 8.dp).coerceAtLeast(0.dp) }
-            val targetBottomHeight = if (availableBlank == null) {
-                minBarcodeHeight
-            } else {
-                availableBlank.coerceIn(minBarcodeHeight, userHeight)
+            // 🔴 两个窗格的抖动：条码高度是按「列表剩下的空白」算的，而列表空白又被条码高度影响 ⇒ 会来回抖。
+            //    对策（用户 2026-10-01）：① 把地图窗格占的高度从「可用空白」里扣掉；
+            //    ② 用户一旦手动拖过条码高度，就**钉住**（不再自动伸缩）。
+            val reservedByMap = if (mapActive) mapHeight else 0.dp
+            val availableBlank = contentHeightDp?.let { (maxHeight - reservedByMap - it - 8.dp).coerceAtLeast(0.dp) }
+            val targetBottomHeight = when {
+                barcodePinned -> userHeight
+                availableBlank == null -> minBarcodeHeight
+                else -> availableBlank.coerceIn(minBarcodeHeight, userHeight)
             }
             // 拖动过程中用 snap，避免动画拖后腿
             val animatedBottomHeight by animateDpAsState(
@@ -339,6 +354,9 @@ fun HomeScreen(
                         onDragEnd = {
                             draggingBottom = false
                             saveBarcodeBottomHeightDp(context, bottomHeightDp)
+                            // 用户手动定过高度 ⇒ 钉住，别再自动伸缩（否则会和地图窗格来回抖）
+                            saveBarcodeBottomPinned(context, true)
+                            barcodePinned = true
                         },
                         onOpenSettings = { navController.navigate("barcode") },
                         // 点一下 = 全屏出示条码（用户 2026-10-01：恢复此功能）；长按才进设置

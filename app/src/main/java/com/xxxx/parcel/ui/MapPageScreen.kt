@@ -1,6 +1,8 @@
 package com.xxxx.parcel.ui
 
 import android.content.Context
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +28,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +49,7 @@ import com.xxxx.parcel.util.GuideDetail
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getBarcodePayload
@@ -99,9 +104,19 @@ fun MapPageScreen(
     val detail = getGuideDetail(context)
     val mapView = getGuideMapView(context)
     val byCode = remember(pending) { pending.associateBy { it.code } }
-    var currentStop by remember(route) { mutableIntStateOf(0) }
+    // 🔴 不要用 route 作 key：点「已取件」后路线会少一件，若重置为 0 就会跳回第一站；
+    //    保持下标不变 ⇒ 被取走的那一组消失后，同一下标正好落在**下一站**（用户 2026-10-01 要的自动跳下一格）
+    var currentStop by remember { mutableIntStateOf(0) }
     var barcodeFull by remember { mutableStateOf(false) }
     val hasBarcode = remember { getBarcodePayload(context) != null || hasBarcodeOriginalImage(context) }
+
+    // 点顶部取件码 = 把这一组（同货架的全部码）标记为已取件
+    val markCompleted: (List<String>) -> Unit = { codes ->
+        val targets = successData.filter { !it.isCompleted && it.code in codes }
+        if (targets.isNotEmpty()) {
+            addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -130,6 +145,7 @@ fun MapPageScreen(
                 detail = detail,
                 addressOf = { code -> byCode[code]?.address.orEmpty() },
                 onStep = { currentStop = it },
+                onMarkCompleted = markCompleted,
             )
 
             // ── 中间：地图
@@ -206,6 +222,7 @@ private fun CurrentStopCard(
     detail: GuideDetail,
     addressOf: (String) -> String,
     onStep: (Int) -> Unit,
+    onMarkCompleted: (List<String>) -> Unit,
 ) {
     val stops = route.stops
     val idx = if (stops.isEmpty()) 0 else currentStop.coerceIn(0, stops.size - 1)
@@ -215,6 +232,7 @@ private fun CurrentStopCard(
     val first = groupIndexes.first()
     val last = groupIndexes.last()
     val leg = route.legs.getOrNull(idx)
+    val groupCodes = groupIndexes.mapNotNull { i -> (stops.getOrNull(i) as? RouteStop.Pickup)?.code?.toString() }
     val title = groupIndexes.mapNotNull { i ->
         when (val s = stops.getOrNull(i)) {
             is RouteStop.Pickup -> s.code.toString()
@@ -225,10 +243,27 @@ private fun CurrentStopCard(
     }.joinToString(" · ").ifBlank { "—" }
     val position = if (groupIndexes.size > 1) "当前 ${first + 1}-${last + 1}/${stops.size}" else "当前 ${idx + 1}/${stops.size}"
 
+    // 左右滑 = 上一站 / 下一站（用户 2026-10-01）；点一下 = 已取件
+    var dragX by remember(idx) { mutableFloatStateOf(0f) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 10.dp, end = 10.dp, top = 4.dp),
+            .padding(start = 10.dp, end = 10.dp, top = 4.dp)
+            .pointerInput(idx) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        when {
+                            dragX <= -60f -> onStep(idx + 1)
+                            dragX >= 60f -> onStep(idx - 1)
+                        }
+                        dragX = 0f
+                    },
+                    onDragCancel = { dragX = 0f },
+                    onHorizontalDrag = { _, delta -> dragX += delta },
+                )
+            }
+            .clickable(enabled = groupCodes.isNotEmpty()) { onMarkCompleted(groupCodes) },
         shape = RoundedCornerShape(18.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
@@ -276,6 +311,12 @@ private fun CurrentStopCard(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
+            Text(
+                if (groupCodes.isNotEmpty()) "点一下＝已取件 · 左右滑＝换站" else "左右滑＝换站",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }

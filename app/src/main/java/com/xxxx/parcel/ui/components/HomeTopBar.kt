@@ -72,6 +72,8 @@ fun HomeTopBar(
     /** 是否显示「地图取件」入口（由「提示与地图（试用）」里的开关控制） */
     mapPageEnabled: Boolean = false,
     onOpenMapPage: () -> Unit = {},
+    /** 「地图取件模式」：开启后启动 App 直接进地图页（用户 2026-10-01） */
+    onToggleMapPage: () -> Unit = {},
 ) {
     TopAppBar(
         title = { },
@@ -147,6 +149,18 @@ fun HomeTopBar(
 
                     // 「海大版功能」放在菜单最前面（用户要求），「按取件路线排序」是它的第一条
                     SheetSectionTitle("海大版功能")
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (mapPageEnabled) "关闭地图取件模式（启动即开地图页）" else "地图取件模式（启动即开地图页）",
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleMapPage()
+                        }
+                    )
                     DropdownMenuItem(
                         text = {
                             Text(

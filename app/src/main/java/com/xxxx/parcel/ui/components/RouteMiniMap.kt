@@ -78,6 +78,7 @@ import com.xxxx.parcel.util.SiteData
 import com.xxxx.parcel.util.StopGroup
 import com.xxxx.parcel.util.VenueGuide
 import com.xxxx.parcel.util.groupRouteStops
+import com.xxxx.parcel.util.siteEntranceCell
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -182,6 +183,8 @@ fun RouteMiniMap(
     )
 
     val dots = remember(canvasSize) { buildDots(canvasSize) }
+    // 入口标志固定画在**真正的入口闸机**上（不要跟着起点跑）；起点不同时再单独画一个「我」
+    val entranceCell = remember { siteEntranceCell() }
 
     if (collapsed) {
         // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡
@@ -374,6 +377,7 @@ fun RouteMiniMap(
                     dots = dots,
                     showStopCodes = showStopCodes,
                     completedMarkers = completedMarkers,
+                    entranceCell = entranceCell,
                 )
             }
         }
@@ -551,6 +555,7 @@ private fun DrawScope.drawVenue(
     dots: List<Offset>,
     showStopCodes: Boolean,
     completedMarkers: List<CompletedMarker>,
+    entranceCell: GridCell?,
 ) {
     fun px(col: Float): Float = size.width / 2f + (col - cam.cx) * cam.scale
     fun py(row: Float): Float = size.height / 2f + (row - cam.cy) * cam.scale
@@ -766,8 +771,8 @@ private fun DrawScope.drawVenue(
         drawText(tag, topLeft = Offset(x + r + 3f, y - tag.size.height / 2f))
     }
 
-    // ⑨ 入口标记（绿色圆角方块 + 入）
-    route.legs.firstOrNull()?.cells?.firstOrNull()?.let { e ->
+    // ⑨ 入口标记：**固定画在真正的入口闸机格上**（绿色圆角方块 + 入）
+    entranceCell?.let { e ->
         val x = px(e.col + 0.5f)
         val y = py(e.row + 0.5f)
         val r = (cell * 1.4f).coerceIn(9f, 15f)
@@ -787,6 +792,24 @@ private fun DrawScope.drawVenue(
         val layout = measurer.measure(
             "入",
             style = TextStyle(color = pal.entranceInk, fontSize = (r * 0.95f).toSp(), fontWeight = FontWeight.Bold),
+            maxLines = 1,
+        )
+        drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
+    }
+
+    // ⑨b **当前位置**（= 路线起点；刚取完时就是那一件）：蓝圈 +「我」；与入口重合就不重复画
+    val startCell = route.legs.firstOrNull()?.cells?.firstOrNull()
+    if (startCell != null && startCell != entranceCell) {
+        val x = px(startCell.col + 0.5f)
+        val y = py(startCell.row + 0.5f)
+        val r = (cell * 1.5f).coerceIn(9f, 16f)
+        val t = ((phase * 1.2f) % 1f)
+        drawCircle(pal.accent.copy(alpha = 0.20f * (1f - t)), radius = r * (1.7f + t), center = Offset(x, y))
+        drawCircle(pal.accent, radius = r, center = Offset(x, y))
+        drawCircle(Color.White, radius = r, center = Offset(x, y), style = Stroke(width = 2f))
+        val layout = measurer.measure(
+            "我",
+            style = TextStyle(color = Color.White, fontSize = (r * 0.95f).toSp(), fontWeight = FontWeight.Bold),
             maxLines = 1,
         )
         drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))

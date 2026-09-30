@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.core.net.toUri
@@ -57,6 +58,7 @@ import com.xxxx.parcel.util.SmsUtil
 import com.xxxx.parcel.util.getAllSaveData
 import com.xxxx.parcel.util.getAppBackgroundScope
 import com.xxxx.parcel.util.getMainSwitch
+import com.xxxx.parcel.util.isMapPageEnabled
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import com.xxxx.parcel.widget.ParcelWidget
 import com.xxxx.parcel.widget.ParcelWidgetLarge
@@ -387,6 +389,15 @@ fun App(
         val applyCustomBackground = when (backgroundScope) {
             AppBackgroundScope.ALL -> true
             AppBackgroundScope.HOME_ONLY -> currentRoute == "home"
+        }
+
+        // 「地图取件模式」：启动后自动打开地图页（返回键仍能回首页）——用户 2026-10-01
+        var mapPageAutoOpened by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            if (!mapPageAutoOpened && isMapPageEnabled(context)) {
+                mapPageAutoOpened = true
+                navController.navigate("map_page")
+            }
         }
 
         ParcelTheme(

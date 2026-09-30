@@ -34,6 +34,8 @@ private const val KEY_BOTTOM = "barcode_bottom_enabled"
 /** 旧「底部填充」开关：已与浮窗合并，此键只用于读取旧设置做迁移 */
 private const val KEY_BOTTOM_FILL = "barcode_bottom_fill_enabled"
 private const val KEY_BOTTOM_HEIGHT = "barcode_bottom_height_dp"
+/** 用户手动拖过高度后「钉住」：不再让列表做自动让位，避免两个窗格来回抖（用户 2026-10-01） */
+private const val KEY_BOTTOM_PINNED = "barcode_bottom_pinned"
 private const val KEY_BACKGROUND = "barcode_background_enabled"
 private const val KEY_USE_ORIGINAL = "barcode_use_original"
 private const val KEY_UPDATED_AT = "barcode_updated_at"
@@ -103,6 +105,19 @@ fun getBarcodeBottomHeightDp(context: Context): Int =
 
 fun saveBarcodeBottomHeightDp(context: Context, heightDp: Int) {
     barcodePrefs(context).edit().putInt(KEY_BOTTOM_HEIGHT, heightDp).apply()
+}
+
+/**
+ * 底部条码浮窗是否已被用户「钉住」高度。
+ *
+ * 钉住之后**不再**随列表内容自动伸缩 —— 否则「条码变高 → 列表视口变矮 → 列表变成可滚动 →
+ * 条码缩回最小 → 列表又装得下 → 条码变高」会来回抖（用户 2026-10-01 反馈，尤其是刚拖过高度之后）。
+ */
+fun isBarcodeBottomPinned(context: Context): Boolean =
+    barcodePrefs(context).getBoolean(KEY_BOTTOM_PINNED, false)
+
+fun saveBarcodeBottomPinned(context: Context, pinned: Boolean) {
+    barcodePrefs(context).edit().putBoolean(KEY_BOTTOM_PINNED, pinned).apply()
 }
 
 /** 默认高度：普通模式 96dp，老人模式（字大）128dp。 */
