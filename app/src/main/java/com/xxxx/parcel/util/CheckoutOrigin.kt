@@ -100,6 +100,17 @@ fun hasRecentSfCheckout(
     now: Long = System.currentTimeMillis(),
 ): Boolean = containsSfCheckout(recentCheckoutEntries(context, windowMs, now))
 
+/**
+ * 纯逻辑：这批已取件记录里**需要出库的顺丰包裹数**（去重后的 S 区件数）。
+ *
+ * 用途（用户 2026-10-01）：「顺丰出库」卡片右侧提醒还有几件顺丰要出库（**测试功能、默认关闭**）。
+ * 只要在时间窗内取过 S 区的件，就说明这些件还没走完出库流程。
+ */
+fun countSfCheckouts(entries: List<Pair<String, Long>>): Int =
+    entries.map { it.first }
+        .distinct()
+        .count { parseCompartmentCode(it)?.zone == PickupZone.SF }
+
 /** 最近一次取件的位置；超出时间窗、或那个码定位不了（如纯数字快递柜）⇒ null。 */
 fun lastCheckoutOrigin(
     context: Context,

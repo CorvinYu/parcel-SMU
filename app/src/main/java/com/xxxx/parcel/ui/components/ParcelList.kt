@@ -62,6 +62,8 @@ import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.PickupCategory
 import com.xxxx.parcel.util.PickupRoute
+import com.xxxx.parcel.util.PickupZone
+import com.xxxx.parcel.util.RouteExit
 import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
@@ -71,16 +73,19 @@ import com.xxxx.parcel.util.assignStableNumbers
 import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.compactNumbers
 import com.xxxx.parcel.util.completedMarkersOf
+import com.xxxx.parcel.util.containsSfCheckout
+import com.xxxx.parcel.util.countSfCheckouts
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
-import com.xxxx.parcel.util.hasRecentSfCheckout
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.loadStableNumbers
+import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.recentCheckoutEntries
 import com.xxxx.parcel.util.refreshStableNumbers
 import com.xxxx.parcel.util.routeAnchorCode
 import com.xxxx.parcel.util.saveCodeNote
@@ -212,6 +217,8 @@ fun ParcelList(
     refreshSignal: Int = 0,
     /** 点「入口」/「出站」胶囊：全屏出示快递中心条码（没设置过条码时由上层引导去设置） */
     onShowBarcode: () -> Unit = {},
+    /** 「顺丰出库」卡片右侧显示还需要出库的顺丰件数（测试功能，默认关闭） */
+    showSfCheckoutCount: Boolean = false,
     /** 列表底部留白（首页开启图示浮层时给窗格让位） */
     listBottomPadding: Dp = 0.dp,
 ) {
@@ -282,7 +289,20 @@ fun ParcelList(
     }
     // 「本次行程取过顺丰件」：读时间窗内的已取件记录（**不能只看当前路线** —— 取完 S 之后路线里就没有 S 了）。
     // 键用 filteredParcelsData：每次标记/取消已取件它都会变 ⇒ 记录变了就能立刻重算。
-    val sfTakenThisTrip = remember(filteredParcelsData) { hasRecentSfCheckout(context) }
+    val recentCheckouts = remember(filteredParcelsData) { recentCheckoutEntries(context) }
+    val sfTakenThisTrip = remember(recentCheckouts) { containsSfCheckout(recentCheckouts) }
+    // 「顺丰出库」卡片右侧的件数提醒（测试功能、默认关闭）：窗口内取过、待出库的顺丰件数
+    val sfPendingCount = remember(recentCheckouts) { countSfCheckouts(recentCheckouts) }
+    // 全部取完时路线为空（homeRoute == null），出站口去哪一台要按**本次行程取过什么**推断：
+    // 只取过顺丰件 ⇒ 顺丰侧出站口；否则走 7 个普通闸机（出库 + 出站）。
+    val exitLabelFallback = if (
+        recentCheckouts.isNotEmpty() &&
+        recentCheckouts.all { parseCompartmentCode(it.first)?.zone == PickupZone.SF }
+    ) {
+        RouteExit.SF_EXIT.label
+    } else {
+        RouteExit.NORMAL_GATE.label
+    }
     val stationRoute = remember(filteredParcelsData, routeOptions, checkoutOrigin) {
         planStationRoute(
             filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
@@ -464,7 +484,10 @@ fun ParcelList(
             // 路线步骤胶囊（入口 / 当前位置 / 顺丰出库 / 出站）：只在「按取件路线排序」开着时出现，
             // 与 ①②③ 序号、逐卡「怎么走」同一前提（用户 2026-10-01：首页最顶部要一个入口胶囊、
             // 出站时也要一个出站胶囊；点这两个胶囊 = 全屏出示条码，因为闸机前只有这两处要用条码）。
-            val routeStepsOn = page == 0 && routeSortEnabled && homeRoute?.stops?.isNotEmpty() == true
+            // 路线步骤（入口 / 顺丰出库 / 出站）在「快递站」页有件时**一直**显示。
+            // 🔴 用户 2026-10-01：全部取完后**出站选项消失了** —— 因为判定用的是「当前路线还有没有停靠点」，
+            //    全部取完时路线为空 ⇒ 步骤跟着一起消失。但人还在站里，出站这一步必须一直在。
+            val routeStepsOn = page == 0 && routeSortEnabled && stationParcels.isNotEmpty()
             if (routeStepsOn) {
                 // 顶部固定一个「入口进站」卡片（点击出示取件码）。
                 // 🔴 用户 2026-10-01 两条纠正：① 「从当前位置继续」那种**已删除**（判定经常出错）；
@@ -500,15 +523,34 @@ fun ParcelList(
                     (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
                 }
                 if (anchor >= 0) {
-                    entries.add(anchor + 1, ParcelListItem.Step(StepKind.SF_CHECKOUT, sfCheckoutHint))
+                    entries.add(
+                        anchor + 1,
+                        ParcelListItem.Step(
+                            StepKind.SF_CHECKOUT,
+                            sfCheckoutHint,
+                            count = if (showSfCheckoutCount) sfPendingCount else null,
+                        ),
+                    )
                 } else {
                     // S 件已经被取完（或者列表隐藏了已取件）⇒ 找不到锚点，放到普通件之后、出站之前
-                    entries.add(ParcelListItem.Step(StepKind.SF_CHECKOUT, sfCheckoutHint))
+                    entries.add(
+                        ParcelListItem.Step(
+                            StepKind.SF_CHECKOUT,
+                            sfCheckoutHint,
+                            count = if (showSfCheckoutCount) sfPendingCount else null,
+                        ),
+                    )
                 }
             }
-            // 出站：路线永远终于出站口（出库 ≠ 出站），所以它是列表最后一步
+            // 出站：路线永远终于出站口（出库 ≠ 出站）；**全部取完后也必须在**
             if (routeStepsOn) {
-                entries.add(ParcelListItem.Step(StepKind.EXIT, exitHint, homeRoute?.exit?.label))
+                entries.add(
+                    ParcelListItem.Step(
+                        StepKind.EXIT,
+                        exitHint,
+                        homeRoute?.exit?.label ?: exitLabelFallback,
+                    )
+                )
             }
             val pageListState = rememberLazyListState()
             val layoutInfo = pageListState.layoutInfo
@@ -621,10 +663,12 @@ private sealed interface ParcelListItem {
 
     data class Step(
         val kind: StepKind,
-        /** 一行「怎么走」（文字提示开关打开时才有） */
+        /** 一行「怎么走」（文字提示开关打开时才有；**渲染在卡片上方**，不塞进卡里） */
         val hint: String? = null,
-        /** 附加标签：出站用路线给出的闸机名；「从当前位置继续」用它写清从哪儿开始 */
+        /** 附加标签：出站用路线给出的闸机名 */
         val label: String? = null,
+        /** 顺丰出库：右侧提醒**还有几件要出库**（测试功能，默认关闭 ⇒ 为 null 不显示） */
+        val count: Int? = null,
     ) : ParcelListItem {
         override val key: String get() = "step:${kind.name}"
     }
@@ -632,27 +676,30 @@ private sealed interface ParcelListItem {
 
 /** 路线步骤的种类（决定徽标、配色与文案）。 */
 private enum class StepKind {
-    /** 入口进站（刷码进入）——点一下 = 全屏出示条码 */
+    /** 入口进站（刷码进入）——点击出示取件码 */
     ENTRANCE,
 
     /** 顺丰出库（专用闸机，不能出站） */
     SF_CHECKOUT,
 
-    /** 出站（路线的终点）——点一下 = 全屏出示条码 */
+    /** 出站（路线的终点）——点击出示取件码 */
     EXIT,
 }
 
 /**
  * 路线步骤卡片（入口 / 顺丰出库 / 出站）。
  *
- * 三种步骤**共用同一个样式**：圆角与地址卡/地图卡一致（[Corners.cardShape] = 16dp）、
- * 同一徽标尺寸、同一间距。
+ * 三种步骤**共用同一个容器样式**：圆角与地址卡/地图卡一致（[Corners.cardShape] = 16dp）、
+ * 同一徽标尺寸、同一间距。行数按用户 2026-10-01 的要求分别精简：
  *
- * 🔴 用户 2026-10-01 两条纠正：
- * 1. 原来做成**胶囊**（50% 圆角）被指「圆角非常丑，让它保持和其他窗口的圆角一样」⇒ 改用 16dp；
- * 2. 「从当前位置继续」那一种**已删除**（判定经常出错）。
+ * | 步骤 | 版式 |
+ * |---|---|
+ * | 入口进站 | **1 行**：`[入] 入口进站 … 点击出示取件码` |
+ * | 顺丰出库 | 2 行（标题 + 说明），右侧可挂「N 件待出库」小签（测试开关） |
+ * | 出站 | **2 行**：标题（含闸机名）+「点击出示取件码」 |
  *
- * [StepKind.ENTRANCE] 与 [StepKind.EXIT] 可点：全屏出示快递中心条码（只有进出闸机这两处要用它）。
+ * 历史纠正：曾做成 50% 圆角胶囊（被指「圆角非常丑」）、曾把「怎么走」塞在卡内（已挪到卡上方）、
+ * 「从当前位置继续」那一种**已删除**（判定经常出错）。
  */
 @Composable
 private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) {
@@ -676,13 +723,7 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
         StepKind.SF_CHECKOUT -> "顺丰出库（顺丰专用闸机）"
         StepKind.EXIT -> "出站" + (step.label?.let { "：$it" } ?: "")
     }
-    val subtitle = when (step.kind) {
-        // 用户 2026-10-01：「取完件从这里开始走」不明所以 ⇒ 只留这一句必要的
-        StepKind.ENTRANCE -> "刷码进入"
-        StepKind.SF_CHECKOUT -> "取了顺丰件先在这里出库；这台不能出站"
-        StepKind.EXIT -> "取完件最后从这里出站"
-    }
-    // 只有「入口」「出站」需要出示条码（其余两步在闸机里不刷码）
+    // 只有「入口」「出站」需要出示条码（顺丰出库那台不刷这个码）
     val tappable = step.kind == StepKind.ENTRANCE || step.kind == StepKind.EXIT
 
     Card(
@@ -713,20 +754,71 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
                     fontSize = if (badge.length > 1) 11.sp else 14.sp,
                 )
             }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 10.dp),
-            ) {
-                Text(title, fontWeight = FontWeight.Medium, color = titleColor)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                if (tappable) {
+            when (step.kind) {
+                // 1 行版式（用户 2026-10-01：入口完全可以排成 1 行）
+                StepKind.ENTRANCE -> {
                     Text(
-                        // 用户 2026-10-01：不要用「=」，直接写清楚点它会发生什么
-                        "点击出示取件码",
+                        text = title,
+                        fontWeight = FontWeight.Medium,
+                        color = titleColor,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 10.dp),
+                    )
+                    Text(
+                        text = "点击出示取件码",
                         style = MaterialTheme.typography.labelSmall,
                         color = badgeColor,
+                        maxLines = 1,
                     )
+                }
+
+                // 2 行版式：标题（含闸机名）+ 点击提示
+                StepKind.EXIT -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 10.dp),
+                    ) {
+                        Text(title, fontWeight = FontWeight.Medium, color = titleColor)
+                        Text(
+                            text = "点击出示取件码",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = badgeColor,
+                        )
+                    }
+                }
+
+                // 2 行版式：标题 + 说明；右侧可挂「N 件待出库」（测试开关，默认关闭）
+                StepKind.SF_CHECKOUT -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 10.dp),
+                    ) {
+                        Text(title, fontWeight = FontWeight.Medium, color = titleColor)
+                        Text(
+                            text = "取了顺丰件先在这里出库；这台不能出站",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    step.count?.takeIf { it > 0 }?.let { n ->
+                        Box(
+                            modifier = Modifier
+                                .clip(Corners.chipShape)
+                                .background(badgeColor)
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = "$n 件待出库",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         }

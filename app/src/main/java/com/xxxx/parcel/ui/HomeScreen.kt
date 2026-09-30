@@ -70,6 +70,8 @@ import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.isRouteSortList
+import com.xxxx.parcel.util.isSfCheckoutCountEnabled
+import com.xxxx.parcel.util.saveSfCheckoutCountEnabled
 import com.xxxx.parcel.util.isBarcodeBottomPinned
 import com.xxxx.parcel.util.isMapPageEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
@@ -134,6 +136,8 @@ fun HomeScreen(
     var homeBarcodeFull by remember { mutableStateOf(false) }
     // 「地图取件模式」：菜单里可直接开关（用户 2026-10-01）
     var mapPageEnabled by remember { mutableStateOf(isMapPageEnabled(context)) }
+    // 「顺丰出库件数提醒（测试）」：菜单里可直接开关，默认关闭（用户 2026-10-01）
+    var sfCountEnabled by remember { mutableStateOf(isSfCheckoutCountEnabled(context)) }
     // 地图窗格高度（0 = 用默认比例；用户上下拖动后持久化，用户 2026-10-01）
     var mapHeightDp by remember { mutableIntStateOf(getGuideMapHeightDp(context)) }
     var homeFullMap by remember { mutableStateOf(false) }
@@ -216,6 +220,12 @@ fun HomeScreen(
                     val next = !mapPageEnabled
                     saveMapPageEnabled(context, next)
                     mapPageEnabled = next
+                },
+                sfCountEnabled = sfCountEnabled,
+                onToggleSfCount = {
+                    val next = !sfCountEnabled
+                    saveSfCheckoutCountEnabled(context, next)
+                    sfCountEnabled = next
                 },
             )
                 if (barcodeStripEnabled) {
@@ -316,6 +326,8 @@ fun HomeScreen(
                                 hasBarcodeOriginalImage(context)
                             if (ready) homeBarcodeFull = true else navController.navigate("barcode")
                         },
+                        // 「顺丰出库」卡片右侧的件数提醒（测试功能、菜单里开，默认关闭）
+                        showSfCheckoutCount = sfCountEnabled,
                     ) else
                         Column(
                             modifier = Modifier.fillMaxSize(),

@@ -50,4 +50,30 @@ class CheckoutOriginTest {
         assertNull(pickCheckoutOriginCode(emptyList(), now))
         assertNull("时间戳在未来（设备改时间）也当成不可用", pickCheckoutOriginCode(listOf("C1" to now + 1000L), now))
     }
+
+    // ───────── 「顺丰出库」卡片右侧的件数提醒（测试功能） ─────────
+
+    @Test
+    fun `待出库顺丰件数按件去重`() {
+        assertEquals(
+            "取过 3 件顺丰 ⇒ 提醒 3 件",
+            3,
+            countSfCheckouts(listOf("S3-2-2628" to 1L, "S1-5-2871" to 2L, "S2-1-9" to 3L)),
+        )
+    }
+
+    @Test
+    fun `普通件不计入待出库顺丰件数`() {
+        assertEquals(
+            1,
+            countSfCheckouts(listOf("D8-6" to 1L, "J5-21" to 2L, "Y5-7-1" to 3L, "S1-1-1" to 4L)),
+        )
+        assertEquals(0, countSfCheckouts(emptyList()))
+        assertEquals("解析不了的码不算", 0, countSfCheckouts(listOf("54018314" to 1L)))
+    }
+
+    @Test
+    fun `同一条记录重复出现只算一件`() {
+        assertEquals(1, countSfCheckouts(listOf("S3-2-2628" to 2L, "S3-2-2628" to 1L)))
+    }
 }

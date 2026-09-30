@@ -15,6 +15,7 @@ private const val KEY_DETAIL = "route_guide_detail"
 private const val KEY_MAP_VIEW = "route_guide_map_view"
 private const val KEY_MAP_PAGE = "route_guide_map_page"
 private const val KEY_MAP_HEIGHT = "route_guide_map_height"
+private const val KEY_SF_COUNT = "route_sf_checkout_count"
 
 private fun guidePrefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -119,4 +120,16 @@ fun getGuideMapHeightDp(context: Context): Int =
 
 fun saveGuideMapHeightDp(context: Context, valueDp: Int) {
     guidePrefs(context).edit().putInt(KEY_MAP_HEIGHT, valueDp.coerceIn(0, 900)).apply()
+}
+
+/**
+ * 「顺丰出库」卡片右侧是否显示**还需要出库的顺丰件数**（用户 2026-10-01：**测试功能、默认关闭**）。
+ *
+ * 默认关闭，菜单「海大版功能 → 顺丰出库件数提醒（测试）」里打开。
+ */
+fun isSfCheckoutCountEnabled(context: Context): Boolean =
+    guidePrefs(context).getBoolean(KEY_SF_COUNT, false)
+
+fun saveSfCheckoutCountEnabled(context: Context, value: Boolean) {
+    guidePrefs(context).edit().putBoolean(KEY_SF_COUNT, value).apply()
 }

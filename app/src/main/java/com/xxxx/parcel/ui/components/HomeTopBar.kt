@@ -82,6 +82,9 @@ fun HomeTopBar(
     onOpenMapPage: () -> Unit = {},
     /** 「地图取件模式」：开启后启动 App 直接进地图页（用户 2026-10-01） */
     onToggleMapPage: () -> Unit = {},
+    /** 「顺丰出库件数提醒（测试）」开关状态（用户 2026-10-01，默认关闭） */
+    sfCountEnabled: Boolean = false,
+    onToggleSfCount: () -> Unit = {},
 ) {
     TopAppBar(
         title = { },
@@ -187,6 +190,23 @@ fun HomeTopBar(
                         onClick = {
                             showMenu = false
                             onToggleRouteSort()
+                        }
+                    )
+                    // 测试功能（用户 2026-10-01）：默认关闭，打开后「顺丰出库」卡片右侧提醒还有几件要出库
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (sfCountEnabled) {
+                                    "关闭顺丰出库件数提醒（测试）"
+                                } else {
+                                    "顺丰出库件数提醒（测试）"
+                                },
+                                style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleSfCount()
                         }
                     )
                     DropdownMenuItem(

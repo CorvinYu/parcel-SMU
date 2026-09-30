@@ -132,7 +132,6 @@ fun RouteMiniMap(
     val hints = remember(route, idx, target) { leg?.let { VenueGuide.describe(it, target) } ?: emptyList() }
     val mainHints = hints.filter { it.kind == VenueGuide.HintKind.MOVE || it.kind == VenueGuide.HintKind.STUB_IN }
     // NOTE 类注记（走廊名/地标补充）不再显示 —— 用户 2026-10-01：那行灰色小字无意义
-    val nextDir = hints.firstOrNull { it.kind == VenueGuide.HintKind.MOVE }?.dir
     val oneLine = mainHints.joinToString(" → ") { if (detail == GuideDetail.FULL) it.text else it.brief }
 
     // 标记文字：取件用件号（稳定件号优先），顺丰/出站用徽标；**同货架的连续取件合并成一枚**
@@ -372,7 +371,6 @@ fun RouteMiniMap(
                     phase = phase,
                     markerLabels = markerLabels,
                     groups = groups,
-                    nextDir = nextDir,
                     dots = dots,
                     showStopCodes = showStopCodes,
                     completedMarkers = completedMarkers,
@@ -550,7 +548,6 @@ private fun DrawScope.drawVenue(
     phase: Float,
     markerLabels: List<String>,
     groups: List<StopGroup>,
-    nextDir: VenueGuide.Dir?,
     dots: List<Offset>,
     showStopCodes: Boolean,
     completedMarkers: List<CompletedMarker>,
@@ -721,22 +718,16 @@ private fun DrawScope.drawVenue(
     }
 
     // ⑦b **方向指示**：圆头 chevron（不是尖三角 —— 用户 2026-10-01：那个三角形又丑又常盖住圆圈）。
-    //     位置：当前段第一截的中点格，再朝行进方向的**右侧偏 0.9 格** ⇒ 不压在站点圆点中心；
-    //     图层：在聚光灯（⑦）**之后**、站点标记（⑧）**之前** ⇒ 既不会被渐晕压暗，也不可能盖住圆圈。
-    if (nextDir != null) {
-        firstRunMid(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
-            val (ux, uy) = dirUnit(nextDir)
-            // 行进方向的右侧（垂直向量）偏出去，像路面上的导向箭头。
-            // 🔴 偏移量必须 ≥「站点圆半径 + 4px」（换算成格）：只在固定 0.9 格时，
-            //    全览缩放下 0.9 格可能还不到圆圈半径 ⇒ chevron 仍贴在圆上（用户反馈的原问题）。
-            val markerR = (cell * 1.5f).coerceIn(9f, 15f)
-            val offCells = maxOf(0.9f, (markerR + 4f) / cell)
-            val ox = -uy * offCells
-            val oy = ux * offCells
+    //     🔴 用户又指出箭头**漂移、不在行进路线上**（上一版把它朝右侧偏了 0.9 格）⇒ 现在：
+    //     位置 = 当前段路径的**中点**（按实际像素长度折半，必定落在折线上）；
+    //     方向 = 中点那一小段的走向（比「首段方向」更准，拐弯后不会指错）。
+    //     图层：在聚光灯（⑦）**之后**、站点标记（⑧）**之前** ⇒ 既不会被渐晕压暗，也不会盖住站点圆点。
+    route.legs.getOrNull(idx)?.cells?.let { cells ->
+        pathMidArrow(cells, ::px, ::py)?.let { (center, dir) ->
             drawChevron(
-                px(c.col + 0.5f + ox),
-                py(c.row + 0.5f + oy),
-                nextDir,
+                center.x,
+                center.y,
+                dir,
                 (cell * 1.1f).coerceIn(7f, 15f),
                 pal.accent.copy(alpha = 0.92f),
             )
@@ -916,25 +907,42 @@ private fun DrawScope.drawPathOf(
     drawPath(path, color = color, style = Stroke(width = width, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
 }
 
-/** **首个「同方向段」的中点格**（与 [VenueGuide] 的压缩规则一致）。
+/**
+ * **路线上**的方向指示位置与走向（用户 2026-10-01：箭头不能漂在路线旁边）。
  *
- * ⚠️ 绝不能返回 `cells[0]`（那就是当前站自己的格子 ⇒ chevron 会压在圆点上）；
- * 单格长的段退回到 `cells[1]`。
+ * 按实际像素长度把当前段折线**折半**取点 ⇒ 一定落在折线上；方向取该点所在那一小段的走向
+ * （拐弯之后不会指错）。段太短（< 2 格）时返回 null（不值得画）。
  */
-private fun firstRunMid(cells: List<GridCell>): GridCell? {
+private fun pathMidArrow(
+    cells: List<GridCell>,
+    px: (Float) -> Float,
+    py: (Float) -> Float,
+): Pair<Offset, VenueGuide.Dir>? {
     if (cells.size < 2) return null
-    val dr = cells[1].row - cells[0].row
-    val dc = cells[1].col - cells[0].col
-    var j = 0
-    while (j + 2 < cells.size) {
-        val nr = cells[j + 2].row - cells[j + 1].row
-        val nc = cells[j + 2].col - cells[j + 1].col
-        if (nr != dr || nc != dc) break
-        j++
+    val pts = cells.map { Offset(px(it.col + 0.5f), py(it.row + 0.5f)) }
+    var total = 0f
+    for (i in 0 until pts.size - 1) total += (pts[i + 1] - pts[i]).getDistance()
+    var remain = total / 2f
+    for (i in 0 until pts.size - 1) {
+        val delta = pts[i + 1] - pts[i]
+        val seg = delta.getDistance()
+        if (seg <= 0f) continue
+        if (remain <= seg) {
+            val t = remain / seg
+            return Offset(pts[i].x + delta.x * t, pts[i].y + delta.y * t) to dirOf(cells[i], cells[i + 1])
+        }
+        remain -= seg
     }
-    val end = j + 1
-    val mid = if (end <= 1) 1 else end / 2
-    return cells[mid]
+    val last = cells.size - 2
+    return pts.last() to dirOf(cells[last], cells[last + 1])
+}
+
+/** 相邻两格的走向（BFS 路径每步只在一个轴上 ±1）。 */
+private fun dirOf(a: GridCell, b: GridCell): VenueGuide.Dir = when {
+    b.row < a.row -> VenueGuide.Dir.NORTH
+    b.row > a.row -> VenueGuide.Dir.SOUTH
+    b.col > a.col -> VenueGuide.Dir.EAST
+    else -> VenueGuide.Dir.WEST
 }
 
 /** 方向单位向量（北 = 行减小，与 [VenueGuide] 一致）。 */
