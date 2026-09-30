@@ -44,13 +44,19 @@ KEY = r"E:\claude\nas-pt-ops\sshkey_nas"
 MAC = "corvinyu@192.168.9.7"
 REMOTE_DIR = "/Users/corvinyu/server/data/caddy/data/k"
 UA = {"User-Agent": "parcel-spu-site-sync"}
+# 未认证额度只有 60 次/小时（本机实测会 403 rate limit exceeded）；有令牌就带上。
+# 只发给 api.github.com —— 下载直链是 assets 域，不该把令牌带给它。
+TOKEN = os.environ.get("GH_RELEASE_TOKEN", "").strip()
 
 
 def http(url, retries=6, timeout=60, raw=False):
     last = None
     for attempt in range(1, retries + 1):
         try:
-            req = urllib.request.Request(url, headers=UA)
+            headers = dict(UA)
+            if TOKEN and url.startswith("https://api.github.com/"):
+                headers["Authorization"] = "Bearer " + TOKEN
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = r.read()
                 return (data, dict(r.headers)) if raw else json.loads(data.decode("utf-8"))
