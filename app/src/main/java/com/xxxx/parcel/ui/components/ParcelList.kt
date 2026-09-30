@@ -251,19 +251,19 @@ fun ParcelList(
     val routeOptions = remember { getRouteOptions(context) }
     // 「按取件路线排序」：把「快递站」页里能定位的件按最优取件顺序排开（①②③…），
     // 定位不了的（无货格号、货架号越界）保持原顺序排在后面。
-    // 布局参数与「取件路线」页共用同一套；路线本身也上报给首页（图示窗格复用，避免二次规划）。
-    val guideText = remember { getGuideTextPlacement(context) }
-    val stationRoute = remember(filteredParcelsData, routeSortEnabled, routeOptions) {
-        if (!routeSortEnabled) {
-            StationRoute(emptyMap(), null)
-        } else {
-            planStationRoute(
-                filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
-                routeOptions,
-            )
-        }
+    // 🔴 设置项**每次重组都读**（不再 remember）：用户刚在「取件路线」页改过开关，
+    //    返回首页必须立刻生效 —— 之前被 remember 缓存，改了像是没反应（用户 2026-10-01 反馈）。
+    val guideText = getGuideTextPlacement(context)
+    // 🔴 路线**总是**规划：地图窗格 / 顺丰出库步骤都要用，
+    //    不能因为「按取件路线排序」关着就整条消失（那是另一件事）。
+    //    ① ② ③ 序号与逐卡「怎么走」提示仍只在排序开启时展示（它们以顺序为前提）。
+    val stationRoute = remember(filteredParcelsData, routeOptions) {
+        planStationRoute(
+            filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
+            routeOptions,
+        )
     }
-    val routeOrder = stationRoute.order
+    val routeOrder = if (routeSortEnabled) stationRoute.order else emptyMap()
     val homeRoute = stationRoute.route
     LaunchedEffect(homeRoute) { onRouteComputed(homeRoute) }
 
@@ -372,13 +372,17 @@ fun ParcelList(
                             hideHeader = page == 0,
                             showLockerTag = page != 1,
                             routeOrder = order,
-                            hint = if (guideText.onHome && order != null) pickupHints[order] else null,
+                            hint = if (guideText.onHome && routeSortEnabled && order != null) {
+                                pickupHints[order]
+                            } else {
+                                null
+                            },
                         )
                     )
                 )
             }
             // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后
-            if (page == 0 && homeRoute != null && homeRoute.hasSfCheckout) {
+            if (page == 0 && routeSortEnabled && homeRoute != null && homeRoute.hasSfCheckout) {
                 val after = homeRoute.sfCheckoutAfter
                 val anchor = entries.indexOfLast {
                     val o = (it as? ParcelListItem.Card)?.entry?.routeOrder

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -273,6 +274,23 @@ fun HomeScreen(
                             onCollapsedChange = { homeMapCollapsed = it },
                             onCurrentStopChange = { homeStop = it },
                             onExpand = { homeFullMap = true },
+                        )
+                    }
+                } else if (homeMapEnabled && hasPermission) {
+                    // 选了「首页底部浮层」却画不出来时，**明确说原因**（不许静默消失）
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 10.dp, end = 10.dp, bottom = 8.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            text = "路线图：暂无可规划的取件码（需要「快递站」页里有带「货格号」的未取件；" +
+                                "已取完的会自动从图上消失）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         )
                     }
                 }
