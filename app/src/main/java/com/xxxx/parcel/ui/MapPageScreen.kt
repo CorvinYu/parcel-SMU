@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -32,15 +33,20 @@ import com.xxxx.parcel.ui.components.BarcodeFullScreenDialog
 import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.ui.components.TripStopSection
 import com.xxxx.parcel.ui.components.rememberTripView
+import com.xxxx.parcel.util.clearSfCheckoutDone
 import com.xxxx.parcel.util.completedMarkersOf
+import com.xxxx.parcel.util.countSfCheckouts
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getMapBarcodeHeightDp
 import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
+import com.xxxx.parcel.util.isSfCheckoutCountEnabled
 import com.xxxx.parcel.util.isSfCheckoutDone
 import com.xxxx.parcel.util.lastCheckoutOrigin
+import com.xxxx.parcel.util.markSfCheckoutDone
+import com.xxxx.parcel.util.recentCheckoutEntries
 import com.xxxx.parcel.util.saveMapBarcodeHeightDp
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import kotlin.math.roundToInt
@@ -70,9 +76,15 @@ fun MapPageScreen(
 ) {
     val successData by viewModel.successSmsData.collectAsState()
     val options = remember { getRouteOptions(context) }
-    // 顺丰是否已出库（用户点过首页「顺丰出库」卡片）⇒ 整段行程里不再有出库节点
-    val sfDone = remember(successData) { isSfCheckoutDone(context) }
+    // 顺丰是否已出库（用户点过顺丰出库卡）⇒ 整段行程里不再有出库节点；tick 用于点击后立刻重算
+    var sfDoneTick by remember { mutableIntStateOf(0) }
+    val sfDone = remember(successData, sfDoneTick) { isSfCheckoutDone(context) }
     val trip = rememberTripView(successData, options, sfDone)
+    // 「N 件待出库」提醒（菜单开关，默认开）
+    val sfCountEnabled = isSfCheckoutCountEnabled(context)
+    val sfPendingCount = remember(successData, sfDoneTick) {
+        countSfCheckouts(recentCheckoutEntries(context))
+    }
     val detail = getGuideDetail(context)
     val mapView = getGuideMapView(context)
     // 当前件在序列里的位置（null = 还没选过 ⇒ 第一件未取的）；允许停在已取的那一件上翻看
@@ -114,13 +126,21 @@ fun MapPageScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // ── 顶部：当前取件码（点击标记已取 / 再点恢复）+ 整段序列（横向可滑）
+            // ── 顶部：当前取件码（点击标记已取 / 再点恢复）+ 整段序列 + **顺丰出库卡 + 出站卡**
             TripStopSection(
                 context = context,
                 viewModel = viewModel,
                 view = trip,
                 current = currentPickup,
                 onCurrentChange = { currentPickup = it },
+                sfCheckedOut = sfDone,
+                onToggleSfDone = {
+                    if (sfDone) clearSfCheckoutDone(context) else markSfCheckoutDone(context)
+                    sfDoneTick += 1
+                },
+                showSfCount = sfCountEnabled,
+                sfPendingCount = sfPendingCount,
+                onShowBarcode = { barcodeFull = true },
             )
 
             // ── 中间：地图

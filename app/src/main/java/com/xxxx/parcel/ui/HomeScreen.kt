@@ -64,6 +64,10 @@ import com.xxxx.parcel.util.GuideMapPlacement
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.getBarcodeBottomHeightDp
 import com.xxxx.parcel.util.getBarcodePayload
+import com.xxxx.parcel.util.clearSfCheckoutDone
+import com.xxxx.parcel.util.countSfCheckouts
+import com.xxxx.parcel.util.markSfCheckoutDone
+import com.xxxx.parcel.util.recentCheckoutEntries
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapHeightDp
 import com.xxxx.parcel.util.getGuideMapView
@@ -493,8 +497,9 @@ fun HomeScreen(
                     ),
                 ) {
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        // 每次打开都重新读「顺丰已出库」状态（在列表页点过卡片后这里要立刻生效）
-                        val sfDoneTrip = isSfCheckoutDone(context)
+                        // 每次打开都重新读「顺丰已出库」状态；卡片上点一下也要立刻重算行程
+                        var fsSfTick by remember { mutableIntStateOf(0) }
+                        val sfDoneTrip = remember(successData, fsSfTick) { isSfCheckoutDone(context) }
                         val tripView = rememberTripView(successData, mapOptions, sfDoneTrip)
                         var fsCurrent by remember { mutableStateOf<Int?>(null) }
                         Column(
@@ -514,6 +519,14 @@ fun HomeScreen(
                                 view = tripView,
                                 current = fsCurrent,
                                 onCurrentChange = { fsCurrent = it },
+                                sfCheckedOut = sfDoneTrip,
+                                onToggleSfDone = {
+                                    if (sfDoneTrip) clearSfCheckoutDone(context) else markSfCheckoutDone(context)
+                                    fsSfTick += 1
+                                },
+                                showSfCount = sfCountEnabled,
+                                sfPendingCount = countSfCheckouts(recentCheckoutEntries(context)),
+                                onShowBarcode = { homeBarcodeFull = true },
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             RouteMiniMap(

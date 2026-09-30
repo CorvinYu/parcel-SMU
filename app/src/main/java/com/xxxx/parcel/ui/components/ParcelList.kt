@@ -404,13 +404,12 @@ fun ParcelList(
         val i = r.stops.indexOfFirst { it is RouteStop.SfCheckout }
         if (i < 0) null else r.legs.getOrNull(i)?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
     }
-    // 顺丰出库那一步要插在「最后一个 S 件」对应的卡片之后（按地址定位，与件号无关）
-    val sfAfterAddress: String? = remember(homeRoute, stationRoute) {
-        val r = homeRoute ?: return@remember null
-        val sfIdx = r.stops.indexOfFirst { it is RouteStop.SfCheckout }
-        if (sfIdx < 0) return@remember null
-        val lastPick = r.stops.take(sfIdx).filterIsInstance<RouteStop.Pickup>().lastOrNull()
-        lastPick?.let { stationRoute.addressByCode[it.code.toString()] }
+    // 「顺丰出库」卡的**锚点**：显示顺序里**最后一个含 S 区取件码的分组**（不管它有没有被取走）。
+    // 🔴 用户 2026-10-01 两次反馈「顺丰出库卡跳到列表最上面」：原来锚点取自**当前路线里的最后一个
+    //    S 件** —— S 件一被标记已取，路线里就没有 S 了 ⇒ 锚点消失 ⇒ 卡片掉到最上面（入口卡下面）。
+    //    改成按**显示出来的卡片**算（已取的 S 卡仍在列表里）⇒ 卡片位置稳定，点「已出库」也不动。
+    fun isSfGroup(parcel: ParcelData): Boolean = parcel.smsDataList.any {
+        parseCompartmentCode(effectiveCompartmentNumber(it.compartmentNumber, it.code))?.zone == PickupZone.SF
     }
     // 「出站」步骤的提示（与顺丰出库同一个小窗口口径；文字提示开关关掉时不给文字）
     val exitHint: String? = remember(homeRoute, guideText) {
@@ -524,26 +523,29 @@ fun ParcelList(
                     )
                 )
             }
-            // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后。
+            // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在「最后一个含 S 件分组」之后。
             // 🔴 只要**本次行程取过顺丰件**就必须一直显示（实测：把 S 件标记为已取后路线里就没有 S 件了，
             //    这一步会凭空消失）。用户点了它 = 已出库 ⇒ 路线不再绕出库机，但卡片保留（可撤销）。
+            // 🔴 锚点按**显示出来的卡片**算（含已经取走的 S 卡），并且**点「已出库」不会改变它** ——
+            //    否则卡片会跳到列表最上面（用户 2026-10-01 两次反馈）。
+            val sfAnchorAddress = if (page == 0) {
+                pageParcels.lastOrNull { isSfGroup(it) }?.address
+            } else {
+                null
+            }
             fun sfStepItem() = ParcelListItem.Step(
                 kind = StepKind.SF_CHECKOUT,
                 hint = sfCheckoutHint,
                 count = if (showSfCheckoutCount && !sfDone) sfPendingCount else null,
                 done = sfDone,
             )
-            val sfStepVisible = homeRoute?.hasSfCheckout == true || sfTakenThisTrip || sfDone
+            val sfStepVisible = sfAnchorAddress != null || sfTakenThisTrip || sfDone
             if (page == 0 && routeSortEnabled && sfStepVisible) {
                 val anchor = entries.indexOfLast {
-                    (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
+                    (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAnchorAddress
                 }
-                if (anchor >= 0) {
-                    entries.add(anchor + 1, sfStepItem())
-                } else {
-                    // S 件已经被取完（或者列表隐藏了已取件）⇒ 找不到锚点，放到普通件之后、出站之前
-                    entries.add(sfStepItem())
-                }
+                // 锚点找不到（列表里已经没有 S 卡，例如隐藏了已取件）⇒ 放到普通件之后、出站之前
+                if (anchor >= 0) entries.add(anchor + 1, sfStepItem()) else entries.add(sfStepItem())
             }
             // 出站：路线永远终于出站口（出库 ≠ 出站）；**全部取完后也必须在**
             if (routeStepsOn) {

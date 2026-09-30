@@ -6,11 +6,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -19,6 +22,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +76,12 @@ data class TripView(
         selected?.takeIf { it in pickups.indices }
             ?: firstPending.takeIf { it >= 0 }
             ?: pickups.lastIndex.coerceAtLeast(0)
+
+    /** 这段行程里有没有顺丰（S 区）件 —— 决定要不要显示「顺丰出库」卡 */
+    val hasSfCodes: Boolean
+        get() = pickups.any {
+            parseCompartmentCode(it.second)?.zone == com.xxxx.parcel.util.PickupZone.SF
+        }
 
     /** 件下标 → 地图用的站下标（route.stops 的下标） */
     fun stopIndexOf(current: Int): Int = when {
@@ -148,6 +159,14 @@ fun TripStopSection(
     current: Int?,
     onCurrentChange: (Int?) -> Unit,
     modifier: Modifier = Modifier,
+    /** 顺丰是否已出库（状态由调用方持有；点卡片可切换） */
+    sfCheckedOut: Boolean = false,
+    onToggleSfDone: () -> Unit = {},
+    /** 「N 件待出库」提醒（菜单里可关） */
+    showSfCount: Boolean = false,
+    sfPendingCount: Int = 0,
+    /** 点「出站」卡：全屏出示条码 */
+    onShowBarcode: () -> Unit = {},
 ) {
     val cur = view.clampCurrent(current)
     val allDone = view.firstPending < 0
@@ -195,6 +214,142 @@ fun TripStopSection(
             completed = view.completed,
             onJump = { onCurrentChange(it) },
         )
+        // 🔴 用户 2026-10-01：「地图取件」页顶部也要有**顺丰出库卡**（点击 = 已出库）与**末尾的出站卡**
+        if (view.hasSfCodes || sfCheckedOut) {
+            SfStepCard(
+                done = sfCheckedOut,
+                count = if (showSfCount && !sfCheckedOut) sfPendingCount else null,
+                onToggle = onToggleSfDone,
+            )
+        }
+        if (view.route.stops.any { it is com.xxxx.parcel.util.RouteStop.Exit }) {
+            ExitStepCard(label = view.route.exit.label, onShowBarcode = onShowBarcode)
+        }
+    }
+}
+
+/** 顺丰出库卡（点一下 = 已出库，再点撤销）—— 与首页列表里的那张同一套说法与配色。 */
+@Composable
+private fun SfStepCard(done: Boolean, count: Int?, onToggle: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clickable(onClick = onToggle),
+        shape = Corners.cardShape,
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE65100)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("SF", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 10.dp),
+            ) {
+                Text(
+                    text = "顺丰出库（顺丰专用闸机）",
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFFE65100),
+                )
+                Text(
+                    text = if (done) "已经出库了；点击可撤销" else "取了顺丰件先在这里出库；这台不能出站",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = if (done) "已出库 ✓" else "点击表示已出库",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFE65100),
+                )
+            }
+            if (done) {
+                Surface(
+                    shape = Corners.pillShape,
+                    color = Color(0xFF1B8A2E),
+                    modifier = Modifier.clickable(onClick = onToggle),
+                ) {
+                    Text(
+                        text = "已出库 · 撤销",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            } else {
+                count?.takeIf { it > 0 }?.let { n ->
+                    Box(
+                        modifier = Modifier
+                            .clip(Corners.chipShape)
+                            .background(Color(0xFFE65100))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = "$n 件待出库",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 出站卡（末尾）：点一下出示取件码。 */
+@Composable
+private fun ExitStepCard(label: String, onShowBarcode: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .clickable(onClick = onShowBarcode),
+        shape = Corners.cardShape,
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFEEF0F4)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF5B6472)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("出", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 10.dp),
+            ) {
+                Text("出站：$label", fontWeight = FontWeight.Medium, color = Color(0xFF39414D))
+                Text(
+                    text = "点击出示取件码",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF5B6472),
+                )
+            }
+        }
     }
 }
 

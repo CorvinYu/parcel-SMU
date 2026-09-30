@@ -267,7 +267,9 @@ fun BarcodeBottomCard(
                     .fillMaxSize()
                     .combinedClickable(
                         // 点一下 = **全屏出示**（用户 2026-10-01：这个功能当年是误解，不能删）
-                        onClick = { if (hasBarcode) onTap() else onOpenSettings() },
+                        // 🔴 条码**不可用**（没有解码内容，只有原图残留也算不可用）时点它**直接进设置页**
+                        //    —— 与「入口/出站」卡片同一口径（用户 2026-10-01）。
+                        onClick = { if (!payload.isNullOrBlank()) onTap() else onOpenSettings() },
                         // 长按 = 进条码设置页
                         onLongClick = { onOpenSettings() },
                     ),
