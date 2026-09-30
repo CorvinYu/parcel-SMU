@@ -662,7 +662,7 @@ private fun GuideSettingsCard(
                     OutlinedButton(onClick = onOpenMapPage) { Text("打开地图取件页") }
                 }
                 Text(
-                    "地图页：顶部＝当前要取的取件码，中间＝地图（货架旁写着取件码），底部＝条码；" +
+                    "地图页：顶部是当前要取的取件码（点击标记已取、再点恢复），中间是地图（货架旁写着取件码），底部是条码；" +
                         "开着时首页右上角菜单里也会出现入口。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,

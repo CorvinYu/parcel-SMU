@@ -31,6 +31,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -380,12 +381,7 @@ fun ParcelList(
         val lastPick = r.stops.take(sfIdx).filterIsInstance<RouteStop.Pickup>().lastOrNull()
         lastPick?.let { stationRoute.addressByCode[it.code.toString()] }
     }
-    // 「入口 / 出站」步骤胶囊的提示（与顺丰出库同一个小窗口口径；文字提示开关关掉时不给文字）
-    val startHint: String? = remember(homeRoute, guideText) {
-        val r = homeRoute ?: return@remember null
-        if (!guideText.onHome) return@remember null
-        r.legs.firstOrNull()?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
-    }
+    // 「出站」步骤的提示（与顺丰出库同一个小窗口口径；文字提示开关关掉时不给文字）
     val exitHint: String? = remember(homeRoute, guideText) {
         val r = homeRoute ?: return@remember null
         if (!guideText.onHome) return@remember null
@@ -470,16 +466,11 @@ fun ParcelList(
             // 出站时也要一个出站胶囊；点这两个胶囊 = 全屏出示条码，因为闸机前只有这两处要用条码）。
             val routeStepsOn = page == 0 && routeSortEnabled && homeRoute?.stops?.isNotEmpty() == true
             if (routeStepsOn) {
-                // 顶部固定一个「入口进站」卡片（点一下 = 全屏出示条码）。
-                // 🔴 「从当前位置继续」那个胶囊已按用户要求**删除**（2026-10-01）：
-                //    它的判定是「最近一次取件记录」，实操中经常是错的 —— 与其显示错误信息不如不显示。
-                //    同时：取到一半时**不再给「怎么走」提示**（那条提示按「从入口出发」算，对已经在站内的人不成立）。
-                entries.add(
-                    ParcelListItem.Step(
-                        StepKind.ENTRANCE,
-                        hint = if (checkoutOrigin == null) startHint else null,
-                    )
-                )
+                // 顶部固定一个「入口进站」卡片（点击出示取件码）。
+                // 🔴 用户 2026-10-01 两条纠正：① 「从当前位置继续」那种**已删除**（判定经常出错）；
+                //    ② 入口这里**不再显示「接下来怎么走」**（和下面的卡片重复，而且按「从入口出发」算的
+                //    提示对已经在站内的人不成立）。
+                entries.add(ParcelListItem.Step(StepKind.ENTRANCE, hint = null))
             }
             pageParcels.forEach { parcel ->
                 val number = routeNumbers[parcel.address]
@@ -580,7 +571,12 @@ fun ParcelList(
                                 )
                             }
 
-                            is ParcelListItem.Step -> RouteStepCard(item, onShowBarcode)
+                            is ParcelListItem.Step -> Column(modifier = Modifier.fillMaxWidth()) {
+                                // 用户 2026-10-01：「怎么走」不要塞在步骤卡里面，而是放在卡的**上方**，
+                                // 与取件卡那一行提示同一套样式（顺丰出库 / 出站都同理）。
+                                item.hint?.let { StepHintChip(it) }
+                                RouteStepCard(item, onShowBarcode)
+                            }
                         }
                     }
                     if (showUnparsedHint) {
@@ -681,9 +677,10 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
         StepKind.EXIT -> "出站" + (step.label?.let { "：$it" } ?: "")
     }
     val subtitle = when (step.kind) {
-        StepKind.ENTRANCE -> "刷码进入 · 取完件从这里开始走"
-        StepKind.SF_CHECKOUT -> "取了顺丰件必须先在这里出库；这台不能出站"
-        StepKind.EXIT -> "出库 ≠ 出站；走到这里才结束"
+        // 用户 2026-10-01：「取完件从这里开始走」不明所以 ⇒ 只留这一句必要的
+        StepKind.ENTRANCE -> "刷码进入"
+        StepKind.SF_CHECKOUT -> "取了顺丰件先在这里出库；这台不能出站"
+        StepKind.EXIT -> "取完件最后从这里出站"
     }
     // 只有「入口」「出站」需要出示条码（其余两步在闸机里不刷码）
     val tappable = step.kind == StepKind.ENTRANCE || step.kind == StepKind.EXIT
@@ -723,18 +720,39 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
             ) {
                 Text(title, fontWeight = FontWeight.Medium, color = titleColor)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                if (step.hint != null) {
-                    Text("→ ${step.hint}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1565C0))
-                }
                 if (tappable) {
                     Text(
-                        "点一下 = 全屏出示条码",
+                        // 用户 2026-10-01：不要用「=」，直接写清楚点它会发生什么
+                        "点击出示取件码",
                         style = MaterialTheme.typography.labelSmall,
                         color = badgeColor,
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * 步骤卡**上方**那一行「怎么走」提示（顺丰出库 / 出站用）。
+ *
+ * 样式与取件卡上方那行提示（`AddressCard` 的 `guideHint`）保持一致：浅蓝底、圆角小块、`→` 开头。
+ */
+@Composable
+private fun StepHintChip(text: String) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 3.dp),
+        shape = Corners.chipShape,
+        color = Color(0xFFE8F0FE),
+    ) {
+        Text(
+            text = "→ $text",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF10366B),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        )
     }
 }
 

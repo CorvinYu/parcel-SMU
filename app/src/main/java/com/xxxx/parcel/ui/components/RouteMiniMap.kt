@@ -131,7 +131,7 @@ fun RouteMiniMap(
     val leg = route.legs.getOrNull(idx)
     val hints = remember(route, idx, target) { leg?.let { VenueGuide.describe(it, target) } ?: emptyList() }
     val mainHints = hints.filter { it.kind == VenueGuide.HintKind.MOVE || it.kind == VenueGuide.HintKind.STUB_IN }
-    val notes = hints.filter { it.kind == VenueGuide.HintKind.NOTE }
+    // NOTE 类注记（走廊名/地标补充）不再显示 —— 用户 2026-10-01：那行灰色小字无意义
     val nextDir = hints.firstOrNull { it.kind == VenueGuide.HintKind.MOVE }?.dir
     val oneLine = mainHints.joinToString(" → ") { if (detail == GuideDetail.FULL) it.text else it.brief }
 
@@ -278,8 +278,10 @@ fun RouteMiniMap(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
+                        // 用户 2026-10-01：只留必要信息 —— 「顶部两指缩放/拖动」「双击可聚焦」这类
+                        // 操作说明属于噪音（手势本来就该自己会），删掉。
                         text = "全程 ${fmtTiles(route.totalTiles)} 格 · " +
-                            if (view == GuideMapView.CLOSEUP) "特写 · 顶部两指缩放/拖动" else "全览 · 双击可聚焦",
+                            if (view == GuideMapView.CLOSEUP) "特写" else "全览",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,
                         maxLines = 1,
@@ -305,7 +307,9 @@ fun RouteMiniMap(
                 }
             }
 
-            if (mainHints.isNotEmpty() || (detail == GuideDetail.FULL && notes.isNotEmpty())) {
+            // 🔴 用户 2026-10-01：这个紫色提示块里那行**灰色小字**（走廊名/地标的补充注记）无意义 ⇒ 删掉，
+            //    只留一行「怎么走」。其他类似的冗余文案也一并清理（见下方标题行的说明）。
+            if (mainHints.isNotEmpty()) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -314,23 +318,13 @@ fun RouteMiniMap(
                     color = MaterialTheme.colorScheme.primaryContainer,
                 ) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                        if (mainHints.isNotEmpty()) {
-                            Text(
-                                text = oneLine,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (detail == GuideDetail.FULL && notes.isNotEmpty()) {
-                            Text(
-                                text = notes.joinToString("；") { it.text },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                maxLines = 3,
-                            )
-                        }
+                        Text(
+                            text = oneLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }

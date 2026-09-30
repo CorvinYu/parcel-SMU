@@ -66,6 +66,7 @@ import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.removeCompletedId
 import com.xxxx.parcel.util.saveMapBarcodeHeightDp
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
@@ -153,28 +154,34 @@ fun MapPageScreen(
     var barcodeHeightDp by remember { mutableIntStateOf(getMapBarcodeHeightDp(context)) }
     val hasBarcode = remember { getBarcodePayload(context) != null || hasBarcodeOriginalImage(context) }
 
-    // 点顶部取件码 = 把**这一组（同货架的全部码）里还没取的**一起标记为已取件
-    val markCompleted: (String) -> Unit = { code ->
+    // 点击当前件：**未取的标记为已取**（同货架的一起），**已取的再点一下恢复为未取件**
+    // （用户 2026-10-01 明确要求可来回切换）
+    val toggleCompleted: (String) -> Unit = { code ->
         val parsed = parseCompartmentCode(code)
-        val targets = if (parsed == null) {
-            emptyList()
-        } else {
-            val shelf = "${parsed.rowLetter.uppercaseChar()}${parsed.shelfNumber}"
-            byCompartment.filterKeys { k ->
-                k.zone == parsed.zone && "${k.rowLetter.uppercaseChar()}${k.shelfNumber}" == shelf
-            }.values.filterNot { it.isCompleted }.distinct()
-        }
-        if (targets.isNotEmpty()) {
-            addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
-            // **显式前进一格**（用户 2026-10-01：点一下应当从「当前 1/50」变成「当前 2/50」）：
-            // 从当前位置往后找第一件还没取的；后面没有了就从头找（跳过的都取完了就停在原地，卡片显示「都取完了」）。
-            val nowDone = completedCodes + targets.map { t ->
-                parseCompartmentCode(effectiveCompartmentNumber(t.compartmentNumber, t.code))?.toString() ?: t.code
+        val target = parsed?.let { byCompartment[it] }
+        when {
+            parsed == null || target == null -> Unit
+            // 恢复未取件：只恢复**这一件**（同货架其他件是先前单独取的，不替他决定）
+            target.isCompleted -> removeCompletedId(context, viewModel, target.sms, target.code)
+            else -> {
+                val shelf = "${parsed.rowLetter.uppercaseChar()}${parsed.shelfNumber}"
+                val targets = byCompartment.filterKeys { k ->
+                    k.zone == parsed.zone && "${k.rowLetter.uppercaseChar()}${k.shelfNumber}" == shelf
+                }.values.filterNot { it.isCompleted }.distinct()
+                if (targets.isNotEmpty()) {
+                    addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
+                    // **显式前进一格**（用户 2026-10-01：点一下应当从「当前 1/50」变成「当前 2/50」）：
+                    // 从当前位置往后找第一件还没取的；后面没有了就从头找（都取完了就停在原地）。
+                    val nowDone = completedCodes + targets.map { t ->
+                        parseCompartmentCode(effectiveCompartmentNumber(t.compartmentNumber, t.code))
+                            ?.toString() ?: t.code
+                    }
+                    val from = if (cur in tripPickups.indices) cur else 0
+                    val next = ((from + 1) until tripPickups.size).firstOrNull { tripPickups[it].second !in nowDone }
+                        ?: (0 until tripPickups.size).firstOrNull { tripPickups[it].second !in nowDone }
+                    currentPickup = next ?: from
+                }
             }
-            val from = if (cur in tripPickups.indices) cur else 0
-            val next = ((from + 1) until tripPickups.size).firstOrNull { tripPickups[it].second !in nowDone }
-                ?: (0 until tripPickups.size).firstOrNull { tripPickups[it].second !in nowDone }
-            currentPickup = next ?: from
         }
     }
 
@@ -208,7 +215,7 @@ fun MapPageScreen(
                 legTiles = route.legs.getOrNull(currentStopIndex)?.tiles,
                 totalTiles = route.totalTiles,
                 onJump = { currentPickup = it },
-                onMarkCompleted = markCompleted,
+                onToggleCompleted = toggleCompleted,
             )
 
             // ── 整段序列（横向可滑）：已取的**留在原位**、变灰 + 删除线；点任意一格可翻回去看
@@ -309,7 +316,7 @@ private fun TripStopCard(
     legTiles: Double?,
     totalTiles: Double,
     onJump: (Int) -> Unit,
-    onMarkCompleted: (String) -> Unit,
+    onToggleCompleted: (String) -> Unit,
 ) {
     if (pickups.isEmpty()) {
         Card(
@@ -355,8 +362,8 @@ private fun TripStopCard(
                     onHorizontalDrag = { _, delta -> dragX += delta },
                 )
             }
-            // 已经取过的这件就别再点了（避免误触把别的格当成已取）
-            .clickable(enabled = !isDone) { onMarkCompleted(code) },
+            // 点击切换：未取 ⇒ 已取；已取 ⇒ 恢复未取（用户 2026-10-01）
+            .clickable { onToggleCompleted(code) },
         shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
@@ -425,8 +432,9 @@ private fun TripStopCard(
             Text(
                 when {
                     allDone -> "整段都取完了 · 按「出站」指引离开"
-                    isDone -> "这件已经取过 · 点下面的序列继续下一件"
-                    else -> "点一下＝已取件 · 左右滑＝换一件 · 下方可翻看整段"
+                    isDone -> "再次点击可恢复为未取件"
+                    // 用户 2026-10-01：不要用「=」
+                    else -> "点击标记已取 · 左右滑切换 · 下方可翻看整段"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
