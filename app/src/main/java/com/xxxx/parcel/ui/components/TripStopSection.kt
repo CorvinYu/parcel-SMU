@@ -26,9 +26,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +45,9 @@ import com.xxxx.parcel.model.SmsData
 import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.CompartmentCode
 import com.xxxx.parcel.util.PickupRoute
+import com.xxxx.parcel.util.PickupZone
 import com.xxxx.parcel.util.RouteOptions
+import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.parseCompartmentCode
@@ -53,54 +55,75 @@ import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.removeCompletedId
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
+/** 行程里的一步。 */
+enum class TripStepKind { PICKUP, SF_CHECKOUT, EXIT }
+
 /**
- * **整段行程**的展示状态：**含已经取掉的**，顺序**冻结**。
+ * 行程的一步：取件 / 顺丰出库 / 出站。
  *
- * 用户 2026-10-01：「点一下应当从『当前 1/50』变成『当前 2/50』，不是『当前 1/49』」——
- * 所以这里用「全部快递站取件码（含已取）」一次性规划，标记已取**不会**重排、也不会改分母。
+ * [stopIndex] 是它在 `route.stops` 里的下标；**已出库之后**顺丰出库点已不在路线里，
+ * 那一步的 [stopIndex] 为 -1（`sfDone = true`），地图保持在上一个真实停靠点。
+ */
+data class TripStep(
+    val kind: TripStepKind,
+    val stopIndex: Int,
+    val code: String? = null,
+    val sfDone: Boolean = false,
+)
+
+/**
+ * **整段行程**的展示状态：**含已经取掉的**，顺序**冻结**（来自路线本身）。
+ *
+ * 用户 2026-10-01：
+ * - 「点一下从『当前 1/50』变『当前 2/50』」⇒ 用「全部快递站取件码」一次性规划，标记已取不重排、不改分母；
+ * - 「顺丰出库 / 出站要作为卡片**插在序列里**（轮到它时地图正好显示去顺丰的路）」⇒
+ *   [steps] 直接按 `route.stops` 顺序生成，顺丰出库点的位置由规划器（Held–Karp）在
+ *   「所有 S 件之后」的合法位置里挑最优，**保底在出站之前**；
+ * - 已出库后那一步仍然保留（灰掉、可撤销），不会凭空消失。
  */
 data class TripView(
     val route: PickupRoute,
-    /** 取件站：(在 route.stops 里的下标, 取件码)，顺序与地图/路线一致 */
-    val pickups: List<Pair<Int, String>>,
-    /** 已取的取件码 */
     val completed: Set<String>,
-    /** 有效货格号 → 短信（用于取地址、以及标记/取消已取件） */
     val byCompartment: Map<CompartmentCode, SmsData>,
+    /** 按路线顺序的全部步骤（取件 + 顺丰出库 + 出站） */
+    val steps: List<TripStep>,
 ) {
-    /** 第一件还没取的（-1 = 全取完） */
-    val firstPending: Int get() = pickups.indexOfFirst { it.second !in completed }
+    val pickupTotal: Int get() = steps.count { it.kind == TripStepKind.PICKUP }
 
-    /** 把「用户选中的那一件」夹到合法范围：没选过 / 越界 ⇒ 第一件未取的；都取完 ⇒ 最后一件 */
-    fun clampCurrent(selected: Int?): Int =
-        selected?.takeIf { it in pickups.indices }
-            ?: firstPending.takeIf { it >= 0 }
-            ?: pickups.lastIndex.coerceAtLeast(0)
-
-    /** 这段行程里有没有顺丰（S 区）件 —— 决定要不要显示「顺丰出库」卡 */
     val hasSfCodes: Boolean
-        get() = pickups.any {
-            parseCompartmentCode(it.second)?.zone == com.xxxx.parcel.util.PickupZone.SF
-        }
+        get() = steps.any { it.kind == TripStepKind.PICKUP && parseCompartmentCode(it.code.orEmpty())?.zone == PickupZone.SF }
 
-    /** 件下标 → 地图用的站下标（route.stops 的下标） */
-    fun stopIndexOf(current: Int): Int = when {
-        current in pickups.indices -> pickups[current].first
-        pickups.isNotEmpty() -> pickups.last().first
-        else -> 0
+    /** 该步是第几件取件（1 起）；非取件步返回 null */
+    fun pickupNo(stepIndex: Int): Int? {
+        if (stepIndex !in steps.indices) return null
+        if (steps[stepIndex].kind != TripStepKind.PICKUP) return null
+        return steps.take(stepIndex + 1).count { it.kind == TripStepKind.PICKUP }
     }
 
     /**
-     * 地图/提示该高亮的那一站。
-     *
-     * 🔴 用户 2026-10-01：**全部取完之后地图要跳到「前往出口」**（原来停在最后一件取件格上）——
-     * 所以全取完时返回「最后一件取件点**之后**的那一站」＝ 顺丰出库（若有）或出站口。
+     * 第一个**需要动手**的步（按路线顺序）：还没取的取件，或还没出库的顺丰出库。
+     * 都做完了 ⇒ 停在出站那一步（地图这时正好显示去出口的路）。
      */
-    fun focusStopIndex(current: Int): Int {
-        if (firstPending >= 0) return stopIndexOf(current)
-        val lastPickupStop = pickups.lastOrNull()?.first ?: 0
-        val after = lastPickupStop + 1
-        return if (after in route.stops.indices) after else route.stops.lastIndex.coerceAtLeast(0)
+    fun firstPendingStep(): Int {
+        val action = steps.indexOfFirst { s ->
+            (s.kind == TripStepKind.PICKUP && s.code !in completed) ||
+                (s.kind == TripStepKind.SF_CHECKOUT && !s.sfDone)
+        }
+        if (action >= 0) return action
+        val exit = steps.indexOfFirst { it.kind == TripStepKind.EXIT }
+        return if (exit >= 0) exit else 0
+    }
+
+    /** 把「用户选中的那一步」夹到合法范围 */
+    fun clampCurrent(selected: Int?): Int =
+        selected?.takeIf { it in steps.indices } ?: firstPendingStep()
+
+    /** 这一步对应的地图站下标；已出库的顺丰步（-1）退回「前一个真实站」 */
+    fun mapStopIndex(stepIndex: Int): Int {
+        val s = steps.getOrNull(stepIndex) ?: return 0
+        if (s.stopIndex >= 0) return s.stopIndex
+        val prev = steps.take(stepIndex).map { it.stopIndex }.lastOrNull { it >= 0 }
+        return prev ?: route.stops.lastIndex.coerceAtLeast(0)
     }
 }
 
@@ -109,7 +132,7 @@ data class TripView(
 fun rememberTripView(
     successData: List<SmsData>,
     options: RouteOptions,
-    /** 顺丰是否已出库（用户点过「顺丰出库」卡片）⇒ 路线不再绕出库机 */
+    /** 顺丰是否已出库（用户点过「顺丰出库」卡片）⇒ 路线不再绕出库机，但那一步仍保留（灰掉可撤销） */
     sfCheckedOut: Boolean = false,
 ): TripView {
     val tripCodes = remember(successData) {
@@ -127,12 +150,6 @@ fun rememberTripView(
             .map { effectiveCompartmentNumber(it.compartmentNumber, it.code) }
             .toSet()
     }
-    val pickups = remember(route) {
-        route.stops.mapIndexedNotNull { i, s ->
-            (s as? com.xxxx.parcel.util.RouteStop.Pickup)?.let { i to it.code.toString() }
-        }
-    }
-    // 🔴 按**有效货格号**建索引（短信里的取件码未必等于货格号，如取件码 2628 / 货格号 S3-2-2628）
     val byCompartment = remember(successData) {
         buildMap {
             successData.forEach { s ->
@@ -140,16 +157,36 @@ fun rememberTripView(
             }
         }
     }
-    return remember(route, pickups, completed, byCompartment) {
-        TripView(route, pickups, completed, byCompartment)
+    val steps = remember(route, completed, sfCheckedOut) {
+        buildList {
+            route.stops.forEachIndexed { i, s ->
+                when (s) {
+                    is RouteStop.Pickup -> add(TripStep(TripStepKind.PICKUP, i, s.code.toString()))
+                    RouteStop.SfCheckout -> add(TripStep(TripStepKind.SF_CHECKOUT, i))
+                    is RouteStop.Exit -> add(TripStep(TripStepKind.EXIT, i))
+                }
+            }
+            // 已出库 ⇒ 路线里不再有顺丰出库点，但**这一步仍然保留在序列里**（灰掉、可撤销），
+            // 位置 = 最后一个 S 取件点之后（没有 S 就放最前面）。
+            if (sfCheckedOut) {
+                val hasSfPick = any { it.kind == TripStepKind.PICKUP && parseCompartmentCode(it.code.orEmpty())?.zone == PickupZone.SF }
+                if (hasSfPick && none { it.kind == TripStepKind.SF_CHECKOUT }) {
+                    val after = indexOfLast { it.kind == TripStepKind.PICKUP && parseCompartmentCode(it.code.orEmpty())?.zone == PickupZone.SF }
+                    add(after + 1, TripStep(TripStepKind.SF_CHECKOUT, -1, sfDone = true))
+                }
+            }
+        }
+    }
+    return remember(route, completed, byCompartment, steps) {
+        TripView(route, completed, byCompartment, steps)
     }
 }
 
 /**
- * 行程顶部整体：**当前取件码卡**（点击标记已取、再点恢复）+ 下方**横向可滑的整段序列**。
+ * 行程顶部整体：**当前这一步的卡**（取件 / 顺丰出库 / 出站）+ 下方横向可滑的整段序列。
  *
- * 用户 2026-10-01：首页地图的「全屏」页也要有这么一整块（与地图取件页完全一致），
- * 所以把它抽成公共组件，两处共用。
+ * 顺丰出库与出站**就是序列里的两张卡**（不是另外挂在下面）：轮到顺丰出库那一步时，
+ * 地图的高亮正好是「去顺丰专用闸机」的那一段（用户 2026-10-01）。
  */
 @Composable
 fun TripStopSection(
@@ -159,7 +196,7 @@ fun TripStopSection(
     current: Int?,
     onCurrentChange: (Int?) -> Unit,
     modifier: Modifier = Modifier,
-    /** 顺丰是否已出库（状态由调用方持有；点卡片可切换） */
+    /** 顺丰是否已出库（状态由调用方持有；点顺丰卡可切换） */
     sfCheckedOut: Boolean = false,
     onToggleSfDone: () -> Unit = {},
     /** 「N 件待出库」提醒（菜单里可关） */
@@ -169,238 +206,104 @@ fun TripStopSection(
     onShowBarcode: () -> Unit = {},
 ) {
     val cur = view.clampCurrent(current)
-    val allDone = view.firstPending < 0
+    val curStep = view.steps.getOrNull(cur)
     val addressOf: (String) -> String = { code ->
         view.byCompartment[parseCompartmentCode(code)]?.address.orEmpty()
     }
 
-    // 点击当前件：未取 ⇒ 标记**这一件**；已取 ⇒ 再点一下恢复为未取件
-    // 🔴 用户 2026-10-01 纠正：原来「同货架一起标记」，一个货架两件时点一下两件都变已取、
-    //    很容易漏件（人以为还有一件要拿，其实已被标掉）⇒ 现在**一次只标记一件**。
-    val toggle: (String) -> Unit = { code ->
-        val parsed = parseCompartmentCode(code)
-        val target = parsed?.let { view.byCompartment[it] }
-        when {
-            parsed == null || target == null -> Unit
-            target.isCompleted -> removeCompletedId(context, viewModel, target.sms, target.code)
-            else -> {
-                addCompletedIds(context, viewModel, listOf(target.sms), listOf(target.code))
-                // **显式前进一格**（1/50 → 2/50）：从当前位置往后找第一件还没取的
-                val nowDone = view.completed + code
-                val from = if (cur in view.pickups.indices) cur else 0
-                val size = view.pickups.size
-                val next = ((from + 1) until size).firstOrNull { view.pickups[it].second !in nowDone }
-                    ?: (0 until size).firstOrNull { view.pickups[it].second !in nowDone }
-                onCurrentChange(next ?: from)
-            }
-        }
-    }
-
-    Column(modifier = modifier.fillMaxWidth()) {
-        TripStopCard(
-            pickups = view.pickups,
-            current = cur,
-            completed = view.completed,
-            allDone = allDone,
-            addressOf = addressOf,
-            legTiles = view.route.legs.getOrNull(view.focusStopIndex(cur))?.tiles,
-            totalTiles = view.route.totalTiles,
-            onJump = { onCurrentChange(it) },
-            onToggleCompleted = toggle,
-        )
-        TripStrip(
-            pickups = view.pickups,
-            current = cur,
-            completed = view.completed,
-            onJump = { onCurrentChange(it) },
-        )
-        // 🔴 用户 2026-10-01：「地图取件」页顶部也要有**顺丰出库卡**（点击 = 已出库）与**末尾的出站卡**
-        if (view.hasSfCodes || sfCheckedOut) {
-            SfStepCard(
-                done = sfCheckedOut,
-                count = if (showSfCount && !sfCheckedOut) sfPendingCount else null,
-                onToggle = onToggleSfDone,
-            )
-        }
-        if (view.route.stops.any { it is com.xxxx.parcel.util.RouteStop.Exit }) {
-            ExitStepCard(label = view.route.exit.label, onShowBarcode = onShowBarcode)
-        }
-    }
-}
-
-/** 顺丰出库卡（点一下 = 已出库，再点撤销）—— 与首页列表里的那张同一套说法与配色。 */
-@Composable
-private fun SfStepCard(done: Boolean, count: Int?, onToggle: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-            .clickable(onClick = onToggle),
-        shape = Corners.cardShape,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE65100)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("SF", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 10.dp),
-            ) {
-                Text(
-                    text = "顺丰出库（顺丰专用闸机）",
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFE65100),
-                )
-                Text(
-                    text = if (done) "已经出库了；点击可撤销" else "取了顺丰件先在这里出库；这台不能出站",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    text = if (done) "已出库 ✓" else "点击表示已出库",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFE65100),
-                )
-            }
-            if (done) {
-                Surface(
-                    shape = Corners.pillShape,
-                    color = Color(0xFF1B8A2E),
-                    modifier = Modifier.clickable(onClick = onToggle),
-                ) {
-                    Text(
-                        text = "已出库 · 撤销",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
-                }
-            } else {
-                count?.takeIf { it > 0 }?.let { n ->
-                    Box(
-                        modifier = Modifier
-                            .clip(Corners.chipShape)
-                            .background(Color(0xFFE65100))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = "$n 件待出库",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                        )
+    // 点击：
+    //  取件 ⇒ 标记**这一件**已取（再点恢复）；顺丰出库 ⇒ 已出库（再点撤销）；出站 ⇒ 出示取件码
+    val toggle: (TripStep) -> Unit = { step ->
+        when (step.kind) {
+            TripStepKind.EXIT -> onShowBarcode()
+            TripStepKind.SF_CHECKOUT -> onToggleSfDone()
+            TripStepKind.PICKUP -> {
+                val code = step.code.orEmpty()
+                val target = parseCompartmentCode(code)?.let { view.byCompartment[it] }
+                when {
+                    target == null -> Unit
+                    target.isCompleted -> removeCompletedId(context, viewModel, target.sms, target.code)
+                    else -> {
+                        addCompletedIds(context, viewModel, listOf(target.sms), listOf(target.code))
+                        // **按路线顺序前进**：下一件还没取的取件，或（没出库时）顺丰出库那一步。
+                        // 🔴 用户 2026-10-01：「轮到顺丰出库这张卡片的时候，地图上正好显示去顺丰的路」
+                        //    ⇒ 取完最后一件 S 件后，当前步应当落在**顺丰出库**那一步（而不是跳去下一件普通件）。
+                        val nowDone = view.completed + code
+                        val from = cur
+                        val nextAction = ((from + 1) until view.steps.size).firstOrNull { s ->
+                            val st = view.steps[s]
+                            (st.kind == TripStepKind.PICKUP && st.code !in nowDone) ||
+                                (st.kind == TripStepKind.SF_CHECKOUT && !st.sfDone)
+                        }
+                        val exitStep = view.steps.indexOfFirst { it.kind == TripStepKind.EXIT }
+                            .takeIf { it >= 0 }
+                        onCurrentChange(nextAction ?: exitStep ?: from)
                     }
                 }
             }
         }
     }
-}
 
-/** 出站卡（末尾）：点一下出示取件码。 */
-@Composable
-private fun ExitStepCard(label: String, onShowBarcode: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-            .clickable(onClick = onShowBarcode),
-        shape = Corners.cardShape,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFEEF0F4)),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF5B6472)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("出", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 10.dp),
-            ) {
-                Text("出站：$label", fontWeight = FontWeight.Medium, color = Color(0xFF39414D))
-                Text(
-                    text = "点击出示取件码",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF5B6472),
-                )
-            }
-        }
+    Column(modifier = modifier.fillMaxWidth()) {
+        TripStepCard(
+            step = curStep,
+            currentIndex = cur,
+            stepCount = view.steps.size,
+            pickupNo = view.pickupNo(cur),
+            pickupTotal = view.pickupTotal,
+            done = when (curStep?.kind) {
+                TripStepKind.PICKUP -> curStep.code?.let { it in view.completed } == true
+                TripStepKind.SF_CHECKOUT -> sfCheckedOut
+                else -> false
+            },
+            addressOf = addressOf,
+            legTiles = view.route.legs.getOrNull(view.mapStopIndex(cur))?.tiles,
+            totalTiles = view.route.totalTiles,
+            exitLabel = view.route.exit.label,
+            sfCount = if (showSfCount && !sfCheckedOut) sfPendingCount else null,
+            onJump = { onCurrentChange(it) },
+            onTap = { curStep?.let(toggle) },
+        )
+        TripStrip(
+            steps = view.steps,
+            current = cur,
+            completed = view.completed,
+            sfCheckedOut = sfCheckedOut,
+            onJump = { onCurrentChange(it) },
+        )
     }
 }
 
-/** 当前件卡：位置（分母固定 = 整段件数）+ 大号取件码 + 地址 + 本段/全程格数。 */
+/** 当前这一步的卡（取件 / 顺丰出库 / 出站三种版式）。 */
 @Composable
-private fun TripStopCard(
-    pickups: List<Pair<Int, String>>,
-    current: Int,
-    completed: Set<String>,
-    allDone: Boolean,
+private fun TripStepCard(
+    step: TripStep?,
+    currentIndex: Int,
+    stepCount: Int,
+    pickupNo: Int?,
+    pickupTotal: Int,
+    done: Boolean,
     addressOf: (String) -> String,
     legTiles: Double?,
     totalTiles: Double,
+    exitLabel: String,
+    sfCount: Int?,
     onJump: (Int) -> Unit,
-    onToggleCompleted: (String) -> Unit,
+    onTap: () -> Unit,
 ) {
-    if (pickups.isEmpty()) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            shape = Corners.cardShape,
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                Text("还没有可规划的取件码", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    "需要「快递站」页里有带「货格号」的取件码（已经取掉的也会留在序列里）。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
-            }
-        }
-        return
-    }
-    val idx = current.coerceIn(0, pickups.size - 1)
-    val code = pickups[idx].second
-    val isDone = code in completed
-    val address = addressOf(code)
-    var dragX by remember(idx) { mutableFloatStateOf(0f) }
+    if (step == null) return
+    var dragX by remember(step) { mutableFloatStateOf(0f) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
-            .pointerInput(idx) {
+            .pointerInput(step) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         when {
-                            dragX <= -60f -> onJump(idx + 1)
-                            dragX >= 60f -> onJump(idx - 1)
+                            dragX <= -60f && currentIndex < stepCount - 1 -> onJump(currentIndex + 1)
+                            dragX >= 60f && currentIndex > 0 -> onJump(currentIndex - 1)
                         }
                         dragX = 0f
                     },
@@ -408,61 +311,118 @@ private fun TripStopCard(
                     onHorizontalDrag = { _, delta -> dragX += delta },
                 )
             }
-            .clickable { onToggleCompleted(code) },
+            .clickable(onClick = onTap),
         shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "当前 ${idx + 1}/${pickups.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                        if (isDone) {
+                    when (step.kind) {
+                        TripStepKind.PICKUP -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "当前 ${pickupNo ?: 1}/$pickupTotal",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.outline,
+                                )
+                                if (done) {
+                                    Text(
+                                        "已取",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier
+                                            .padding(start = 6.dp)
+                                            .clip(Corners.chipShape)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
                             Text(
-                                "已取",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier
-                                    .padding(start = 6.dp)
-                                    .clip(Corners.chipShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                text = step.code.orEmpty(),
+                                textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
+                                color = if (done) {
+                                    MaterialTheme.colorScheme.outline
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            val address = addressOf(step.code.orEmpty())
+                            if (address.isNotBlank()) {
+                                Text(
+                                    address,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+
+                        TripStepKind.SF_CHECKOUT -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("顺丰出库", style = MaterialTheme.typography.labelMedium, color = Color(0xFFE65100))
+                                if (done) {
+                                    Text(
+                                        "已出库 ✓",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF1B8A2E),
+                                        modifier = Modifier
+                                            .padding(start = 6.dp)
+                                            .clip(Corners.chipShape)
+                                            .background(Color(0xFFE7F6E9))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "顺丰专用闸机",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE65100),
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = if (done) "已经出库了；点击可撤销" else "取了顺丰件先在这里出库；这台不能出站",
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
+
+                        TripStepKind.EXIT -> {
+                            Text("出站", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                            Text(
+                                text = exitLabel,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF39414D),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("点击出示取件码", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
-                    Text(
-                        text = code,
-                        textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None,
-                        color = if (isDone) {
-                            MaterialTheme.colorScheme.outline
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
-                IconButton(onClick = { onJump(idx - 1) }, enabled = idx > 0) {
-                    Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "上一件")
+                if (step.kind == TripStepKind.SF_CHECKOUT && sfCount != null && sfCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .clip(Corners.chipShape)
+                            .background(Color(0xFFE65100))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = "$sfCount 件待出库",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
                 }
-                IconButton(onClick = { onJump(idx + 1) }, enabled = idx < pickups.size - 1) {
-                    Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "下一件")
-                }
-            }
-            if (address.isNotBlank()) {
-                Text(
-                    address,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             if (legTiles != null) {
                 Text(
@@ -473,10 +433,13 @@ private fun TripStopCard(
                 )
             }
             Text(
-                when {
-                    allDone -> "整段都取完了 · 按「出站」指引离开"
-                    isDone -> "再次点击可恢复为未取件"
-                    else -> "点击标记已取 · 左右滑切换 · 下方可翻看整段"
+                when (step.kind) {
+                    TripStepKind.PICKUP -> when {
+                        done -> "再次点击可恢复为未取件"
+                        else -> "点击标记已取 · 左右滑切换 · 下方可翻看整段"
+                    }
+                    TripStepKind.SF_CHECKOUT -> if (done) "已出库 ✓" else "点击表示已出库"
+                    TripStepKind.EXIT -> "出库 ≠ 出站；走到这里才结束"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
@@ -486,19 +449,20 @@ private fun TripStopCard(
     }
 }
 
-/** 整段序列（横向可滑）：`序号 · 取件码`；已取的留在原位、灰 + 删除线，点任意一格可翻回去看。 */
+/** 整段序列（横向可滑）：取件写「序号 · 取件码」，顺丰出库写 `SF`、出站写 `出`。 */
 @Composable
 private fun TripStrip(
-    pickups: List<Pair<Int, String>>,
+    steps: List<TripStep>,
     current: Int,
     completed: Set<String>,
+    sfCheckedOut: Boolean,
     onJump: (Int) -> Unit,
 ) {
-    if (pickups.isEmpty()) return
+    if (steps.isEmpty()) return
     val scroll = rememberScrollState()
     val density = LocalDensity.current
-    LaunchedEffect(current, pickups.size) {
-        if (current in pickups.indices) {
+    LaunchedEffect(current, steps.size) {
+        if (current in steps.indices) {
             val approx = with(density) { (current * 78).dp.roundToPx() }
             scroll.animateScrollTo(approx.coerceIn(0, scroll.maxValue))
         }
@@ -511,11 +475,24 @@ private fun TripStrip(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        pickups.forEachIndexed { i, pair ->
-            val done = pair.second in completed
+        var pickupSeen = 0
+        steps.forEachIndexed { i, step ->
             val isCur = i == current
+            val done = when (step.kind) {
+                TripStepKind.PICKUP -> {
+                    pickupSeen += 1
+                    step.code in completed
+                }
+                TripStepKind.SF_CHECKOUT -> sfCheckedOut
+                TripStepKind.EXIT -> false
+            }
+            val text = when (step.kind) {
+                TripStepKind.PICKUP -> "$pickupSeen · ${step.code}"
+                TripStepKind.SF_CHECKOUT -> if (done) "SF ✓" else "SF"
+                TripStepKind.EXIT -> "出"
+            }
             Text(
-                text = "${i + 1} · ${pair.second}",
+                text = text,
                 textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
                 color = when {
                     isCur -> MaterialTheme.colorScheme.onPrimary

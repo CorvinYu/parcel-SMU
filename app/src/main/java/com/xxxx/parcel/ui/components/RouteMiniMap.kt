@@ -709,21 +709,23 @@ private fun DrawScope.drawVenue(
         i += 3
     }
 
-    // ⑤ 路线：已走过（灰）/ 当前段（蓝 + 光晕）/ 之后（浅蓝），圆头线
+    // ⑤ 路线：已走过（灰）/ 当前段（蓝 + 光晕）/ 之后（浅蓝），圆头线。
+    // 🔴 用户 2026-10-01：「越往后图层越高 ⇒ 未高亮的路线会盖住高亮的那一段」⇒ 分两遍画：
+    //    先把**非当前段**全部画完，最后再画**当前段**（含光晕）⇒ 高亮永远在最上层。
     val lineW = (cell * 0.8f).coerceIn(2.5f, 7f)
     route.legs.forEachIndexed { legIndex, leg ->
+        if (legIndex == idx) return@forEachIndexed
         val cells = leg.cells
         if (cells.size < 2) return@forEachIndexed
-        val color = when {
-            legIndex < idx -> pal.routeDone
-            legIndex == idx -> pal.accent
-            else -> pal.routeTodo
+        val color = if (legIndex < idx) pal.routeDone else pal.routeTodo
+        drawPathOf(cells, ::px, ::py, cell, color, lineW * 0.8f)
+    }
+    route.legs.getOrNull(idx)?.let { leg ->
+        val cells = leg.cells
+        if (cells.size >= 2) {
+            drawPathOf(cells, ::px, ::py, cell, pal.accent.copy(alpha = 0.18f), lineW * 2.6f)
+            drawPathOf(cells, ::px, ::py, cell, pal.accent, lineW)
         }
-        val w = if (legIndex == idx) lineW else lineW * 0.8f
-        if (legIndex == idx) {
-            drawPathOf(cells, ::px, ::py, cell, pal.accent.copy(alpha = 0.18f), w * 2.6f)
-        }
-        drawPathOf(cells, ::px, ::py, cell, color, w)
     }
 
     // ⑥ 行进光点：沿当前段跑（像外卖 App）

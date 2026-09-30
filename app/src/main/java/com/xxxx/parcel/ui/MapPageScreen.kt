@@ -90,8 +90,9 @@ fun MapPageScreen(
     // 当前件在序列里的位置（null = 还没选过 ⇒ 第一件未取的）；允许停在已取的那一件上翻看
     var currentPickup by remember { mutableStateOf<Int?>(null) }
     val cur = trip.clampCurrent(currentPickup)
-    // 🔴 全取完之后要跳到「前往出口」那一站（用户 2026-10-01）
-    val currentStopIndex = trip.focusStopIndex(cur)
+    // 🔴 地图高亮的那一站：直接取「当前这一步」对应的站下标（顺丰出库 / 出站也是序列里的步 ⇒
+    // 轮到顺丰出库时地图正好显示去顺丰的路；都取完时停在出站那一步）
+    val currentStopIndex = trip.mapStopIndex(cur)
     // 刚取完的那一件 ⇒ 图上留个灰 ✓
     val checkoutOrigin = remember(successData, options) { lastCheckoutOrigin(context, options) }
     var barcodeFull by remember { mutableStateOf(false) }
@@ -160,7 +161,7 @@ fun MapPageScreen(
                     // 🔴 地图上的 ◀ ▶ 传的是**站在 route.stops 里的下标**（含顺丰出库/出站这种非取件站），
                     //    而这里存的是**件在序列里的下标** ⇒ 必须反过来映射一次，否则一按就跳错件。
                     onCurrentStopChange = { stopIdx ->
-                        trip.pickups.indexOfFirst { it.first == stopIdx }
+                        trip.steps.indexOfFirst { it.stopIndex == stopIdx }
                             .takeIf { it >= 0 }
                             ?.let { currentPickup = it }
                     },

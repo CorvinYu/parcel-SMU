@@ -531,7 +531,7 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(6.dp))
                             RouteMiniMap(
                                 route = tripView.route,
-                                currentStop = tripView.stopIndexOf(tripView.clampCurrent(fsCurrent)),
+                                currentStop = tripView.mapStopIndex(tripView.clampCurrent(fsCurrent)),
                                 detail = guideDetail,
                                 // 全屏也跟随「地图视图」设置（默认特写）
                                 initialView = getGuideMapView(context),
