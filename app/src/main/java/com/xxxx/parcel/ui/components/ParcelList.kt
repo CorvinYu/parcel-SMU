@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -75,6 +76,7 @@ import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.hasRecentSfCheckout
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.loadStableNumbers
 import com.xxxx.parcel.util.planPickupRoute
@@ -277,6 +279,9 @@ fun ParcelList(
     val checkoutOrigin = remember(filteredParcelsData, routeOptions) {
         lastCheckoutOrigin(context, routeOptions)
     }
+    // 「本次行程取过顺丰件」：读时间窗内的已取件记录（**不能只看当前路线** —— 取完 S 之后路线里就没有 S 了）。
+    // 键用 filteredParcelsData：每次标记/取消已取件它都会变 ⇒ 记录变了就能立刻重算。
+    val sfTakenThisTrip = remember(filteredParcelsData) { hasRecentSfCheckout(context) }
     val stationRoute = remember(filteredParcelsData, routeOptions, checkoutOrigin) {
         planStationRoute(
             filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
@@ -465,13 +470,15 @@ fun ParcelList(
             // 出站时也要一个出站胶囊；点这两个胶囊 = 全屏出示条码，因为闸机前只有这两处要用条码）。
             val routeStepsOn = page == 0 && routeSortEnabled && homeRoute?.stops?.isNotEmpty() == true
             if (routeStepsOn) {
+                // 顶部固定一个「入口进站」卡片（点一下 = 全屏出示条码）。
+                // 🔴 「从当前位置继续」那个胶囊已按用户要求**删除**（2026-10-01）：
+                //    它的判定是「最近一次取件记录」，实操中经常是错的 —— 与其显示错误信息不如不显示。
+                //    同时：取到一半时**不再给「怎么走」提示**（那条提示按「从入口出发」算，对已经在站内的人不成立）。
                 entries.add(
-                    if (checkoutOrigin != null) {
-                        // 取到一半接着走：起点是「刚取完的那一件」，不再是入口
-                        ParcelListItem.Step(StepKind.CONTINUE, startHint, checkoutOrigin.label)
-                    } else {
-                        ParcelListItem.Step(StepKind.ENTRANCE, startHint)
-                    }
+                    ParcelListItem.Step(
+                        StepKind.ENTRANCE,
+                        hint = if (checkoutOrigin == null) startHint else null,
+                    )
                 )
             }
             pageParcels.forEach { parcel ->
@@ -492,13 +499,20 @@ fun ParcelList(
                     )
                 )
             }
-            // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后
-            if (page == 0 && routeSortEnabled && homeRoute?.hasSfCheckout == true && sfAfterAddress != null) {
+            // 顺丰出库：与 HTML 版的停靠序列一致，把它当成**显式一步**插在最后一个 S 件之后。
+            // 🔴 只要**本次行程取过顺丰件**就必须一直显示（用户 2026-10-01 实测：把 S 件的取件码标记为已取后，
+            //    路线里就没有 S 件了 ⇒ hasSfCheckout 变 false ⇒ 这一步凭空消失，可人还没去闸机出库）。
+            //    所以条件是「路线里还有 S 件」**或**「时间窗内取过 S 区的件」。
+            val sfStepVisible = homeRoute?.hasSfCheckout == true || sfTakenThisTrip
+            if (page == 0 && routeSortEnabled && sfStepVisible) {
                 val anchor = entries.indexOfLast {
                     (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
                 }
                 if (anchor >= 0) {
                     entries.add(anchor + 1, ParcelListItem.Step(StepKind.SF_CHECKOUT, sfCheckoutHint))
+                } else {
+                    // S 件已经被取完（或者列表隐藏了已取件）⇒ 找不到锚点，放到普通件之后、出站之前
+                    entries.add(ParcelListItem.Step(StepKind.SF_CHECKOUT, sfCheckoutHint))
                 }
             }
             // 出站：路线永远终于出站口（出库 ≠ 出站），所以它是列表最后一步
@@ -566,7 +580,7 @@ fun ParcelList(
                                 )
                             }
 
-                            is ParcelListItem.Step -> RouteStepCapsule(item, onShowBarcode)
+                            is ParcelListItem.Step -> RouteStepCard(item, onShowBarcode)
                         }
                     }
                     if (showUnparsedHint) {
@@ -625,9 +639,6 @@ private enum class StepKind {
     /** 入口进站（刷码进入）——点一下 = 全屏出示条码 */
     ENTRANCE,
 
-    /** 取到一半接着走：起点是刚取完的那一件，不再从入口进 */
-    CONTINUE,
-
     /** 顺丰出库（专用闸机，不能出站） */
     SF_CHECKOUT,
 
@@ -636,16 +647,19 @@ private enum class StepKind {
 }
 
 /**
- * 路线步骤胶囊（入口 / 当前位置 / 顺丰出库 / 出站）。
+ * 路线步骤卡片（入口 / 顺丰出库 / 出站）。
  *
- * 四种步骤**共用同一个样式**（同一胶囊形状、同一徽标尺寸、同一间距），
- * 与地址卡片上的「怎么走」提示条（[Corners.chipShape]）区分层级 —— 用户 2026-10-01：
- * 「首页不同的胶囊，它的圆角是不一样的，让它们变得统一和谐」。
+ * 三种步骤**共用同一个样式**：圆角与地址卡/地图卡一致（[Corners.cardShape] = 16dp）、
+ * 同一徽标尺寸、同一间距。
+ *
+ * 🔴 用户 2026-10-01 两条纠正：
+ * 1. 原来做成**胶囊**（50% 圆角）被指「圆角非常丑，让它保持和其他窗口的圆角一样」⇒ 改用 16dp；
+ * 2. 「从当前位置继续」那一种**已删除**（判定经常出错）。
  *
  * [StepKind.ENTRANCE] 与 [StepKind.EXIT] 可点：全屏出示快递中心条码（只有进出闸机这两处要用它）。
  */
 @Composable
-private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Unit) {
+private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) {
     val badge: String
     val badgeColor: Color
     val container: Color
@@ -653,9 +667,6 @@ private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Uni
     when (step.kind) {
         StepKind.ENTRANCE -> {
             badge = "入"; badgeColor = Color(0xFF1B8A2E); container = Color(0xFFE7F6E9); titleColor = Color(0xFF14601F)
-        }
-        StepKind.CONTINUE -> {
-            badge = "我"; badgeColor = Color(0xFF2F6FE4); container = Color(0xFFE8F0FE); titleColor = Color(0xFF10366B)
         }
         StepKind.SF_CHECKOUT -> {
             badge = "SF"; badgeColor = Color(0xFFE65100); container = Color(0xFFFFF3E0); titleColor = Color(0xFFE65100)
@@ -666,13 +677,11 @@ private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Uni
     }
     val title = when (step.kind) {
         StepKind.ENTRANCE -> "入口进站"
-        StepKind.CONTINUE -> "从当前位置继续" + (step.label?.let { "（$it）" } ?: "")
         StepKind.SF_CHECKOUT -> "顺丰出库（顺丰专用闸机）"
         StepKind.EXIT -> "出站" + (step.label?.let { "：$it" } ?: "")
     }
     val subtitle = when (step.kind) {
         StepKind.ENTRANCE -> "刷码进入 · 取完件从这里开始走"
-        StepKind.CONTINUE -> "你已经取过件了，路线从这一点接着算"
         StepKind.SF_CHECKOUT -> "取了顺丰件必须先在这里出库；这台不能出站"
         StepKind.EXIT -> "出库 ≠ 出站；走到这里才结束"
     }
@@ -684,7 +693,7 @@ private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Uni
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .then(if (tappable) Modifier.clickable(onClick = onShowBarcode) else Modifier),
-        shape = Corners.pillShape,
+        shape = Corners.cardShape,
         colors = CardDefaults.cardColors(containerColor = container),
     ) {
         Row(
@@ -696,7 +705,7 @@ private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Uni
             Box(
                 modifier = Modifier
                     .size(30.dp)
-                    .clip(Corners.pillShape)
+                    .clip(CircleShape)
                     .background(badgeColor),
                 contentAlignment = Alignment.Center,
             ) {

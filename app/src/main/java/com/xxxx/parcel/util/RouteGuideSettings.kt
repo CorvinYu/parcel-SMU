@@ -63,13 +63,13 @@ enum class GuideDetail(val label: String) {
     }
 }
 
-/** 图示窗格的默认视图（运行时可一键切换）。 */
+/** 图示窗格的默认视图（运行时可一键切换）。默认 **特写**（用户 2026-10-01：地图默认使用特写）。 */
 enum class GuideMapView(val label: String) {
     OVERVIEW("全览"),
     CLOSEUP("特写跟随");
 
     companion object {
-        fun from(value: String?): GuideMapView = entries.firstOrNull { it.name == value } ?: OVERVIEW
+        fun from(value: String?): GuideMapView = entries.firstOrNull { it.name == value } ?: CLOSEUP
     }
 }
 

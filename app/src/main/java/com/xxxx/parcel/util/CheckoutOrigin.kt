@@ -68,6 +68,38 @@ fun removeCheckoutEntry(context: Context, code: String) {
     writeEntries(context, rest)
 }
 
+/**
+ * 时间窗内的「已取件」记录（取件码 → 时间），最近的在前。
+ *
+ * 用途（用户 2026-10-01）：「已经取了顺丰件」这件事**不能只看当前路线** ——
+ * 把 S 件的取件码标记为已取之后，路线里就没有 S 件了，`hasSfCheckout` 会立刻变 false，
+ * 于是「顺丰出库」这一步凭空消失（用户实测反馈）。判断「本次行程取过顺丰件」要读这里的记录：
+ * 只要窗口内取过 S 区的件，就一直保留「顺丰专用闸机出库」这一步，直到超出时间窗。
+ */
+fun recentCheckoutEntries(
+    context: Context,
+    windowMs: Long = CHECKOUT_ORIGIN_WINDOW_MS,
+    now: Long = System.currentTimeMillis(),
+): List<Pair<String, Long>> =
+    readEntries(context).filter { now - it.second in 0..windowMs }
+
+/**
+ * 纯逻辑：这批已取件记录里是否有**顺丰（S 区）**的件。
+ *
+ * 用户 2026-10-01 实测的回归就是它：把 S 件的取件码标记为已取之后，路线里没有 S 件了
+ * （`hasSfCheckout` 变 false），「顺丰出库」这一步立刻消失 —— 可是人还没去闸机出库。
+ * 所以改用「本次行程（时间窗内）取过 S 件」来判断。
+ */
+fun containsSfCheckout(entries: List<Pair<String, Long>>): Boolean =
+    entries.any { (code, _) -> parseCompartmentCode(code)?.zone == PickupZone.SF }
+
+/** 窗口内是否取过顺丰（S 区）的件 —— 顺丰出库步骤据此保持显示。 */
+fun hasRecentSfCheckout(
+    context: Context,
+    windowMs: Long = CHECKOUT_ORIGIN_WINDOW_MS,
+    now: Long = System.currentTimeMillis(),
+): Boolean = containsSfCheckout(recentCheckoutEntries(context, windowMs, now))
+
 /** 最近一次取件的位置；超出时间窗、或那个码定位不了（如纯数字快递柜）⇒ null。 */
 fun lastCheckoutOrigin(
     context: Context,

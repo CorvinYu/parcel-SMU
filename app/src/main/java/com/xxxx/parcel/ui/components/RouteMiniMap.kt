@@ -102,7 +102,8 @@ fun RouteMiniMap(
     initialView: GuideMapView = GuideMapView.OVERVIEW,
     showControls: Boolean = true,
     collapsed: Boolean = false,
-    onCollapsedChange: (Boolean) -> Unit = {},
+    /** 收起/展开地图；**不传就不显示右下角那个收起箭头**（地图取件页整页就是地图，收起没有意义， 之前那个箭头点了没反应 —— 用户 2026-10-01 反馈） */
+    onCollapsedChange: ((Boolean) -> Unit)? = null,
     onCurrentStopChange: (Int) -> Unit = {},
     /** 非空时在控制行显示「全屏 / 收起」按钮 */
     onExpand: (() -> Unit)? = null,
@@ -229,7 +230,7 @@ fun RouteMiniMap(
                         )
                     }
                 }
-                IconButton(onClick = { onCollapsedChange(false) }) {
+                IconButton(onClick = { onCollapsedChange?.invoke(false) }) {
                     Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "展开地图")
                 }
             }
@@ -295,8 +296,11 @@ fun RouteMiniMap(
                         view = if (view == GuideMapView.OVERVIEW) GuideMapView.CLOSEUP else GuideMapView.OVERVIEW
                     }) { Text(if (view == GuideMapView.OVERVIEW) "特写" else "全览") }
                     onExpand?.let { TextButton(onClick = it) { Text(expandLabel) } }
-                    IconButton(onClick = { onCollapsedChange(true) }) {
-                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "收起地图")
+                    // 收起按钮只在调用方给了回调时才显示（地图取件页不传 ⇒ 不显示那个「没用」的箭头）
+                    onCollapsedChange?.let { collapse ->
+                        IconButton(onClick = { collapse(true) }) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "收起地图")
+                        }
                     }
                 }
             }
