@@ -71,12 +71,14 @@ import com.xxxx.parcel.util.getGuideMapPlacement
 import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteJCells
+import com.xxxx.parcel.util.isMapPageEnabled
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveGuideDetail
 import com.xxxx.parcel.util.saveGuideMapPlacement
 import com.xxxx.parcel.util.saveGuideMapView
 import com.xxxx.parcel.util.saveGuideTextPlacement
+import com.xxxx.parcel.util.saveMapPageEnabled
 import com.xxxx.parcel.util.saveRouteJCells
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
@@ -131,11 +133,13 @@ fun RouteScreen(
     var mapPlacement by remember { mutableStateOf(getGuideMapPlacement(context)) }
     var detail by remember { mutableStateOf(getGuideDetail(context)) }
     var mapView by remember { mutableStateOf(getGuideMapView(context)) }
+    var mapPageEnabled by remember { mutableStateOf(isMapPageEnabled(context)) }
     var currentStop by remember(route) { mutableIntStateOf(0) }
     var fullScreenMap by remember { mutableStateOf(false) }
     var mapCollapsed by remember { mutableStateOf(false) }
 
-    val paneHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
+    // 地图窗格留足高度（用户 2026-10-01：紫色提示占太多、地图太小 ⇒ 地图占大头，提示最多 2 行）
+    val paneHeight = (LocalConfiguration.current.screenHeightDp * 0.42f).dp
     val overlayShown = mapPlacement == GuideMapPlacement.ROUTE_OVERLAY && route.stops.isNotEmpty()
 
     Scaffold(
@@ -173,6 +177,9 @@ fun RouteScreen(
                     onDetail = { detail = it; saveGuideDetail(context, it) },
                     mapView = mapView,
                     onMapView = { mapView = it; saveGuideMapView(context, it) },
+                    mapPageEnabled = mapPageEnabled,
+                    onMapPageEnabled = { mapPageEnabled = it; saveMapPageEnabled(context, it) },
+                    onOpenMapPage = { navController.navigate("map_page") },
                 )
 
                 if (pending.isEmpty()) {
@@ -227,6 +234,7 @@ fun RouteScreen(
                             onCollapsedChange = { mapCollapsed = it },
                             onCurrentStopChange = { currentStop = it },
                             onExpand = { fullScreenMap = true },
+                            onMapTap = { fullScreenMap = true },
                         )
                     }
 
@@ -456,6 +464,7 @@ fun RouteScreen(
                         onCollapsedChange = { mapCollapsed = it },
                         onCurrentStopChange = { currentStop = it },
                         onExpand = { fullScreenMap = true },
+                        onMapTap = { fullScreenMap = true },
                     )
                 }
             }
@@ -478,6 +487,7 @@ fun RouteScreen(
                         onCurrentStopChange = { currentStop = it },
                         onExpand = { fullScreenMap = false },
                         expandLabel = "收起",
+                        showStopCodes = true,
                     )
                 }
             }
@@ -590,6 +600,9 @@ private fun GuideSettingsCard(
     onDetail: (GuideDetail) -> Unit,
     mapView: GuideMapView,
     onMapView: (GuideMapView) -> Unit,
+    mapPageEnabled: Boolean,
+    onMapPageEnabled: (Boolean) -> Unit,
+    onOpenMapPage: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -626,6 +639,23 @@ private fun GuideSettingsCard(
             }
             ChipRow("地图默认视图", GuideMapView.entries.map { it.label }, mapView.label) { label ->
                 GuideMapView.entries.firstOrNull { it.label == label }?.let(onMapView)
+            }
+            ChipRow("独立地图页", listOf("关", "开"), if (mapPageEnabled) "开" else "关") { label ->
+                onMapPageEnabled(label == "开")
+            }
+            if (mapPageEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    OutlinedButton(onClick = onOpenMapPage) { Text("打开地图取件页") }
+                }
+                Text(
+                    "地图页：顶部＝当前要取的取件码，中间＝地图（货架旁写着取件码），底部＝条码；" +
+                        "开着时首页右上角菜单里也会出现入口。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
             }
             Text(
                 "改完立刻生效；全部关掉就回到 0.1.9 的样子。",

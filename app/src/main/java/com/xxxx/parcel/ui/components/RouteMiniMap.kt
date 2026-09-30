@@ -102,6 +102,10 @@ fun RouteMiniMap(
     expandLabel: String = "全屏",
     /** 货格号 → 件号标签（首页用**稳定件号**，与卡片 ①②③ 一致；不传则用访问顺序） */
     pickupLabels: Map<String, String> = emptyMap(),
+    /** 点一下地图（全屏模式下不传，避免误关） */
+    onMapTap: (() -> Unit)? = null,
+    /** 全屏时在地图上**货架旁直接写取件码** */
+    showStopCodes: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -277,7 +281,7 @@ fun RouteMiniMap(
                                 text = oneLine,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 3,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
@@ -316,6 +320,7 @@ fun RouteMiniMap(
                     }
                     .pointerInput(Unit) {
                         detectTapGestures(
+                            onTap = { onMapTap?.invoke() },
                             onDoubleTap = {
                                 view = if (view == GuideMapView.OVERVIEW) {
                                     GuideMapView.CLOSEUP
@@ -336,6 +341,7 @@ fun RouteMiniMap(
                     markerLabels = markerLabels,
                     nextDir = nextDir,
                     dots = dots,
+                    showStopCodes = showStopCodes,
                 )
             }
         }
@@ -391,6 +397,8 @@ private class MapPalette(
     val scrim: Color,
     val shadow: Color,
     val label: Color,
+    val codeBg: Color,
+    val codeInk: Color,
 ) {
     companion object {
         /** 原型 A：清爽浅色 */
@@ -414,6 +422,8 @@ private class MapPalette(
             scrim = Color(0xCCEEF2F8),
             shadow = Color(0x1A1C3258),
             label = Color(0xFF5B6B7C),
+            codeBg = Color(0xF2FFFFFF),
+            codeInk = Color(0xFF16202C),
         )
 
         /** 原型 B：夜跑深色（不含通道横格） */
@@ -437,6 +447,8 @@ private class MapPalette(
             scrim = Color(0xBD080C14),
             shadow = Color(0x55000000),
             label = Color(0xFF8FA2B8),
+            codeBg = Color(0xE6151D2B),
+            codeInk = Color(0xFFE8EEF7),
         )
     }
 }
@@ -504,6 +516,7 @@ private fun DrawScope.drawVenue(
     markerLabels: List<String>,
     nextDir: VenueGuide.Dir?,
     dots: List<Offset>,
+    showStopCodes: Boolean,
 ) {
     fun px(col: Float): Float = size.width / 2f + (col - cam.cx) * cam.scale
     fun py(row: Float): Float = size.height / 2f + (row - cam.cy) * cam.scale
@@ -549,7 +562,7 @@ private fun DrawScope.drawVenue(
         val w = (c1 - c0 + 1) * cell
         val h = (r1 - r0 + 1) * cell
         if (x <= size.width + 40f && y <= size.height + 40f && x + w >= -40f && y + h >= -40f) {
-            val isGate = SiteData.rectLabels.getOrNull(i)?.let { lab ->
+            val isGate = SiteData.rectLabels.getOrNull(i / 4)?.let { lab ->
                 lab.contains("闸机") || lab.contains("出口")
             } == true
             drawRoundRect(
@@ -571,7 +584,9 @@ private fun DrawScope.drawVenue(
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
                 style = Stroke(width = 1f),
             )
-            val label = SiteData.rectLabels.getOrNull(i)?.trim().orEmpty()
+            // 🔴 rectBounds 每 4 个数一个矩形，而 rectLabels 每个矩形一个 ⇒ 标签下标必须是 i/4
+            //    （写 i 会让所有货架名错位 —— 用户 2026-10-01 反馈「货架号标注几乎全乱」的根因）
+            val label = SiteData.rectLabels.getOrNull(i / 4)?.trim().orEmpty()
             if (cell >= 11f && label.isNotEmpty()) {
                 val layout = measurer.measure(label, style = TextStyle(color = pal.label, fontSize = 9.sp), maxLines = 1)
                 drawText(
@@ -713,6 +728,47 @@ private fun DrawScope.drawVenue(
                 (cell * 1.6f).coerceIn(9f, 20f),
                 pal.accent,
             )
+        }
+    }
+
+    // ⑪ 全屏时在**货架旁直接写取件码**（件数多时只标当前与后两件，避免糊成一片）
+    if (showStopCodes) {
+        val pickupIndexes = route.stops.indices.filter { route.stops[it] is RouteStop.Pickup }
+        val chosen = if (pickupIndexes.size <= 14) {
+            pickupIndexes
+        } else {
+            pickupIndexes.filter { it >= idx }.take(3).ifEmpty { pickupIndexes.takeLast(2) }
+        }
+        chosen.forEach { si ->
+            val st = route.stops.getOrNull(si) as? RouteStop.Pickup ?: return@forEach
+            val cellPos = route.legs.getOrNull(si)?.cells?.lastOrNull() ?: return@forEach
+            val layout = measurer.measure(
+                st.code.toString(),
+                style = TextStyle(color = pal.codeInk, fontSize = 10.sp, fontWeight = FontWeight.Medium),
+                maxLines = 1,
+            )
+            val padX = 6f
+            val padY = 3f
+            val w = layout.size.width + padX * 2
+            val h = layout.size.height + padY * 2
+            val bx = px(cellPos.col + 0.5f) + (cell * 1.5f).coerceIn(10f, 18f)
+            val by = py(cellPos.row + 0.5f) - h / 2f
+            drawRoundRect(
+                color = pal.codeBg,
+                topLeft = Offset(bx, by),
+                size = Size(w, h),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f),
+            )
+            if (si == idx) {
+                drawRoundRect(
+                    color = pal.accent,
+                    topLeft = Offset(bx, by),
+                    size = Size(w, h),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f),
+                    style = Stroke(width = 1.5f),
+                )
+            }
+            drawText(layout, topLeft = Offset(bx + padX, by + padY))
         }
     }
 }

@@ -13,6 +13,7 @@ private const val KEY_TEXT = "route_guide_text_placement"
 private const val KEY_MAP = "route_guide_map_placement"
 private const val KEY_DETAIL = "route_guide_detail"
 private const val KEY_MAP_VIEW = "route_guide_map_view"
+private const val KEY_MAP_PAGE = "route_guide_map_page"
 
 private fun guidePrefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -97,4 +98,16 @@ fun getGuideMapView(context: Context): GuideMapView =
 
 fun saveGuideMapView(context: Context, value: GuideMapView) {
     guidePrefs(context).edit().putString(KEY_MAP_VIEW, value.name).apply()
+}
+
+/**
+ * 「独立地图页」（用户 2026-10-01）：一个**以地图为主**的页面 ——
+ * 顶部 = 当前要取的取件码、中间 = 地图（含货架旁取件码）、底部 = 条码。
+ * 打开开关后，首页右上角菜单里会出现入口。
+ */
+fun isMapPageEnabled(context: Context): Boolean =
+    guidePrefs(context).getBoolean(KEY_MAP_PAGE, false)
+
+fun saveMapPageEnabled(context: Context, value: Boolean) {
+    guidePrefs(context).edit().putBoolean(KEY_MAP_PAGE, value).apply()
 }

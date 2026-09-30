@@ -1,6 +1,7 @@
 package com.xxxx.parcel.util
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -182,11 +183,27 @@ class RouteGuideTest {
     }
 
     @Test
-    fun `首页短提示最多三个转向`() {
+    fun `首页短提示完整列出每一步转向`() {
         val route = planPickupRoute(listOf("B4-3", "Y5-7-1", "J5-21", "A1-1"), options)
-        val s = VenueGuide.summarize(route.legs.last { it.kind == LegKind.PICK })
+        val leg = route.legs.last { it.kind == LegKind.PICK }
+        val s = VenueGuide.summarize(leg)
+        val moves = VenueGuide.describe(leg).filter { it.kind == VenueGuide.HintKind.MOVE }
         assertTrue("短提示不该为空：$s", s.isNotEmpty())
-        assertTrue("最多三个转向（用 → 连接）：$s", s.split("→").size <= 4)
+        // 不再截断（用户 2026-10-01：看不到后半段）
+        val parts = s.split(" → ")
+        assertEquals("每一步都要出现，不许截断", moves.size, parts.size)
+        assertFalse("不许出现省略号", s.contains("→…"))
+    }
+
+    @Test
+    fun `合并区标签与边界一一对应（地图标注索引的前提）`() {
+        // 地图画货架时要靠下标取名字：rectBounds 每 4 个数一个矩形、rectLabels 每个矩形一个。
+        // 一旦这条不成立，货架标注就会整体错位（用户 2026-10-01 截图反馈「标注几乎全乱」）。
+        assertEquals(
+            "rectLabels 数量 × 4 必须等于 rectBounds 长度",
+            SiteData.rectLabels.size * 4,
+            SiteData.rectBounds.size,
+        )
     }
 
     @Test

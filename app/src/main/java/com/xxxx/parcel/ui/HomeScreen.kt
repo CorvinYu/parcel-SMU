@@ -60,6 +60,7 @@ import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
 import com.xxxx.parcel.util.isRouteSortList
+import com.xxxx.parcel.util.isMapPageEnabled
 import com.xxxx.parcel.util.isBarcodeBottomEnabled
 import com.xxxx.parcel.util.isBarcodeStripEnabled
 import com.xxxx.parcel.util.saveBarcodeBottomHeightDp
@@ -182,6 +183,8 @@ fun HomeScreen(
                     showCompartment = new
                 },
                 onSeniorModeChanged = onSeniorModeChanged,
+                mapPageEnabled = isMapPageEnabled(context),
+                onOpenMapPage = { navController.navigate("map_page") },
             )
                 if (barcodeStripEnabled) {
                     BarcodeStrip(
@@ -205,8 +208,8 @@ fun HomeScreen(
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
-            // 图示窗格高度：容器高度的 1/3 左右；收起时只剩一行胶囊
-            val mapPaneHeight = maxHeight * 0.34f
+            // 图示窗格高度：容器高度的 42%（用户 2026-10-01：地图要占大头、提示最多 2 行）
+            val mapPaneHeight = maxHeight * 0.42f
             val mapHeight = if (homeMapCollapsed) 54.dp else mapPaneHeight
             val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
             // 手动可调的上限：最多占容器一半，别把列表挤没
@@ -276,6 +279,7 @@ fun HomeScreen(
                             onCollapsedChange = { homeMapCollapsed = it },
                             onCurrentStopChange = { homeStop = it },
                             onExpand = { homeFullMap = true },
+                            onMapTap = { homeFullMap = true },
                             pickupLabels = homePickupLabels,
                         )
                     }
@@ -350,6 +354,7 @@ fun HomeScreen(
                             onExpand = { homeFullMap = false },
                             expandLabel = "收起",
                             pickupLabels = homePickupLabels,
+                            showStopCodes = true,
                         )
                     }
                 }

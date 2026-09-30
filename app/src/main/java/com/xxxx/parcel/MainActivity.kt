@@ -41,6 +41,7 @@ import com.xxxx.parcel.ui.AppBackgroundScreen
 import com.xxxx.parcel.ui.BarcodeScreen
 import com.xxxx.parcel.ui.BarcodeLabScreen
 import com.xxxx.parcel.ui.RouteScreen
+import com.xxxx.parcel.ui.MapPageScreen
 import com.xxxx.parcel.ui.FailSmsScreen
 import com.xxxx.parcel.ui.HomeScreen
 import com.xxxx.parcel.ui.RulesScreen
@@ -498,6 +499,13 @@ fun App(
                 }
                 composable("pickup_route") {
                     RouteScreen(
+                        context = context,
+                        viewModel = viewModel,
+                        navController = navController,
+                    )
+                }
+                composable("map_page") {
+                    MapPageScreen(
                         context = context,
                         viewModel = viewModel,
                         navController = navController,

@@ -230,13 +230,16 @@ internal object VenueGuide {
         return out
     }
 
-    /** 一行短提示（首页列表用）：最多 3 个转向，多了截断。 */
+    /**
+     * 一行短提示（首页列表用）：**完整**列出每一步转向。
+     *
+     * 用户 2026-10-01：截断成「…→…」会看不到后半段，所以不再限个数（外层允许换行）。
+     */
     fun summarize(leg: RouteLeg, target: PickupSpot? = null): String {
         if (leg.cells.isEmpty()) return ""
         val moves = describe(leg, target).filter { it.kind == HintKind.MOVE }
         if (moves.isEmpty()) return ""
-        val head = moves.take(3).joinToString(" → ") { it.brief }
-        return if (moves.size > 3) "$head →…" else head
+        return moves.joinToString(" → ") { it.brief }
     }
 
     /** 精度说明：只说数据支持的，不编。 */

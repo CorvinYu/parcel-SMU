@@ -69,6 +69,9 @@ fun HomeTopBar(
     onToggleShowCodeTime: () -> Unit,
     onToggleShowCompartment: () -> Unit,
     onSeniorModeChanged: (Boolean) -> Unit,
+    /** 是否显示「地图取件」入口（由「提示与地图（试用）」里的开关控制） */
+    mapPageEnabled: Boolean = false,
+    onOpenMapPage: () -> Unit = {},
 ) {
     TopAppBar(
         title = { },
@@ -376,6 +379,20 @@ fun HomeTopBar(
                             onSeniorModeChanged(!isSeniorMode)
                         }
                     )
+                    if (mapPageEnabled) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "地图取件（地图为主）",
+                                    style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onOpenMapPage()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = {
                             Text(
