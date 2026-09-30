@@ -9,7 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,14 +27,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -187,6 +193,8 @@ fun BarcodeBottomCard(
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
     val density = LocalDensity.current
+    // 🔴 拖动回调取**最新**实例（`pointerInput(Unit)` 里的闭包只创建一次）
+    val dragCb by rememberUpdatedState(onDrag)
     // 扣掉四边外边距（上下各 8dp）＋ 顶部把手与内边距，剩下的高度给条码
     val innerHeightDp = (heightDp.value - 16f - 26f).coerceAtLeast(40f).toInt()
 
@@ -212,20 +220,38 @@ fun BarcodeBottomCard(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 顶部拖动把手
+            // 🔴 与首页地图把手**同一套算法**（用户 2026-10-01：把「跟手」效果同步到地图取件页的条码）：
+            //    把手会随卡片高度一起上下移动 ⇒ 局部位移 ≠ 手指在屏幕上的位移。
+            //    用累计量换算：屏幕累计 = 局部累计 + 把手自身累计；每次只补「还差多少」（自纠正）。
+            var handleTopInRoot by remember { mutableStateOf(0f) }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(18.dp)
+                    .onGloballyPositioned { handleTopInRoot = it.positionInRoot().y }
                     .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDragEnd = { onDragEnd() },
-                            onDragCancel = { onDragEnd() },
-                            onDrag = { change, dragAmount ->
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            onDragStart()
+                            val startTop = handleTopInRoot
+                            val startLocal = down.position.y
+                            var applied = 0f
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                val localTotal = change.position.y - startLocal
+                                val nodeTotal = handleTopInRoot - startTop
+                                val screenTotal = localTotal + nodeTotal
+                                val want = screenTotal - applied
+                                if (want != 0f) {
+                                    dragCb?.invoke(with(density) { want.toDp() })
+                                    applied = screenTotal
+                                }
                                 change.consume()
-                                onDrag(with(density) { dragAmount.y.toDp() })
-                            },
-                        )
+                            }
+                            onDragEnd()
+                        }
                     },
                 contentAlignment = Alignment.Center,
             ) {

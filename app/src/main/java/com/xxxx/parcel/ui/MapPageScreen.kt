@@ -19,7 +19,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,6 +42,7 @@ import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.saveMapBarcodeHeightDp
 import com.xxxx.parcel.viewmodel.ParcelViewModel
+import kotlin.math.roundToInt
 
 /**
  * **独立地图页**（用户 2026-10-01 提的结构）：
@@ -78,8 +79,8 @@ fun MapPageScreen(
     // 刚取完的那一件 ⇒ 图上留个灰 ✓
     val checkoutOrigin = remember(successData, options) { lastCheckoutOrigin(context, options) }
     var barcodeFull by remember { mutableStateOf(false) }
-    // 地图页底部条码高度：可拖动、独立持久化（与首页互不影响）
-    var barcodeHeightDp by remember { mutableIntStateOf(getMapBarcodeHeightDp(context)) }
+    // 地图页底部条码高度：可拖动、独立持久化（与首页互不影响）。用 Float 保存避免取整丢位移。
+    var barcodeHeightDp by remember { mutableFloatStateOf(getMapBarcodeHeightDp(context).toFloat()) }
     val hasBarcode = remember { getBarcodePayload(context) != null || hasBarcodeOriginalImage(context) }
 
     Scaffold(
@@ -166,10 +167,10 @@ fun MapPageScreen(
                     heightDp = barcodeHeightDp.dp,
                     onDrag = { delta ->
                         // 向上拖（delta 为负）⇒ 条码变高、地图让位（与首页方向一致）
-                        barcodeHeightDp = (barcodeHeightDp - delta.value).toInt().coerceIn(70, 300)
+                        barcodeHeightDp = (barcodeHeightDp - delta.value).coerceIn(70f, 300f)
                     },
                     onDragStart = {},
-                    onDragEnd = { saveMapBarcodeHeightDp(context, barcodeHeightDp) },
+                    onDragEnd = { saveMapBarcodeHeightDp(context, barcodeHeightDp.roundToInt()) },
                     onOpenSettings = { navController.navigate("barcode") },
                     onTap = { barcodeFull = true },
                 )

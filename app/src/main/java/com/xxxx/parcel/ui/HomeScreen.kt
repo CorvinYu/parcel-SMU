@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -123,11 +123,11 @@ fun HomeScreen(
     var preferLockerAddress by remember { mutableStateOf(getPreferLockerAddress(context)) }
     var barcodeStripEnabled by remember { mutableStateOf(isBarcodeStripEnabled(context)) }
     var barcodeBottomEnabled by remember { mutableStateOf(isBarcodeBottomEnabled(context)) }
-    // 底部浮窗高度：用户在浮窗顶部上下拖动调节，持久化
+    // 底部浮窗高度：用户在浮窗顶部上下拖动调节，持久化（Float 保存，避免每帧取整丢位移）
     var bottomHeightDp by remember {
-        mutableStateOf(
-            getBarcodeBottomHeightDp(context).takeIf { it > 0 }
-                ?: if (isSeniorMode) DEFAULT_BOTTOM_HEIGHT_SENIOR_DP else DEFAULT_BOTTOM_HEIGHT_DP
+        mutableFloatStateOf(
+            (getBarcodeBottomHeightDp(context).takeIf { it > 0 }
+                ?: if (isSeniorMode) DEFAULT_BOTTOM_HEIGHT_SENIOR_DP else DEFAULT_BOTTOM_HEIGHT_DP).toFloat()
         )
     }
     var draggingBottom by remember { mutableStateOf(false) }
@@ -377,7 +377,9 @@ fun HomeScreen(
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .fillMaxWidth()
-                                    .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
+                                    // 🔴 用户 2026-10-01：底部**不留缝** —— 留 6dp 会让列表内容从缝里露出来
+                                    //（「会露出下方的窗口，不好看」）。贴住列表框底边，与下方条码卡相接。
+                                    .padding(start = 10.dp, end = 10.dp)
                                     .height(mapHeight),
                                 collapsed = homeMapCollapsed,
                                 onCollapsedChange = { homeMapCollapsed = it },
@@ -406,7 +408,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
+                                .padding(start = 10.dp, end = 10.dp),
                             shape = Corners.cardShape,
                             color = MaterialTheme.colorScheme.surfaceVariant,
                         ) {
@@ -427,17 +429,17 @@ fun HomeScreen(
                         isSeniorMode = isSeniorMode,
                         heightDp = animatedBottomHeight,
                         onDrag = { delta ->
-                            // 向上拖（delta 为负）⇒ 变高
-                            bottomHeightDp = (bottomHeightDp - delta.value).toInt()
+                            // 向上拖（delta 为负）⇒ 变高（Float 保存，避免取整丢位移）
+                            bottomHeightDp = (bottomHeightDp - delta.value)
                                 .coerceIn(
-                                    minBarcodeHeight.value.toInt(),
-                                    maxBarcodeHeight.value.toInt(),
+                                    minBarcodeHeight.value,
+                                    maxBarcodeHeight.value,
                                 )
                         },
                         onDragStart = { draggingBottom = true },
                         onDragEnd = {
                             draggingBottom = false
-                            saveBarcodeBottomHeightDp(context, bottomHeightDp)
+                            saveBarcodeBottomHeightDp(context, bottomHeightDp.roundToInt())
                             // 用户手动定过高度 ⇒ 钉住，别再自动伸缩（否则会和地图窗格来回抖）
                             saveBarcodeBottomPinned(context, true)
                             barcodePinned = true
@@ -487,9 +489,11 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                // 内容避开状态栏 / 导航栏，但背景仍铺满
-                                .windowInsetsPadding(WindowInsets.systemBars)
-                                .padding(10.dp),
+                                // 内容避开状态栏 / 导航栏（含挖孔区），但背景仍铺满整屏
+                                .windowInsetsPadding(WindowInsets.safeDrawing)
+                                // 🔴 用户 2026-10-01：底部留出余量 ⇒ 全屏地图下沿的**圆角框**能完整收尾，
+                                //    不会被系统导航条压掉（「底部地图没有框框结尾」）。
+                                .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 14.dp),
                         ) {
                             // 用户 2026-10-01：把「地图取件」页的**整个第一部分**搬过来 ——
                             // 当前取件码卡（点击标记已取 / 再点恢复）+ 下方横向可滑的整段序列
