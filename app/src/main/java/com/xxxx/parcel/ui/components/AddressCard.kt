@@ -178,7 +178,8 @@ fun AddressCard(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 3.dp),
+                            // 卡片之间的间距由列表统一给（spacedBy 8dp），这里不再额外加顶部间距
+                            .padding(top = 0.dp),
                         shape = Corners.chipShape,
                         color = Color(0xFFE8F0FE),
                     ) {
@@ -363,6 +364,5 @@ fun AddressCard(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
     }
 }

@@ -581,7 +581,10 @@ fun ParcelList(
                         .fillMaxSize()
                         .padding(horizontal = if (isSeniorMode) 12.dp else 16.dp),
                     contentPadding = PaddingValues(bottom = listBottomPadding),
-                    verticalArrangement = Arrangement.Top,
+                    // 🔴 用户 2026-10-01：「取件码距离上下胶囊距离不同，有些偏上」——
+                    //    原来卡片**自带尾部 8dp** 间距 ⇒ 码上边只有 8dp、下边 8+8=16dp，看着偏上。
+                    //    改成统一的「列表项之间 8dp」⇒ 每张卡内部上下对称。
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     items(entries, key = { it.key }) { item ->
@@ -729,7 +732,8 @@ private fun RouteStepCard(step: ParcelListItem.Step, onShowBarcode: () -> Unit) 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            // 列表项之间的间距由 LazyColumn 的 spacedBy(8dp) 统一给，这里不再自带
+            .padding(vertical = 0.dp)
             .then(if (tappable) Modifier.clickable(onClick = onShowBarcode) else Modifier),
         shape = Corners.cardShape,
         colors = CardDefaults.cardColors(containerColor = container),
@@ -835,7 +839,7 @@ private fun StepHintChip(text: String) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 3.dp),
+            .padding(top = 0.dp, bottom = 4.dp),
         shape = Corners.chipShape,
         color = Color(0xFFE8F0FE),
     ) {

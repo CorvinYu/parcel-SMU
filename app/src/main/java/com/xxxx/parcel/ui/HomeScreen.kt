@@ -333,11 +333,9 @@ fun HomeScreen(
                         // 入口 / 出站胶囊：点一下全屏出示条码（没设置过就带去设置页）。
                         // 🔴 **在点按那一刻才读**预置（SharedPreferences + File.isFile）：不要放在组合里，
                         //    否则列表滚动/翻页时每帧都读一次（审查指出的性能点）。
-                        onShowBarcode = {
-                            val ready = getBarcodePayload(context) != null ||
-                                hasBarcodeOriginalImage(context)
-                            if (ready) homeBarcodeFull = true else navController.navigate("barcode")
-                        },
+                        // 入口 / 出站卡片：点一下进**全屏条码**（用户 2026-10-01：没设置过也先进这一屏，
+                        // 由全屏页引导去导入，而不是直接跳到设置页）
+                        onShowBarcode = { homeBarcodeFull = true },
                         // 「顺丰出库」卡片右侧的件数提醒（测试功能、菜单里开，默认关闭）
                         showSfCheckoutCount = sfCountEnabled,
                     ) else
@@ -361,6 +359,9 @@ fun HomeScreen(
                             detail = guideDetail,
                             // 用户 2026-10-01：首页地图也默认特写（跟随「地图视图」设置，可切回全览）
                             initialView = getGuideMapView(context),
+                            // 用户 2026-10-01：首页窗格上沿不要 R 角（R 角处会直接露出背景，
+                            // 把列表最下面那条胶囊「切」了一下）
+                            squareTop = true,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(start = 10.dp, end = 10.dp, bottom = paneGap)
@@ -379,6 +380,12 @@ fun HomeScreen(
                                 val currentDp = if (mapHeightDp > 0) mapHeightDp.dp else mapDefaultHeight
                                 val deltaDp = with(density) { dy.toDp() }
                                 val next = (currentDp - deltaDp).coerceIn(140.dp, mapHeightCeiling)
+                                // 🔴 跟手：条码会自动膨胀去填「列表剩下的空白」，而列表空白又随地图高度变化
+                                //    ⇒ 拖 1 格、地图上沿实际移动 2 格（用户 2026-10-01）。拖地图时把条码钉住。
+                                if (!barcodePinned) {
+                                    saveBarcodeBottomPinned(context, true)
+                                    barcodePinned = true
+                                }
                                 mapHeightDp = next.value.toInt()
                                 saveGuideMapHeightDp(context, mapHeightDp)
                             },
@@ -444,7 +451,14 @@ fun HomeScreen(
         )
 
         if (homeBarcodeFull) {
-            BarcodeFullScreenDialog(context = context, onDismiss = { homeBarcodeFull = false })
+            BarcodeFullScreenDialog(
+                context = context,
+                onDismiss = { homeBarcodeFull = false },
+                onOpenSettings = {
+                    homeBarcodeFull = false
+                    navController.navigate("barcode")
+                },
+            )
         }
 
         if (homeFullMap) {

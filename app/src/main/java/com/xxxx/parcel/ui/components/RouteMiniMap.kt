@@ -10,11 +10,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,7 +61,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -128,6 +129,11 @@ fun RouteMiniMap(
     completedMarkers: List<CompletedMarker> = emptyList(),
     /** 顶部把手上下拖动时回调（dy 为像素位移，向上为负）——用于调窗格高度 */
     onResizeDelta: ((Float) -> Unit)? = null,
+    /**
+     * 展开态**上沿不要圆角**（用户 2026-10-01：首页地图窗格上沿的 R 角会直接露出背景，
+     * 把列表最下面那条胶囊「切」了一下）。首页传 true ⇒ 上沿是一条直边，紧贴列表、不再有缺口。
+     */
+    squareTop: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -259,25 +265,56 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        shape = Corners.cardShape,
+        // 上沿是否留圆角（见 squareTop 说明）
+        shape = if (squareTop) {
+            RoundedCornerShape(
+                topStart = 0.dp,
+                topEnd = 0.dp,
+                bottomStart = Corners.card,
+                bottomEnd = Corners.card,
+            )
+        } else {
+            Corners.cardShape
+        },
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
             // 顶部把手：上下拖动可调窗格高度（高度由调用方持久化）；
             // **快速向下甩**等价于右上角的「收起」（用户 2026-10-01）。
             if (onResizeDelta != null) {
-                val resizeState = rememberDraggableState { dy -> resizeCb?.invoke(dy) }
+                // 🔴 必须用**屏幕坐标**算增量（用户 2026-10-01：「手向下移动 1 单位，地图变矮 2 单位」）：
+                //    把手本身会随窗格高度一起上下移动，若直接用 Compose 的**局部**坐标增量，这个位移会
+                //    混进增量里（要么被抵消成不动、要么被放大）。这里把局部 y 加上把手在根坐标里的 y
+                //    还原成屏幕位移，就与「手指走了多少」严格一致，跟手且 1:1。
+                var handleTopInRoot by remember { mutableStateOf(0f) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(16.dp)
-                        .draggable(
-                            orientation = Orientation.Vertical,
-                            state = resizeState,
-                            onDragStopped = { velocity ->
-                                if (velocity > FLING_COLLAPSE_VELOCITY) onCollapsedChange?.invoke(true)
-                            },
-                        ),
+                        .onGloballyPositioned { handleTopInRoot = it.positionInRoot().y }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var lastScreenY = down.position.y + handleTopInRoot
+                                var lastTime = down.uptimeMillis
+                                var lastSpeed = 0f
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    val screenY = change.position.y + handleTopInRoot
+                                    val dy = screenY - lastScreenY
+                                    lastScreenY = screenY
+                                    val dtMs = (change.uptimeMillis - lastTime).coerceAtLeast(1L)
+                                    lastTime = change.uptimeMillis
+                                    lastSpeed = dy / (dtMs / 1000f)
+                                    if (dy != 0f) resizeCb?.invoke(dy)
+                                    change.consume()
+                                }
+                                // 手指抬起：快速向下甩 ⇒ 收起（等价右上角 ▼）
+                                if (lastSpeed > FLING_COLLAPSE_VELOCITY) onCollapsedChange?.invoke(true)
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
@@ -777,7 +814,10 @@ private fun DrawScope.drawVenue(
         val x = px(g.cell.col + 0.5f)
         val y = py(g.cell.row + 0.5f)
         val label = if (g.isPickup) {
-            g.indexes.joinToString("·") { markerLabels.getOrNull(it) ?: "?" }
+            // 用户 2026-10-01：同货架 3 件及以上**简略显示**成「4·7」（首号·尾号），
+            // 两件以内照原样列（「4」/「4·5」）—— 四个号挤在一个小圆圈里既看不清也盖住旁边。
+            val numbers = g.indexes.map { markerLabels.getOrNull(it) ?: "?" }
+            if (numbers.size > 2) "${numbers.first()}·${numbers.last()}" else numbers.joinToString("·")
         } else {
             markerLabels.getOrNull(stopIndex) ?: "?"
         }

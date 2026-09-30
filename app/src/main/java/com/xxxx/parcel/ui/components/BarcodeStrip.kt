@@ -279,6 +279,8 @@ fun BarcodeBottomCard(
 fun BarcodeFullScreenDialog(
     context: Context,
     onDismiss: () -> Unit,
+    /** 还没设置条码时，点「导入条码截图」去哪儿（条码设置页）。不传则只显示提示文字。 */
+    onOpenSettings: (() -> Unit)? = null,
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
@@ -328,7 +330,24 @@ fun BarcodeFullScreenDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
+                    // 用户 2026-10-01：没设置条码时也先到**全屏出示**这一屏（就是入口/出站要用的那个位置），
+                    // 再从这里引导去导入 ⇒ 第一次设置少跳一层，且知道以后条码会出现在哪。
                     Text("尚未设置快递中心条码", style = MaterialTheme.typography.headlineSmall, color = Color(0xFF333333))
+                    Spacer(modifier = Modifier.height(14.dp))
+                    onOpenSettings?.let { open ->
+                        Surface(
+                            shape = Corners.pillShape,
+                            color = Color(0xFF2F6FE4),
+                            modifier = Modifier.clickable { open() },
+                        ) {
+                            Text(
+                                text = "点这里导入条码截图",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 11.dp),
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(

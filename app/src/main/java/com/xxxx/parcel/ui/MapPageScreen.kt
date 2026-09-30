@@ -198,7 +198,14 @@ fun MapPageScreen(
         }
     ) { padding ->
         if (barcodeFull) {
-            BarcodeFullScreenDialog(context = context, onDismiss = { barcodeFull = false })
+            BarcodeFullScreenDialog(
+                context = context,
+                onDismiss = { barcodeFull = false },
+                onOpenSettings = {
+                    barcodeFull = false
+                    navController.navigate("barcode")
+                },
+            )
         }
         Column(
             modifier = Modifier
