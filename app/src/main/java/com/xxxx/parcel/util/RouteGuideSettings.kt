@@ -123,12 +123,13 @@ fun saveGuideMapHeightDp(context: Context, valueDp: Int) {
 }
 
 /**
- * 「顺丰出库」卡片右侧是否显示**还需要出库的顺丰件数**（用户 2026-10-01：**测试功能、默认关闭**）。
+ * 「顺丰出库」卡片右侧是否显示**还需要出库的顺丰件数**。
  *
- * 默认关闭，菜单「海大版功能 → 顺丰出库件数提醒（测试）」里打开。
+ * 用户 2026-10-01 先要求「测试、默认关闭」，看完实机后改为**默认开启**
+ * （菜单「海大版功能 → 顺丰出库件数提醒」可随时关掉；用户手动关过就保持关）。
  */
 fun isSfCheckoutCountEnabled(context: Context): Boolean =
-    guidePrefs(context).getBoolean(KEY_SF_COUNT, false)
+    guidePrefs(context).getBoolean(KEY_SF_COUNT, true)
 
 fun saveSfCheckoutCountEnabled(context: Context, value: Boolean) {
     guidePrefs(context).edit().putBoolean(KEY_SF_COUNT, value).apply()

@@ -192,14 +192,14 @@ fun HomeTopBar(
                             onToggleRouteSort()
                         }
                     )
-                    // 测试功能（用户 2026-10-01）：默认关闭，打开后「顺丰出库」卡片右侧提醒还有几件要出库
+                    // 顺丰出库件数提醒（用户 2026-10-01：先默认关，实机看过后改为**默认开**，菜单可关）
                     DropdownMenuItem(
                         text = {
                             Text(
                                 if (sfCountEnabled) {
-                                    "关闭顺丰出库件数提醒（测试）"
+                                    "关闭顺丰出库件数提醒"
                                 } else {
-                                    "顺丰出库件数提醒（测试）"
+                                    "顺丰出库件数提醒"
                                 },
                                 style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
                             )

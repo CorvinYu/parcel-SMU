@@ -198,7 +198,8 @@ fun BarcodeBottomCard(
         modifier = Modifier
             .fillMaxWidth()
             .height(heightDp)
-            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            // 用户 2026-10-01：与上方地图窗格之间的空隙要小一点 ⇒ 上图 4dp、这里 4dp
+            .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 8.dp),
     ) {
     Surface(
         color = Color.White,

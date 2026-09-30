@@ -59,6 +59,7 @@ import com.xxxx.parcel.util.getBarcodeBottomHeightDp
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapHeightDp
+import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getGuideMapPlacement
 import com.xxxx.parcel.util.saveGuideMapHeightDp
 import com.xxxx.parcel.util.saveMapPageEnabled
@@ -266,20 +267,31 @@ fun HomeScreen(
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
-            // 图示窗格高度：用户拖过就用用户的，否则默认 42% 容器高（用户 2026-10-01：地图要占大头）
-            val mapPaneHeight = if (mapHeightDp > 0) mapHeightDp.dp else maxHeight * 0.42f
-            val mapHeight = if (homeMapCollapsed) 48.dp else mapPaneHeight
-            // 拖动上限在这里先算好（lambda 里不能直接用 BoxWithConstraints 的 maxHeight）
-            val mapHeightMax = maxHeight * 0.75f
-            val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
-            // 手动可调的上限：最多占容器一半，别把列表挤没
+            // 地图窗格与下方条码之间的空隙（用户 2026-10-01：原来 8+8 太大 ⇒ 各留 4dp）
+            val paneGap = 4.dp
+            // 列表至少留这么高，否则地图的圆角会直接盖在列表里最后那枚胶囊上
+            // （用户 2026-10-01：地图的 R 角「锋利地遮挡下层内容，直接显示背景而不是下面的胶囊」）
+            val minListHeight = 150.dp
+            // 手动可调的条码上限：最多占容器一半
             val maxBarcodeHeight = maxHeight * 0.5f
             val userHeight = bottomHeightDp.dp.coerceIn(minBarcodeHeight, maxBarcodeHeight)
+            // 🔴 地图高度的**天花板**：必须给列表留够 minListHeight、给条码留出位置。
+            //    条码那部分按**用户设定上限**（userHeight）预留，与地图无关 ⇒ 不会出现循环依赖。
+            val barcodeAllowance = if (barcodeBottomEnabled) userHeight + paneGap else 0.dp
+            val mapHeightCeiling = (maxHeight - minListHeight - barcodeAllowance)
+                .coerceAtLeast(140.dp)
+                .coerceAtMost(maxHeight * 0.75f)
+            // 图示窗格高度：用户拖过就用用户的（并受天花板约束），否则默认 42% 容器高
+            val mapDefaultHeight = maxHeight * 0.42f
+            val mapPaneHeight = (if (mapHeightDp > 0) mapHeightDp.dp else mapDefaultHeight)
+                .coerceAtMost(mapHeightCeiling)
+            val mapHeight = if (homeMapCollapsed) 48.dp else mapPaneHeight
+            val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
             // 🔴 两个窗格的抖动：条码高度是按「列表剩下的空白」算的，而列表空白又被条码高度影响 ⇒ 会来回抖。
             //    对策（用户 2026-10-01）：① 把地图窗格占的高度从「可用空白」里扣掉；
             //    ② 用户一旦手动拖过条码高度，就**钉住**（不再自动伸缩）。
             val reservedByMap = if (mapActive) mapHeight else 0.dp
-            val availableBlank = contentHeightDp?.let { (maxHeight - reservedByMap - it - 8.dp).coerceAtLeast(0.dp) }
+            val availableBlank = contentHeightDp?.let { (maxHeight - reservedByMap - it - paneGap).coerceAtLeast(0.dp) }
             val targetBottomHeight = when {
                 barcodePinned -> userHeight
                 availableBlank == null -> minBarcodeHeight
@@ -347,9 +359,11 @@ fun HomeScreen(
                             route = route,
                             currentStop = homeStop,
                             detail = guideDetail,
+                            // 用户 2026-10-01：首页地图也默认特写（跟随「地图视图」设置，可切回全览）
+                            initialView = getGuideMapView(context),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
+                                .padding(start = 10.dp, end = 10.dp, bottom = paneGap)
                                 .height(mapHeight),
                             collapsed = homeMapCollapsed,
                             onCollapsedChange = { homeMapCollapsed = it },
@@ -359,9 +373,12 @@ fun HomeScreen(
                             pickupLabels = homePickupLabels,
                             completedMarkers = homeCompletedMarkers,
                             onResizeDelta = { dy ->
-                                // 向上拖（dy<0）⇒ 变高；上限不超过容器的 3/4，下限 140dp
+                                // 🔴 必须读**当前**的 mapHeightDp / 天花板，不能读组合时捕获的旧值：
+                                //    `RouteMiniMap` 里的指针输入块只创建一次，捕获的旧值会让拖动「失效」
+                                //    （用户 2026-10-01）。上限 = 天花板（给列表与条码留位置）。
+                                val currentDp = if (mapHeightDp > 0) mapHeightDp.dp else mapDefaultHeight
                                 val deltaDp = with(density) { dy.toDp() }
-                                val next = (mapHeight - deltaDp).coerceIn(140.dp, mapHeightMax)
+                                val next = (currentDp - deltaDp).coerceIn(140.dp, mapHeightCeiling)
                                 mapHeightDp = next.value.toInt()
                                 saveGuideMapHeightDp(context, mapHeightDp)
                             },
@@ -441,6 +458,8 @@ fun HomeScreen(
                             route = route,
                             currentStop = homeStop,
                             detail = guideDetail,
+                            // 全屏也跟随「地图视图」设置（默认特写）
+                            initialView = getGuideMapView(context),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(10.dp),

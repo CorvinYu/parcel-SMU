@@ -9,9 +9,12 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,6 +97,12 @@ import kotlinx.coroutines.launch
  * - **聚光灯聚焦**当前段（径向渐晕），**行进光点**沿当前段跑，光晕 + 圆头线
  * - 手势：拖动平移、双指缩放、双击切换全览/特写
  */
+/**
+ * 顶部把手「快速向下甩 ⇒ 收起」的速度阈值（px/s）。
+ * 用户 2026-10-01：展开时按住高度调节快速下滑，应该等价于右上角的收起按钮。
+ */
+private const val FLING_COLLAPSE_VELOCITY = 900f
+
 @Composable
 fun RouteMiniMap(
     route: PickupRoute,
@@ -123,6 +133,9 @@ fun RouteMiniMap(
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
     val measurer = rememberTextMeasurer()
     val scope = rememberCoroutineScope()
+    // 🔴 拖动回调必须取**最新**的那一个：`pointerInput`/`draggable` 里的闭包若只捕获首次组合的
+    //    实例，调用方算高度时用的是旧值 ⇒ 拖动「失效」（用户 2026-10-01）。
+    val resizeCb by rememberUpdatedState(onResizeDelta)
 
     val stops = route.stops
     val idx = if (stops.isEmpty()) 0 else currentStop.coerceIn(0, stops.size - 1)
@@ -188,9 +201,16 @@ fun RouteMiniMap(
     val entranceCell = remember { siteEntranceCell() }
 
     if (collapsed) {
-        // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡
+        // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡。
+        // 🔴 用户 2026-10-01：**点整颗胶囊**就应该展开（原来只有右边那个 ▲ 小按钮能点）
         Card(
-            modifier = modifier,
+            modifier = modifier.then(
+                if (onCollapsedChange != null) {
+                    Modifier.clickable { onCollapsedChange.invoke(false) }
+                } else {
+                    Modifier
+                }
+            ),
             shape = Corners.pillShape,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -243,15 +263,21 @@ fun RouteMiniMap(
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
-            // 顶部把手：上下拖动可调窗格高度（高度由调用方持久化）
+            // 顶部把手：上下拖动可调窗格高度（高度由调用方持久化）；
+            // **快速向下甩**等价于右上角的「收起」（用户 2026-10-01）。
             if (onResizeDelta != null) {
+                val resizeState = rememberDraggableState { dy -> resizeCb?.invoke(dy) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(16.dp)
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures { _, dy -> onResizeDelta.invoke(dy) }
-                        },
+                        .draggable(
+                            orientation = Orientation.Vertical,
+                            state = resizeState,
+                            onDragStopped = { velocity ->
+                                if (velocity > FLING_COLLAPSE_VELOCITY) onCollapsedChange?.invoke(true)
+                            },
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
@@ -381,7 +407,13 @@ fun RouteMiniMap(
     }
 }
 
-/** 「下一站 3/7 · D5-23」 */
+/**
+ * 「下一站 3/7 · D5-23」。
+ *
+ * 🔴 序号**只数取件站**（用户 2026-10-01：顺丰出库在 `route.stops` 里也占一站，用整体下标会让
+ * 地图上的「第 n 站」与卡片上的 ①②③ 错位 —— 顺丰出库之后所有序号都差一位）。
+ * 非取件步骤（顺丰出库 / 出站）不参与编号，直接显示自己的名字。
+ */
 private fun titleOf(route: PickupRoute, idx: Int): String {
     val stops = route.stops
     val stop = stops.getOrNull(idx) ?: return "路线"
@@ -390,8 +422,11 @@ private fun titleOf(route: PickupRoute, idx: Int): String {
         RouteStop.SfCheckout -> "顺丰出库（专用闸机）"
         is RouteStop.Exit -> "出站：${stop.kind.label}"
     }
-    val prefix = if (idx == 0) "下一站" else "第 ${idx + 1} 站"
-    return "$prefix ${idx + 1}/${stops.size} · $what"
+    if (stop !is RouteStop.Pickup) return what
+    val pickupNo = stops.take(idx + 1).count { it is RouteStop.Pickup }
+    val pickupTotal = stops.count { it is RouteStop.Pickup }
+    val prefix = if (pickupNo == 1) "下一站" else "第 $pickupNo 站"
+    return "$prefix $pickupNo/$pickupTotal · $what"
 }
 
 private fun stopColor(stop: RouteStop?, pal: MapPalette): Color = when (stop) {
