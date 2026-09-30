@@ -1,21 +1,25 @@
 package com.xxxx.parcel.ui.components
 
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonColors
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,11 +37,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.openPddIdentityEntry
 import com.xxxx.parcel.util.openTaobaoIdentityEntry
 
@@ -89,67 +97,57 @@ fun HomeTopBar(
             }
         },
         actions = {
-
-            Button(
-                contentPadding = PaddingValues(2.dp),
-                colors = ButtonColors(
-                    containerColor = Color(0xFF25AF22),
-                    contentColor = Color.White,
-                    disabledContentColor = Color.DarkGray,
-                    disabledContainerColor = Color.LightGray
-                ),
-                onClick = onSuccessCountClick,
+            // 🔴 三个标志（已识别 / 未识别 / 地图）**统一高度 + 统一间距**（用户 2026-10-01：
+            //    「他们中间留的空隙不一样，感觉很不和谐」）。之前是两个 Material Button
+            //    （内容内边距 2dp、中间隔 16dp）＋ 一个 34dp 圆图标（隔 8dp），三者高矮胖瘦都不一样。
+            //    现在：同高 34dp（老人模式 44dp）、同一胶囊形状、彼此固定 8dp。
+            val badgeHeight = if (isSeniorMode) Corners.controlSenior else Corners.control
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = successCount.toString(),
-                    fontWeight = FontWeight.Bold,
-                    style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                CountBadge(
+                    count = successCount,
+                    container = Color(0xFF25AF22),
+                    height = badgeHeight,
+                    isSeniorMode = isSeniorMode,
+                    onClick = onSuccessCountClick,
                 )
-            }
-            Spacer(Modifier.width(16.dp))
-            Button(
-                contentPadding = PaddingValues(2.dp),
-                colors = ButtonColors(
-                    containerColor = Color(0xFFAB1A65),
-                    contentColor = Color.White,
-                    disabledContentColor = Color.DarkGray,
-                    disabledContainerColor = Color.LightGray
-                ),
-                onClick = onFailedCountClick,
-            ) {
-                Text(
-                    text = failedCount.toString(),
-                    color = Color.White,
-                    style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                CountBadge(
+                    count = failedCount,
+                    container = Color(0xFFAB1A65),
+                    height = badgeHeight,
+                    isSeniorMode = isSeniorMode,
+                    onClick = onFailedCountClick,
                 )
-            }
-
-            Spacer(Modifier.width(8.dp))
-            // 地图取件的**明显入口**（用户 2026-10-01）：常驻顶栏，一眼就能看到
-            Button(
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                colors = ButtonColors(
-                    containerColor = Color(0xFF2F6FE4),
-                    contentColor = Color.White,
-                    disabledContentColor = Color.DarkGray,
-                    disabledContainerColor = Color.LightGray
-                ),
-                onClick = onOpenMapPage,
-            ) {
-                Text(
-                    text = "地图",
-                    fontWeight = FontWeight.Bold,
-                    style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
-                )
+                // 地图取件的**明显入口**：与两个数字同高的圆底 + 定位图钉
+                Box(
+                    modifier = Modifier
+                        .size(badgeHeight)
+                        .clip(Corners.pillShape)
+                        .background(Color(0xFF2F6FE4))
+                        .clickable(onClick = onOpenMapPage),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Place,
+                        contentDescription = "地图取件",
+                        tint = Color.White,
+                        modifier = Modifier.size(if (isSeniorMode) 26.dp else 20.dp),
+                    )
+                }
             }
             Spacer(Modifier.width(8.dp))
             // 顶栏菜单：项目较多，改用**可滚动的底部面板** —— 小屏 / 老人模式下也不会超出屏幕底部
             var showMenu by remember { mutableStateOf(false) }
-            IconButton(onClick = { showMenu = true }) {
+            IconButton(
+                onClick = { showMenu = true },
+                modifier = Modifier.size(if (isSeniorMode) 48.dp else 40.dp),
+            ) {
                 Icon(
                     imageVector = Icons.Filled.MoreVert,
                     contentDescription = "菜单",
-                    modifier = Modifier.size(if (isSeniorMode) 48.dp else 24.dp)
+                    modifier = Modifier.size(if (isSeniorMode) 36.dp else 24.dp)
                 )
             }
             if (showMenu) {
@@ -455,6 +453,40 @@ private fun SheetSectionTitle(text: String) {
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
+        )
+    }
+}
+
+/**
+ * 顶栏的**计数胶囊**（已识别 / 未识别）。
+ *
+ * 与地图图标同高（[height]）、同形状（[Corners.pillShape]）、同间距（8dp，由调用方给），
+ * 这样三个标志排在一起才整齐（用户 2026-10-01）。
+ */
+@Composable
+private fun CountBadge(
+    count: Int,
+    container: Color,
+    height: Dp,
+    isSeniorMode: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .height(height)
+            .widthIn(min = height)
+            .clip(Corners.pillShape)
+            .background(container)
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (isSeniorMode) 14.dp else 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = count.toString(),
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge,
         )
     }
 }

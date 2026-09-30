@@ -34,6 +34,7 @@ private const val KEY_BOTTOM = "barcode_bottom_enabled"
 /** 旧「底部填充」开关：已与浮窗合并，此键只用于读取旧设置做迁移 */
 private const val KEY_BOTTOM_FILL = "barcode_bottom_fill_enabled"
 private const val KEY_BOTTOM_HEIGHT = "barcode_bottom_height_dp"
+private const val KEY_MAP_BOTTOM_HEIGHT = "map_barcode_bottom_height_dp"
 /** 用户手动拖过高度后「钉住」：不再让列表做自动让位，避免两个窗格来回抖（用户 2026-10-01） */
 private const val KEY_BOTTOM_PINNED = "barcode_bottom_pinned"
 private const val KEY_BACKGROUND = "barcode_background_enabled"
@@ -105,6 +106,17 @@ fun getBarcodeBottomHeightDp(context: Context): Int =
 
 fun saveBarcodeBottomHeightDp(context: Context, heightDp: Int) {
     barcodePrefs(context).edit().putInt(KEY_BOTTOM_HEIGHT, heightDp).apply()
+}
+
+/**
+ * **地图取件页**底部条码高度（dp）：与首页独立保存，互不影响（用户 2026-10-01）。
+ * 拖动把手调节后持久化；默认 118dp。
+ */
+fun getMapBarcodeHeightDp(context: Context): Int =
+    barcodePrefs(context).getInt(KEY_MAP_BOTTOM_HEIGHT, 118)
+
+fun saveMapBarcodeHeightDp(context: Context, heightDp: Int) {
+    barcodePrefs(context).edit().putInt(KEY_MAP_BOTTOM_HEIGHT, heightDp).apply()
 }
 
 /**

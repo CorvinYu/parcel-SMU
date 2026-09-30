@@ -91,3 +91,63 @@ fun compactNumbers(pendingInOrder: List<String>, sticky: MutableMap<String, Int>
     sticky.clear()
     return pendingInOrder.mapIndexed { i, address -> address to i + 1 }.toMap()
 }
+
+/**
+ * **下拉刷新时重排件号**（用户 2026-10-01：「在首页下滑刷新排序，就是更新这个寻路功能」）。
+ *
+ * 与 [assignStableNumbers] 的区别只有一条：这里**未取件的号会跟着新的最优顺序重排**，
+ * 而不是「老件保住原号 ⇒ 顺序永远不变」。
+ *
+ * 规则（两条同时成立）：
+ * 1. **不在 [pendingInOrder] 里的条目（＝已取件）留原位、保原号** —— 用户 2026-10-01 定的，
+ *    不允许因为刷新就跳走；
+ * 2. **未取件**按新的取件顺序，依次拿「已取件没占用的号」中最小的那些 ⇒
+ *    列表按号排序后就是新顺序，且号始终是 1..N、不重不漏。
+ *
+ * 边界：`sticky` 里不在 [shown] 的地址（件被删了）会被清理并释放号。
+ *
+ * @param shown           列表里出现的地址（含已取件）
+ * @param pendingInOrder  未取件的地址，按**新的**最优取件顺序
+ * @param sticky          上次的件号表；**会被就地清理**
+ */
+fun refreshStableNumbers(
+    shown: List<String>,
+    pendingInOrder: List<String>,
+    sticky: MutableMap<String, Int>,
+): Map<String, Int> {
+    val shownSet = shown.toSet()
+    sticky.keys.retainAll(shownSet)
+
+    // 1) 「没参与重排」的（= 不在 pending 里的，正常就是已取件）：保住原号；没有号的历史数据补一个
+    val pendingSet = pendingInOrder.toSet()
+    val protected = shown.filter { it !in pendingSet }
+    val taken = HashSet<Int>()
+    for (address in protected) sticky[address]?.let { taken += it }
+    fun nextFree(taken: Set<Int>): Int {
+        var n = 1
+        while (n in taken) n++
+        return n
+    }
+    for (address in protected) {
+        if (sticky.containsKey(address)) continue
+        val n = nextFree(taken)
+        sticky[address] = n
+        taken += n
+    }
+
+    // 2) 未取件：按新顺序依次拿剩下的最小号
+    pendingInOrder.forEach { address ->
+        val n = nextFree(taken)
+        sticky[address] = n
+        taken += n
+    }
+
+    // 3) 兜底：既不在 pending、又没号的（理论上不会有）
+    for (address in shown) {
+        if (sticky.containsKey(address)) continue
+        val n = nextFree(taken)
+        sticky[address] = n
+        taken += n
+    }
+    return shown.associateWith { sticky.getValue(it) }
+}

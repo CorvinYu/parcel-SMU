@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.BarcodeSymbology
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
@@ -193,9 +193,13 @@ fun BarcodeBottomCard(
     Surface(
         color = Color.White,
         shadowElevation = 8.dp,
-        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+        // 与地图/提示卡统一：四角全圆 + **四边都有外边距**，做成一张真正「浮起来的圆角卡」。
+        // 🔴 之前只给了 start/end/bottom 三边，**顶部贴死**上面的地图窗格 ⇒ 白卡的直边像把上面的
+        //    胶囊「切」了一刀（用户 2026-10-01 两次提到「很锋利地切割其他胶囊」）。补上 top 间距即可。
+        shape = Corners.cardShape,
         modifier = Modifier
             .fillMaxWidth()
+            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
             .height(heightDp),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -221,7 +225,7 @@ fun BarcodeBottomCard(
                     modifier = Modifier
                         .width(44.dp)
                         .height(4.dp)
-                        .background(Color(0xFFCCCCCC), RoundedCornerShape(2.dp)),
+                        .background(Color(0xFFB8C2CC), Corners.pillShape),
                 )
             }
             Box(

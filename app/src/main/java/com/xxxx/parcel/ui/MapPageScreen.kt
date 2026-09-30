@@ -1,8 +1,10 @@
 package com.xxxx.parcel.ui
 
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
@@ -30,14 +32,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +50,7 @@ import androidx.navigation.NavController
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
 import com.xxxx.parcel.ui.components.BarcodeFullScreenDialog
 import com.xxxx.parcel.ui.components.RouteMiniMap
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.GuideDetail
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteStop
@@ -53,6 +59,7 @@ import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getBarcodePayload
+import com.xxxx.parcel.util.getMapBarcodeHeightDp
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getRouteOptions
@@ -61,6 +68,7 @@ import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.saveMapBarcodeHeightDp
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
 /**
@@ -117,7 +125,14 @@ fun MapPageScreen(
     //    保持下标不变 ⇒ 被取走的那一组消失后，同一下标正好落在**下一站**（用户 2026-10-01 要的自动跳下一格）
     var currentStop by remember { mutableIntStateOf(0) }
     var barcodeFull by remember { mutableStateOf(false) }
+    // 底部条码高度：可拖动调节（顶部卡固定 / 地图 weight(1f) 吃剩余 / 条码高度可拖）。
+    // 🔴 之前写 `+ delta.value` 符号反了：向上拖 delta 为负，相加反而变矮、撞 70 下限 ⇒ 像没反应（用户 2026-10-01）。
+    //    改成 `- delta.value`：向上拖 ⇒ 条码变高、地图让位。高度持久化（与首页独立）。
+    var barcodeHeightDp by remember { mutableIntStateOf(getMapBarcodeHeightDp(context)) }
     val hasBarcode = remember { getBarcodePayload(context) != null || hasBarcodeOriginalImage(context) }
+    // 本次会话里已经取掉的（货格号 → 地址）：顶部保留一排**灰色 + 删除线**的「已取」条
+    // （用户 2026-10-01：点一下之后不要直接消失，要变成灰色带删除线、和首页一样，然后自动跳到下一格）
+    val doneHere = remember { mutableStateListOf<Pair<String, String>>() }
 
     // 点顶部取件码 = 把这一组（同货架的全部码）标记为已取件
     val markCompleted: (List<String>) -> Unit = { codes ->
@@ -126,6 +141,15 @@ fun MapPageScreen(
             .distinct()
         if (targets.isNotEmpty()) {
             addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
+            // 记录到「已取」条：用**有效货格号**显示（与卡片标题同一套口径）
+            targets.forEach { t ->
+                val key = parseCompartmentCode(effectiveCompartmentNumber(t.compartmentNumber, t.code))?.toString()
+                    ?: t.code
+                doneHere.removeAll { it.first == key }
+                doneHere.add(0, key to t.address)
+            }
+            // 只留最近 8 条，避免把顶部顶爆
+            while (doneHere.size > 8) doneHere.removeAt(doneHere.size - 1)
         }
     }
 
@@ -160,6 +184,9 @@ fun MapPageScreen(
                 onStep = { currentStop = it },
                 onMarkCompleted = markCompleted,
             )
+
+            // 已取（灰条 + 删除线）：点过的件不会凭空消失，留在这里作为确认
+            DoneStrip(doneHere)
 
             // ── 中间：地图
             if (route.stops.isNotEmpty()) {
@@ -197,10 +224,13 @@ fun MapPageScreen(
                 BarcodeBottomCard(
                     context = context,
                     isSeniorMode = false,
-                    heightDp = 118.dp,
-                    onDrag = {},
+                    heightDp = barcodeHeightDp.dp,
+                    onDrag = { delta ->
+                        // 向上拖（delta 为负）⇒ 条码变高、地图让位（与首页方向一致）
+                        barcodeHeightDp = (barcodeHeightDp - delta.value).toInt().coerceIn(70, 300)
+                    },
                     onDragStart = {},
-                    onDragEnd = {},
+                    onDragEnd = { saveMapBarcodeHeightDp(context, barcodeHeightDp) },
                     onOpenSettings = { navController.navigate("barcode") },
                     onTap = { barcodeFull = true },
                 )
@@ -277,7 +307,7 @@ private fun CurrentStopCard(
                 )
             }
             .clickable(enabled = groupCodes.isNotEmpty()) { onMarkCompleted(groupCodes) },
-        shape = RoundedCornerShape(18.dp),
+        shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -329,6 +359,44 @@ private fun CurrentStopCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 「已取」灰条：地图取件页点过的取件码留在这里（灰色 + **删除线** + ✓），与首页已取件的样式一致。
+ *
+ * 为什么要有它（用户 2026-10-01）：点一下之后那一条直接消失，看不出「到底点上了没有」；
+ * 希望它变成灰色带删除线、然后再自动跳到下一格 —— 当前站由 `currentStop` 自动前进（见 `MapPageScreen`）。
+ */
+@Composable
+private fun DoneStrip(items: List<Pair<String, String>>) {
+    if (items.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "已取",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        items.forEach { (code, _) ->
+            Text(
+                text = "✓ $code",
+                textDecoration = TextDecoration.LineThrough,
+                color = MaterialTheme.colorScheme.outline,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(Corners.pillShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
             )
         }
     }

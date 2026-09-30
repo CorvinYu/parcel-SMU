@@ -15,13 +15,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.animation.core.snap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,12 +49,14 @@ import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.ui.components.TimeFilterSheet
 import com.xxxx.parcel.ui.components.timeFilterOptions
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.CompletedMarker
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_DP
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_SENIOR_DP
 import com.xxxx.parcel.util.GuideMapPlacement
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.getBarcodeBottomHeightDp
+import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapHeightDp
 import com.xxxx.parcel.util.getGuideMapPlacement
@@ -65,6 +68,7 @@ import com.xxxx.parcel.util.getShowCodeTime
 import com.xxxx.parcel.util.getShowCompartment
 import com.xxxx.parcel.util.getShowCompleted
 import com.xxxx.parcel.util.getTimeSort
+import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.isRouteSortList
 import com.xxxx.parcel.util.isBarcodeBottomPinned
 import com.xxxx.parcel.util.isMapPageEnabled
@@ -81,6 +85,8 @@ import com.xxxx.parcel.util.saveShowCompleted
 import com.xxxx.parcel.util.saveTimeSort
 import com.xxxx.parcel.util.saveRouteSortList
 import com.xxxx.parcel.viewmodel.ParcelViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @SuppressLint("StateFlowValueCalledInComposition")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -133,6 +139,14 @@ fun HomeScreen(
     var homeFullMap by remember { mutableStateOf(false) }
     var homeMapCollapsed by remember { mutableStateOf(false) }
     val homeMapEnabled = guideMapPlacement == GuideMapPlacement.HOME_OVERLAY
+    // 下拉刷新（用户 2026-10-01「在首页下滑刷新排序，就是更新这个寻路功能」）：
+    // 重读短信 → 重算最优路线 → 未取件的 ①②③ 按新顺序重排（已取件的留在原位、保原号）。
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshSignal by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    // 入口 / 出站胶囊点一下要出示的条码是否已设置（没设置就带去设置页）。
+    // 直接读（不 remember）⇒ 从条码设置页返回后立刻生效。
+    val hasBarcode = getBarcodePayload(context) != null || hasBarcodeOriginalImage(context)
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -217,10 +231,26 @@ fun HomeScreen(
             }
         }
     ) { innerPadding ->
+        // 下拉刷新：**整块首页内容**都在手势范围内（列表 / 地图窗格 / 底部条码）
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                refreshSignal += 1
+                // 重读短信（与切换时间筛选同一条链路），列表会据此重算路线与件号
+                (context as MainActivity).readAndParseSms()
+                scope.launch {
+                    delay(700)
+                    refreshing = false
+                }
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+        ) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
         ) {
             // 底部浮窗高度 = 「列表没占满时剩下的空白」与「用户拖动设定的高度」取小；
             // 列表装不下（内容高度未知）时缩到最小高度让位给列表。
@@ -279,6 +309,12 @@ fun HomeScreen(
                         },
                         // 地图改成占位（不遮挡内容）⇒ 列表不再需要底部留白
                         listBottomPadding = 0.dp,
+                        // 下拉刷新信号：列表据此重排未取件的①②③
+                        refreshSignal = refreshSignal,
+                        // 入口 / 出站胶囊：点一下全屏出示条码（没设置过就带去设置页）
+                        onShowBarcode = {
+                            if (hasBarcode) homeBarcodeFull = true else navController.navigate("barcode")
+                        },
                     ) else
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -324,7 +360,7 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 10.dp, end = 10.dp, bottom = 8.dp),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = Corners.cardShape,
                         color = MaterialTheme.colorScheme.surfaceVariant,
                     ) {
                         Text(
@@ -365,6 +401,7 @@ fun HomeScreen(
                 }
             }
         }
+        }   // ← PullToRefreshBox 收尾
         if (showBottomSheet) TimeFilterSheet(
             isSeniorMode = isSeniorMode,
             onOptionSelected = { index ->

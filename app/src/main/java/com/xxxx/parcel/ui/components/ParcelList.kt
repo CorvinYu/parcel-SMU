@@ -3,6 +3,7 @@ package com.xxxx.parcel.ui.components
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +22,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -35,8 +35,10 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,6 +57,7 @@ import androidx.navigation.NavController
 import com.xxxx.parcel.R
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.PickupCategory
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteOptions
@@ -75,6 +78,7 @@ import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.loadStableNumbers
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.refreshStableNumbers
 import com.xxxx.parcel.util.routeAnchorCode
 import com.xxxx.parcel.util.saveCodeNote
 import com.xxxx.parcel.util.saveStableNumbers
@@ -201,6 +205,10 @@ fun ParcelList(
     onListContentHeightPx: (Int?) -> Unit = {},
     /** 上报规划出来的路线 + 件号标签 + 已取灰点（供首页图示窗格复用，**不重复规划**） */
     onRouteComputed: (HomeRouteInfo) -> Unit = {},
+    /** 下拉刷新信号：每次下拉 +1（首页重读短信后传进来）⇒ 重算路线并把未取件按新顺序重排件号 */
+    refreshSignal: Int = 0,
+    /** 点「入口」/「出站」胶囊：全屏出示快递中心条码（没设置过条码时由上层引导去设置） */
+    onShowBarcode: () -> Unit = {},
     /** 列表底部留白（首页开启图示浮层时给窗格让位） */
     listBottomPadding: Dp = 0.dp,
 ) {
@@ -283,20 +291,30 @@ fun ParcelList(
     //   隐藏已取件   ⇒ 取完消失、编号从 1 紧凑重排（原本就是这个行为，保持）
     val stationParcels = categoryParcels[0]
     val stickyNumbers = remember { loadStableNumbers(context) }
+    // 🔴 **下拉刷新**（`refreshSignal` 每次下拉 +1）：这一次要「按新的最优顺序重排未取件的号」，
+    //    而不是平时的「老件保原号 ⇒ 顺序永远不变」（用户 2026-10-01：下拉刷新就是把寻路更新一遍）。
+    //    已取件的条目仍留在原位、保原号。靠 SideEffect 记录「上次处理过的信号」来判定**本次**是否刷新。
+    var seenRefresh by remember { mutableIntStateOf(refreshSignal) }
+    val justRefreshed = refreshSignal != seenRefresh
+    SideEffect { seenRefresh = refreshSignal }
     val routeNumbers: Map<String, Int> = remember(
-        stationParcels, stationRoute.orderedAddresses, routeSortEnabled, showCompleted,
+        stationParcels, stationRoute.orderedAddresses, routeSortEnabled, showCompleted, refreshSignal,
     ) {
         if (!routeSortEnabled) {
             emptyMap()
         } else {
-            val numbers = if (showCompleted) {
-                assignStableNumbers(
-                    stationParcels.map { it.address },
+            val shown = stationParcels.map { it.address }
+            val numbers = when {
+                // 隐藏已取件：取完就消失，号从 1 紧凑重排（原行为）
+                !showCompleted -> compactNumbers(stationRoute.orderedAddresses, stickyNumbers)
+                // 下拉刷新：未取件按新顺序重排（不在 pending 里的＝已取件，原地保号）
+                justRefreshed -> refreshStableNumbers(
+                    shown,
                     stationRoute.orderedAddresses,
                     stickyNumbers,
                 )
-            } else {
-                compactNumbers(stationRoute.orderedAddresses, stickyNumbers)
+                // 平时：稳定编号（老件保原号，新件拿最小空号）
+                else -> assignStableNumbers(shown, stationRoute.orderedAddresses, stickyNumbers)
             }
             saveStableNumbers(context, numbers)
             numbers
@@ -356,6 +374,17 @@ fun ParcelList(
         if (sfIdx < 0) return@remember null
         val lastPick = r.stops.take(sfIdx).filterIsInstance<RouteStop.Pickup>().lastOrNull()
         lastPick?.let { stationRoute.addressByCode[it.code.toString()] }
+    }
+    // 「入口 / 出站」步骤胶囊的提示（与顺丰出库同一个小窗口口径；文字提示开关关掉时不给文字）
+    val startHint: String? = remember(homeRoute, guideText) {
+        val r = homeRoute ?: return@remember null
+        if (!guideText.onHome) return@remember null
+        r.legs.firstOrNull()?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
+    }
+    val exitHint: String? = remember(homeRoute, guideText) {
+        val r = homeRoute ?: return@remember null
+        if (!guideText.onHome) return@remember null
+        r.legs.lastOrNull()?.let { VenueGuide.summarize(it) }?.takeIf { it.isNotEmpty() }
     }
     val defaultCategoryIndex = categoryCounts.indexOfFirst { it > 0 }.coerceAtLeast(0)
     val pagerState = rememberPagerState(
@@ -430,7 +459,21 @@ fun ParcelList(
                 categoryParcels[page]
             }
             // 快递站：地址就是短信碎片，整行去掉；快递柜：保留卡片头（显示是几号柜），但不再重复「自助取件」
-            val entries = ArrayList<ParcelListItem>(pageParcels.size + 1)
+            val entries = ArrayList<ParcelListItem>(pageParcels.size + 3)
+            // 路线步骤胶囊（入口 / 当前位置 / 顺丰出库 / 出站）：只在「按取件路线排序」开着时出现，
+            // 与 ①②③ 序号、逐卡「怎么走」同一前提（用户 2026-10-01：首页最顶部要一个入口胶囊、
+            // 出站时也要一个出站胶囊；点这两个胶囊 = 全屏出示条码，因为闸机前只有这两处要用条码）。
+            val routeStepsOn = page == 0 && routeSortEnabled && homeRoute?.stops?.isNotEmpty() == true
+            if (routeStepsOn) {
+                entries.add(
+                    if (checkoutOrigin != null) {
+                        // 取到一半接着走：起点是「刚取完的那一件」，不再是入口
+                        ParcelListItem.Step(StepKind.CONTINUE, startHint, checkoutOrigin.label)
+                    } else {
+                        ParcelListItem.Step(StepKind.ENTRANCE, startHint)
+                    }
+                )
+            }
             pageParcels.forEach { parcel ->
                 val number = routeNumbers[parcel.address]
                 entries.add(
@@ -455,8 +498,12 @@ fun ParcelList(
                     (it as? ParcelListItem.Card)?.entry?.parcel?.address == sfAfterAddress
                 }
                 if (anchor >= 0) {
-                    entries.add(anchor + 1, ParcelListItem.SfCheckout(sfCheckoutHint))
+                    entries.add(anchor + 1, ParcelListItem.Step(StepKind.SF_CHECKOUT, sfCheckoutHint))
                 }
+            }
+            // 出站：路线永远终于出站口（出库 ≠ 出站），所以它是列表最后一步
+            if (routeStepsOn) {
+                entries.add(ParcelListItem.Step(StepKind.EXIT, exitHint, homeRoute?.exit?.label))
             }
             val pageListState = rememberLazyListState()
             val layoutInfo = pageListState.layoutInfo
@@ -519,7 +566,7 @@ fun ParcelList(
                                 )
                             }
 
-                            is ParcelListItem.SfCheckout -> SfCheckoutListItem(hint = item.hint)
+                            is ParcelListItem.Step -> RouteStepCapsule(item, onShowBarcode)
                         }
                     }
                     if (showUnparsedHint) {
@@ -554,7 +601,7 @@ private data class ParcelListEntry(
     val key: String get() = "card:${parcel.address}"
 }
 
-/** 列表项：地址卡片，或**顺丰出库**这个显式步骤（与 HTML 版停靠序列一致）。 */
+/** 列表项：地址卡片，或**路线的一个显式步骤**（入口 / 当前位置 / 顺丰出库 / 出站）。 */
 private sealed interface ParcelListItem {
     val key: String
 
@@ -562,51 +609,120 @@ private sealed interface ParcelListItem {
         override val key: String get() = entry.key
     }
 
-    data class SfCheckout(val hint: String?) : ParcelListItem {
-        override val key: String get() = "sf_checkout"
+    data class Step(
+        val kind: StepKind,
+        /** 一行「怎么走」（文字提示开关打开时才有） */
+        val hint: String? = null,
+        /** 附加标签：出站用路线给出的闸机名；「从当前位置继续」用它写清从哪儿开始 */
+        val label: String? = null,
+    ) : ParcelListItem {
+        override val key: String get() = "step:${kind.name}"
     }
 }
 
-/** 顺丰出库步骤卡（橙色，与「取件路线」页同一套说法）。 */
+/** 路线步骤的种类（决定徽标、配色与文案）。 */
+private enum class StepKind {
+    /** 入口进站（刷码进入）——点一下 = 全屏出示条码 */
+    ENTRANCE,
+
+    /** 取到一半接着走：起点是刚取完的那一件，不再从入口进 */
+    CONTINUE,
+
+    /** 顺丰出库（专用闸机，不能出站） */
+    SF_CHECKOUT,
+
+    /** 出站（路线的终点）——点一下 = 全屏出示条码 */
+    EXIT,
+}
+
+/**
+ * 路线步骤胶囊（入口 / 当前位置 / 顺丰出库 / 出站）。
+ *
+ * 四种步骤**共用同一个样式**（同一胶囊形状、同一徽标尺寸、同一间距），
+ * 与地址卡片上的「怎么走」提示条（[Corners.chipShape]）区分层级 —— 用户 2026-10-01：
+ * 「首页不同的胶囊，它的圆角是不一样的，让它们变得统一和谐」。
+ *
+ * [StepKind.ENTRANCE] 与 [StepKind.EXIT] 可点：全屏出示快递中心条码（只有进出闸机这两处要用它）。
+ */
 @Composable
-private fun SfCheckoutListItem(hint: String?) {
+private fun RouteStepCapsule(step: ParcelListItem.Step, onShowBarcode: () -> Unit) {
+    val badge: String
+    val badgeColor: Color
+    val container: Color
+    val titleColor: Color
+    when (step.kind) {
+        StepKind.ENTRANCE -> {
+            badge = "入"; badgeColor = Color(0xFF1B8A2E); container = Color(0xFFE7F6E9); titleColor = Color(0xFF14601F)
+        }
+        StepKind.CONTINUE -> {
+            badge = "我"; badgeColor = Color(0xFF2F6FE4); container = Color(0xFFE8F0FE); titleColor = Color(0xFF10366B)
+        }
+        StepKind.SF_CHECKOUT -> {
+            badge = "SF"; badgeColor = Color(0xFFE65100); container = Color(0xFFFFF3E0); titleColor = Color(0xFFE65100)
+        }
+        StepKind.EXIT -> {
+            badge = "出"; badgeColor = Color(0xFF5B6472); container = Color(0xFFEEF0F4); titleColor = Color(0xFF39414D)
+        }
+    }
+    val title = when (step.kind) {
+        StepKind.ENTRANCE -> "入口进站"
+        StepKind.CONTINUE -> "从当前位置继续" + (step.label?.let { "（$it）" } ?: "")
+        StepKind.SF_CHECKOUT -> "顺丰出库（顺丰专用闸机）"
+        StepKind.EXIT -> "出站" + (step.label?.let { "：$it" } ?: "")
+    }
+    val subtitle = when (step.kind) {
+        StepKind.ENTRANCE -> "刷码进入 · 取完件从这里开始走"
+        StepKind.CONTINUE -> "你已经取过件了，路线从这一点接着算"
+        StepKind.SF_CHECKOUT -> "取了顺丰件必须先在这里出库；这台不能出站"
+        StepKind.EXIT -> "出库 ≠ 出站；走到这里才结束"
+    }
+    // 只有「入口」「出站」需要出示条码（其余两步在闸机里不刷码）
+    val tappable = step.kind == StepKind.ENTRANCE || step.kind == StepKind.EXIT
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+            .padding(vertical = 4.dp)
+            .then(if (tappable) Modifier.clickable(onClick = onShowBarcode) else Modifier),
+        shape = Corners.pillShape,
+        colors = CardDefaults.cardColors(containerColor = container),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
                     .size(30.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE65100)),
+                    .clip(Corners.pillShape)
+                    .background(badgeColor),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("SF", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(
+                    badge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = if (badge.length > 1) 11.sp else 14.sp,
+                )
             }
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 10.dp),
             ) {
-                Text(
-                    "顺丰出库（顺丰专用闸机）",
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFE65100),
-                )
-                Text(
-                    "取了顺丰件必须先在这里出库；这台不能出站",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                if (hint != null) {
-                    Text("→ $hint", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1565C0))
+                Text(title, fontWeight = FontWeight.Medium, color = titleColor)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                if (step.hint != null) {
+                    Text("→ ${step.hint}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF1565C0))
+                }
+                if (tappable) {
+                    Text(
+                        "点一下 = 全屏出示条码",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = badgeColor,
+                    )
                 }
             }
         }

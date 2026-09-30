@@ -64,6 +64,10 @@ class ParcelViewModel(
         data.addAll(list)
         _allCompletedIds.value = data
         _parcelsData.value = SmsProcessor.recalculateParcels(_parcelsData.value, _allCompletedIds.value)
+        // 🔴 successSmsData 也要同步打标记：地图取件页 / 路线页 / 条码试验页都读它并按
+        //    `!it.isCompleted` 过滤 —— 之前只刷 parcelsData，另几处看到的是旧状态
+        //    （点了「已取件」不消失 / 已取件的又冒出来，用户 2026-10-01 反馈）。
+        _successSmsData.value = withCompletedMarks(_successSmsData.value, _allCompletedIds.value)
     }
 
     fun removeCompletedId(key: String) {
@@ -71,6 +75,7 @@ class ParcelViewModel(
         data.remove(key)
         _allCompletedIds.value = data
         _parcelsData.value = SmsProcessor.recalculateParcels(_parcelsData.value, _allCompletedIds.value)
+        _successSmsData.value = withCompletedMarks(_successSmsData.value, _allCompletedIds.value)
     }
 
     fun clearData() {
@@ -102,7 +107,11 @@ class ParcelViewModel(
                 SmsProcessor.process(allMessages, smsParser, completedIds, addressMappings)
             }
 
-            _successSmsData.value = result.successful
+            // 🔴 successSmsData 必须带上 isCompleted：`result.successful` 是分组前的原始列表，
+            //    **从不打完成标记** ⇒ 刚进 App / 换时间过滤后，地图取件页读它按 `!it.isCompleted`
+            //    过滤时**会把已取件的也显示出来**（用户 2026-10-01 反馈）。
+            //    保持列表原始语义（顺序/条数/去重都不动），只重算标记。
+            _successSmsData.value = withCompletedMarks(result.successful, completedIds)
             _failedMessages.value = result.failed
             _parcelsData.value = result.parcels
         }
@@ -133,6 +142,27 @@ class ParcelViewModel(
         smsParser.preferLockerAddress = enabled
     }
 
+}
+
+/**
+ * 给成功解析的短信列表**重算完成标记**（纯函数，可 JVM 单测）。
+ *
+ * 规则与 `SmsProcessor.recalculateParcels` 完全一致：键 = `${sms.id}_${sms.timestamp}` 或 `sms.id`。
+ * 不改列表的顺序与条数 —— 只是把 `isCompleted` 标对。
+ *
+ * 为什么需要它：`SmsProcessor.process` 返回的 `successful` 是分组前的原始列表，
+ * 从不打 isCompleted；而地图取件页 / 路线页 / 条码试验页都读 `successSmsData`
+ * 并按 `!it.isCompleted` 过滤 —— 不打标记就会把已取件的也当作待取（用户 2026-10-01 反馈）。
+ */
+private fun withCompletedMarks(list: List<SmsData>, completedIds: List<String>): List<SmsData> {
+    if (completedIds.isEmpty()) {
+        return if (list.any { it.isCompleted }) list.map { it.copy(isCompleted = false) } else list
+    }
+    val done = completedIds.toHashSet()
+    return list.map { d ->
+        val completed = done.contains(d.id) || done.contains(d.sms.id)
+        if (d.isCompleted == completed) d else d.copy(isCompleted = completed)
+    }
 }
 
 

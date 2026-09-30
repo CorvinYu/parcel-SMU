@@ -68,7 +68,7 @@ fun addCustomList(context: Context, key: String, newString: String) {
     saveCustomList(context, key, existingSet)
 }
 
-fun removeCompletedId(context: Context, viewModel: ParcelViewModel, sms: SmsModel) {
+fun removeCompletedId(context: Context, viewModel: ParcelViewModel, sms: SmsModel, code: String = "") {
     val key = "${sms.id}_${sms.timestamp}"
     val completedIds = getCustomList(context, "completedIds")
     completedIds.remove(key)
@@ -76,6 +76,11 @@ fun removeCompletedId(context: Context, viewModel: ParcelViewModel, sms: SmsMode
     saveCustomList(context, "completedIds", completedIds)
     viewModel.removeCompletedId(key)
     viewModel.removeCompletedId(sms.id)
+    // 🔴 取消「已取件」时移除对应的 checkout 记录：recordCheckout 是在标记完成时记的，
+    //    取消标记后那个「刚取完的位置」已不成立 —— 若不清，地图上的灰✓和路线起点仍是旧点，
+    //    导致首页排序（①②③）与导航小窗口（下一站·向南N格）对不上（用户 2026-10-01 反馈）。
+    //    只删这一条（不是清空）：取消非最近件时起点仍正确指向最近一次完成的位置。
+    if (code.isNotBlank()) removeCheckoutEntry(context, code)
 }
 
 fun addCompletedIds(

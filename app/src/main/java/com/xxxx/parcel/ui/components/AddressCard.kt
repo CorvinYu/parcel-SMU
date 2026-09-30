@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.xxxx.parcel.model.ParcelData
 import com.xxxx.parcel.model.SmsData
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.PickupPlace
 import com.xxxx.parcel.util.addCompletedIds
 import com.xxxx.parcel.util.classifyPickupPlace
@@ -178,7 +179,7 @@ fun AddressCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 3.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = Corners.chipShape,
                         color = Color(0xFFE8F0FE),
                     ) {
                         Text(
@@ -217,7 +218,7 @@ fun AddressCard(
                                                     .then(
                                                         if (rowIndex == 0) {
                                                             Modifier
-                                                                .clip(RoundedCornerShape(50))
+                                                                .clip(Corners.pillShape)
                                                                 .background(MaterialTheme.colorScheme.primary)
                                                         } else {
                                                             Modifier
@@ -245,7 +246,7 @@ fun AddressCard(
                                                 modifier = Modifier
                                                     .padding(end = 10.dp)
                                                     .size(if (isSeniorMode) 54.dp else 42.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clip(Corners.chipShape)
                                                     .background(
                                                         MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
                                                     ),
@@ -281,7 +282,8 @@ fun AddressCard(
                                                             removeCompletedId(
                                                                 context,
                                                                 viewModel,
-                                                                smsData.sms
+                                                                smsData.sms,
+                                                                smsData.code,
                                                             )
                                                         } else {
                                                             addCompletedIds(

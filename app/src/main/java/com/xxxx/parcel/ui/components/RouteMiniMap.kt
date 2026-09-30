@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.CompletedMarker
 import com.xxxx.parcel.util.GridCell
 import com.xxxx.parcel.util.GuideDetail
@@ -190,7 +191,7 @@ fun RouteMiniMap(
         // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡
         Card(
             modifier = modifier,
-            shape = RoundedCornerShape(50),
+            shape = Corners.pillShape,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
@@ -238,7 +239,7 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -256,7 +257,7 @@ fun RouteMiniMap(
                     Box(
                         modifier = Modifier
                             .size(width = 40.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(50))
+                            .clip(Corners.pillShape)
                             .background(MaterialTheme.colorScheme.outlineVariant),
                     )
                 }
@@ -305,7 +306,7 @@ fun RouteMiniMap(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = Corners.chipShape,
                     color = MaterialTheme.colorScheme.primaryContainer,
                 ) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
@@ -335,7 +336,7 @@ fun RouteMiniMap(
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(Corners.chipShape)
                     .background(pal.canvasBg)
                     .clipToBounds()
                     .onSizeChanged { canvasSize = it }
@@ -681,6 +682,21 @@ private fun DrawScope.drawVenue(
         drawPathOf(cells, ::px, ::py, cell, color, w)
     }
 
+    // ⑤b **方向指示**：圆头 chevron（不是尖三角 —— 用户 2026-10-01：那个三角形又丑又常盖住圆圈）。
+    //     位置改到「当前段第一截的**中点**」，并且**画在站点标记之前** ⇒ 任何标记都会盖在它上面，
+    //     结构上不可能再挡住圆圈。方向取 VenueGuide 压出来的第一个 MOVE 方向。
+    if (nextDir != null) {
+        firstRunMid(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
+            drawChevron(
+                px(c.col + 0.5f),
+                py(c.row + 0.5f),
+                nextDir,
+                (cell * 1.2f).coerceIn(7f, 16f),
+                pal.accent.copy(alpha = 0.92f),
+            )
+        }
+    }
+
     // ⑥ 行进光点：沿当前段跑（像外卖 App）
     route.legs.getOrNull(idx)?.cells?.takeIf { it.size > 1 }?.let { cells ->
         val k = phase * (cells.size - 1)
@@ -816,18 +832,7 @@ private fun DrawScope.drawVenue(
         drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
     }
 
-    // ⑩ 下一步方向箭头（当前段首个同向段的终点）
-    if (nextDir != null) {
-        firstRunEnd(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
-            drawArrow(
-                px(c.col + 0.5f),
-                py(c.row + 0.5f),
-                nextDir,
-                (cell * 1.6f).coerceIn(9f, 20f),
-                pal.accent,
-            )
-        }
-    }
+    // ⑩ 方向指示已上移到 ⑤b（画在站点标记**之下**，且用圆头 chevron —— 不再盖住圆圈）
 
     // ⑪ 全屏时在**货架旁直接写取件码**：按**组**写，同一货架的多件一起写出来
     //    （用户 2026-10-01：同货架 ≥2 件时以前只显示第一个，其余的看不到）
@@ -905,8 +910,8 @@ private fun DrawScope.drawPathOf(
     drawPath(path, color = color, style = Stroke(width = width, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
 }
 
-/** 首个「同方向段」的终点格（与 [VenueGuide] 的压缩规则一致）。 */
-private fun firstRunEnd(cells: List<GridCell>): GridCell? {
+/** **首个「同方向段」的中点格**（与 [VenueGuide] 的压缩规则一致）。 */
+private fun firstRunMid(cells: List<GridCell>): GridCell? {
     if (cells.size < 2) return null
     val dr = cells[1].row - cells[0].row
     val dc = cells[1].col - cells[0].col
@@ -917,34 +922,48 @@ private fun firstRunEnd(cells: List<GridCell>): GridCell? {
         if (nr != dr || nc != dc) break
         j++
     }
-    return cells[j + 1]
+    // j+1 = 该同向段的终点格；取它与起点的中点（走向中途，不会压在站点圆点上）
+    val end = j + 1
+    val mid = end / 2
+    return cells[mid]
 }
 
-private fun DrawScope.drawArrow(cx: Float, cy: Float, dir: VenueGuide.Dir, sizePx: Float, color: Color) {
-    val p = Path()
+/**
+ * 方向指示：**圆头 chevron**（两条圆头线段拼成的「›」）。
+ *
+ * 用户 2026-10-01 反馈：原来的实心尖三角「非常丑，而且很多时候会覆盖掉那个圆圈」。
+ * 现在换成圆头线 + 白色描边（更像导航 App 的走向箭头），并且由调用方把它画在站点标记**之前**。
+ */
+private fun DrawScope.drawChevron(cx: Float, cy: Float, dir: VenueGuide.Dir, sizePx: Float, color: Color) {
+    val ux: Float
+    val uy: Float
     when (dir) {
-        VenueGuide.Dir.NORTH -> {
-            p.moveTo(cx, cy - sizePx)
-            p.lineTo(cx - sizePx * 0.62f, cy + sizePx * 0.45f)
-            p.lineTo(cx + sizePx * 0.62f, cy + sizePx * 0.45f)
-        }
-        VenueGuide.Dir.SOUTH -> {
-            p.moveTo(cx, cy + sizePx)
-            p.lineTo(cx - sizePx * 0.62f, cy - sizePx * 0.45f)
-            p.lineTo(cx + sizePx * 0.62f, cy - sizePx * 0.45f)
-        }
-        VenueGuide.Dir.EAST -> {
-            p.moveTo(cx + sizePx, cy)
-            p.lineTo(cx - sizePx * 0.45f, cy - sizePx * 0.62f)
-            p.lineTo(cx - sizePx * 0.45f, cy + sizePx * 0.62f)
-        }
-        VenueGuide.Dir.WEST -> {
-            p.moveTo(cx - sizePx, cy)
-            p.lineTo(cx + sizePx * 0.45f, cy - sizePx * 0.62f)
-            p.lineTo(cx + sizePx * 0.45f, cy + sizePx * 0.62f)
-        }
+        VenueGuide.Dir.NORTH -> { ux = 0f; uy = -1f }
+        VenueGuide.Dir.SOUTH -> { ux = 0f; uy = 1f }
+        VenueGuide.Dir.EAST -> { ux = 1f; uy = 0f }
+        VenueGuide.Dir.WEST -> { ux = -1f; uy = 0f }
     }
-    p.close()
-    drawPath(p, color)
-    drawPath(p, Color.White, style = Stroke(width = 2f))
+    val nx = -uy
+    val ny = ux
+    val tipX = cx + ux * sizePx * 0.55f
+    val tipY = cy + uy * sizePx * 0.55f
+    val backX = cx - ux * sizePx * 0.45f
+    val backY = cy - uy * sizePx * 0.45f
+    val wide = sizePx * 0.62f
+    val p = Path().apply {
+        moveTo(backX + nx * wide, backY + ny * wide)
+        lineTo(tipX, tipY)
+        lineTo(backX - nx * wide, backY - ny * wide)
+    }
+    val w = (sizePx * 0.36f).coerceAtLeast(1.6f)
+    drawPath(
+        p,
+        Color.White,
+        style = Stroke(width = w + 2.6f, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round),
+    )
+    drawPath(
+        p,
+        color,
+        style = Stroke(width = w, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round),
+    )
 }

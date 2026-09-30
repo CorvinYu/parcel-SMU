@@ -53,6 +53,21 @@ fun recordCheckout(context: Context, code: String, at: Long = System.currentTime
     writeEntries(context, (listOf(clean to at) + rest).take(KEEP))
 }
 
+/**
+ * 取消某一条「已取件」记录（用户把件标记回未取时调用）。
+ *
+ * 只删该取件码对应的条目，不动其余 ⇒ 若你之前依次取了 A→B→C：
+ * - 取消 A：剩余 [C, B]，起点仍是 C（你还在 C）✅
+ * - 取消 C（最近一次）：剩余 [B]，起点回到 B（最近仍完成的那件）✅
+ * 避免了「取消标记后灰点/起点仍是旧点」导致排序与导航小窗口对不上（用户 2026-10-01 反馈）。
+ */
+fun removeCheckoutEntry(context: Context, code: String) {
+    val clean = code.trim()
+    if (clean.isEmpty()) return
+    val rest = readEntries(context).filterNot { it.first == clean }
+    writeEntries(context, rest)
+}
+
 /** 最近一次取件的位置；超出时间窗、或那个码定位不了（如纯数字快递柜）⇒ null。 */
 fun lastCheckoutOrigin(
     context: Context,
