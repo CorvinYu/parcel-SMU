@@ -259,8 +259,7 @@ data class RouteLeg(
 )
 
 /** 路线上的一个停靠点。 */
-sealed interface RouteStop {
-    /** 取件 */
+sealed interface RouteStop {    /** 取件 */
     data class Pickup(val code: CompartmentCode, val spot: PickupSpot) : RouteStop
 
     /** 顺丰**出库**（顺丰专用闸机；取过 S 件才会出现） */
@@ -311,6 +310,49 @@ data class PickupRoute(
  * 手机上可接受；n=18 起内存翻 4 倍（>70MB）就不合适了。53 件这种量级**不可能**精确求解（2^53）。
  */
 const val MAX_EXACT_ITEMS = 16
+
+/**
+ * 一组「落在同一个货架」的连续取件点。
+ *
+ * 用户 2026-10-01：同货架的两件在地图上会互相盖住（①被②盖掉），容易看错 ⇒ **合并成一枚标记**，
+ * 标号写成一串（`1·2`），点位上只画一次。
+ */
+data class StopGroup(
+    /** 组内各站在 [PickupRoute.stops] 里的下标（升序） */
+    val indexes: List<Int>,
+    /** 代表格（取组内第一站的通道格，保证一定落在通道上） */
+    val cell: GridCell,
+    val isPickup: Boolean,
+)
+
+/**
+ * 把停靠序列里**连续、且同一个货架**（排字母 + 货架号相同）的取件点合成一组；
+ * 顺丰出库 / 出站各自单独成组。
+ */
+fun groupRouteStops(route: PickupRoute): List<StopGroup> {
+    val out = ArrayList<StopGroup>()
+    route.stops.forEachIndexed { i, stop ->
+        val cell = route.legs.getOrNull(i)?.cells?.lastOrNull() ?: return@forEachIndexed
+        if (stop is RouteStop.Pickup) {
+            val key = shelfKey(stop.code)
+            val prev = out.lastOrNull()
+            val prevKey = prev?.takeIf { it.isPickup }
+                ?.let { g -> (route.stops.getOrNull(g.indexes.last()) as? RouteStop.Pickup)?.let { shelfKey(it.code) } }
+            if (prev != null && prev.isPickup && prevKey == key) {
+                out[out.size - 1] = prev.copy(indexes = prev.indexes + i)
+            } else {
+                out += StopGroup(listOf(i), cell, isPickup = true)
+            }
+        } else {
+            out += StopGroup(listOf(i), cell, isPickup = false)
+        }
+    }
+    return out
+}
+
+/** 货架标识：`S3-2-2628` 与 `S3-3-7606` 都算 `S3`（同一货架）。 */
+private fun shelfKey(code: CompartmentCode): String =
+    "${code.rowLetter.uppercaseChar()}${code.shelfNumber}"
 
 // ============================================================================
 // 场地索引（合并区 / 闸机带）
@@ -570,10 +612,15 @@ private fun minBetweenCells(a: List<GridCell>, b: List<GridCell>): Int {
  *
  * @param rawCodes 货格号原文列表（通常来自短信解析出的 compartmentNumber，或取件码兜底）
  * @param options  场地参数（目前只有 J 每列格数）
+ * @param startCell 起点通道格：默认 `null` = 入口闸机；
+ *   **刚取完一件时传那一件的通道格** ⇒ 路线从现场接着走，而不是又从入口出发（用户 2026-10-01）
+ * @param startLabel 起点在文案里的名字（如「已取的 S3-2-2628」）
  */
 fun planPickupRoute(
     rawCodes: List<String>,
     options: RouteOptions = RouteOptions.DEFAULT,
+    startCell: GridCell? = null,
+    startLabel: String = "入口闸机",
 ): PickupRoute {
     val unresolved = mutableListOf<String>()
     val lockers = mutableListOf<String>()
@@ -596,7 +643,8 @@ fun planPickupRoute(
         spots += spot
     }
 
-    val entrance = SiteIndex.entranceCell
+    // 起点：默认入口闸机；「刚取完一件」时由调用方传那一件的通道格（路线从现场续走）
+    val entrance = startCell ?: SiteIndex.entranceCell
     if (spots.isEmpty() || entrance == null) {
         if (entrance == null && spots.isNotEmpty()) {
             unresolved += spots.map { it.code.raw }
@@ -857,7 +905,7 @@ fun planPickupRoute(
     fun cursorStub(): Double = if (cursor >= 0) spots[cursor].stubTiles else 0.0
 
     fun cursorLabel(): String = when (cursor) {
-        -1 -> "入口闸机"
+        -1 -> startLabel
         -2 -> "顺丰出库（顺丰专用闸机）"
         else -> spots[cursor].code.toString()
     }

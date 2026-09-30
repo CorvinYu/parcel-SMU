@@ -78,12 +78,20 @@ fun removeCompletedId(context: Context, viewModel: ParcelViewModel, sms: SmsMode
     viewModel.removeCompletedId(sms.id)
 }
 
-fun addCompletedIds(context: Context, viewModel: ParcelViewModel, smsList: List<SmsModel>) {
+fun addCompletedIds(
+    context: Context,
+    viewModel: ParcelViewModel,
+    smsList: List<SmsModel>,
+    /** 这些短信对应的取件码（记「刚取完的位置」用；SmsModel 本身不含取件码） */
+    codes: List<String> = emptyList(),
+) {
     val completedIds = getCustomList(context, "completedIds")
     val newKeys = smsList.map { "${it.id}_${it.timestamp}" }
     completedIds.addAll(newKeys)
     saveCustomList(context, "completedIds", completedIds)
     viewModel.addCompletedIds(newKeys)
+    // 记下「刚取完的这一件」的位置：下一次规划就从它接着走，而不是又从入口出发（用户 2026-10-01）
+    codes.forEach { recordCheckout(context, it) }
 }
 
 fun getAllSaveData(context: Context, viewModel: ParcelViewModel) {

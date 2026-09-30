@@ -11,12 +11,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -66,13 +68,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xxxx.parcel.util.CompletedMarker
 import com.xxxx.parcel.util.GridCell
 import com.xxxx.parcel.util.GuideDetail
 import com.xxxx.parcel.util.GuideMapView
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.SiteData
+import com.xxxx.parcel.util.StopGroup
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.groupRouteStops
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -106,6 +111,10 @@ fun RouteMiniMap(
     onMapTap: (() -> Unit)? = null,
     /** 全屏时在地图上**货架旁直接写取件码** */
     showStopCodes: Boolean = false,
+    /** 已取件的灰点（同货架的连续取件点会合并成一枚，标号写成 `1·2`） */
+    completedMarkers: List<CompletedMarker> = emptyList(),
+    /** 顶部把手上下拖动时回调（dy 为像素位移，向上为负）——用于调窗格高度 */
+    onResizeDelta: ((Float) -> Unit)? = null,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -123,7 +132,7 @@ fun RouteMiniMap(
     val nextDir = hints.firstOrNull { it.kind == VenueGuide.HintKind.MOVE }?.dir
     val oneLine = mainHints.joinToString(" → ") { if (detail == GuideDetail.FULL) it.text else it.brief }
 
-    // 标记文字：取件用件号（稳定件号优先），顺丰/出站用徽标
+    // 标记文字：取件用件号（稳定件号优先），顺丰/出站用徽标；**同货架的连续取件合并成一枚**
     val markerLabels = remember(route, pickupLabels) {
         var n = 0
         route.stops.map { s ->
@@ -137,6 +146,7 @@ fun RouteMiniMap(
             }
         }
     }
+    val groups = remember(route) { groupRouteStops(route) }
 
     var view by remember(initialView) { mutableStateOf(initialView) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -174,11 +184,12 @@ fun RouteMiniMap(
     val dots = remember(canvasSize) { buildDots(canvasSize) }
 
     if (collapsed) {
+        // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡
         Card(
             modifier = modifier,
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            shape = RoundedCornerShape(50),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Row(
                 modifier = Modifier
@@ -228,6 +239,25 @@ fun RouteMiniMap(
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
+            // 顶部把手：上下拖动可调窗格高度（高度由调用方持久化）
+            if (onResizeDelta != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(16.dp)
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures { _, dy -> onResizeDelta.invoke(dy) }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 40.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -339,9 +369,11 @@ fun RouteMiniMap(
                     measurer = measurer,
                     phase = phase,
                     markerLabels = markerLabels,
+                    groups = groups,
                     nextDir = nextDir,
                     dots = dots,
                     showStopCodes = showStopCodes,
+                    completedMarkers = completedMarkers,
                 )
             }
         }
@@ -514,9 +546,11 @@ private fun DrawScope.drawVenue(
     measurer: TextMeasurer,
     phase: Float,
     markerLabels: List<String>,
+    groups: List<StopGroup>,
     nextDir: VenueGuide.Dir?,
     dots: List<Offset>,
     showStopCodes: Boolean,
+    completedMarkers: List<CompletedMarker>,
 ) {
     fun px(col: Float): Float = size.width / 2f + (col - cam.cx) * cam.scale
     fun py(row: Float): Float = size.height / 2f + (row - cam.cy) * cam.scale
@@ -588,11 +622,23 @@ private fun DrawScope.drawVenue(
             //    （写 i 会让所有货架名错位 —— 用户 2026-10-01 反馈「货架号标注几乎全乱」的根因）
             val label = SiteData.rectLabels.getOrNull(i / 4)?.trim().orEmpty()
             if (cell >= 11f && label.isNotEmpty()) {
-                val layout = measurer.measure(label, style = TextStyle(color = pal.label, fontSize = 9.sp), maxLines = 1)
-                drawText(
-                    layout,
-                    topLeft = Offset(x + w / 2f - layout.size.width / 2f, y + h / 2f - layout.size.height / 2f),
-                )
+                val style = TextStyle(color = pal.label, fontSize = 9.sp)
+                // 又高又窄的（闸机带）文字**竖排** —— 用户 2026-10-01：「7个普通闸机」要纵向排列
+                if (isGate || (r1 - r0) > (c1 - c0)) {
+                    val laid = label.map { measurer.measure(it.toString(), style = style, maxLines = 1) }
+                    val lineH = (laid.maxOfOrNull { it.size.height } ?: 10) + 1f
+                    var yy = y + h / 2f - laid.size * lineH / 2f
+                    laid.forEach { l ->
+                        drawText(l, topLeft = Offset(x + w / 2f - l.size.width / 2f, yy))
+                        yy += lineH
+                    }
+                } else {
+                    val layout = measurer.measure(label, style = style, maxLines = 1)
+                    drawText(
+                        layout,
+                        topLeft = Offset(x + w / 2f - layout.size.width / 2f, y + h / 2f - layout.size.height / 2f),
+                    )
+                }
             }
         }
         i += 4
@@ -669,15 +715,21 @@ private fun DrawScope.drawVenue(
         )
     }
 
-    // ⑧ 站点标记（取件用件号；顺丰/出站用徽标）
-    route.stops.forEachIndexed { stopIndex, stop ->
-        val cellPos = route.legs.getOrNull(stopIndex)?.cells?.lastOrNull() ?: return@forEachIndexed
-        val x = px(cellPos.col + 0.5f)
-        val y = py(cellPos.row + 0.5f)
-        val label = markerLabels.getOrNull(stopIndex) ?: "?"
+    // ⑧ 站点标记：**按组合并**（同货架的连续取件只画一枚，标号写成 `1·2`），取件用件号、顺丰/出站用徽标
+    groups.forEach { g ->
+        val stopIndex = g.indexes.first()
+        val stop = route.stops.getOrNull(stopIndex) ?: return@forEach
+        val isCurrent = idx in g.indexes
+        val x = px(g.cell.col + 0.5f)
+        val y = py(g.cell.row + 0.5f)
+        val label = if (g.isPickup) {
+            g.indexes.joinToString("·") { markerLabels.getOrNull(it) ?: "?" }
+        } else {
+            markerLabels.getOrNull(stopIndex) ?: "?"
+        }
         val color = stopColor(stop, pal)
-        val r = (cell * 1.5f).coerceIn(9f, 15f) * if (stopIndex == idx) 1.06f else 1f
-        if (stopIndex == idx) {
+        val r = (cell * 1.5f).coerceIn(9f, 15f) * if (isCurrent) 1.06f else 1f
+        if (isCurrent) {
             val t = ((phase * 1.4f) % 1f)
             drawCircle(pal.accent.copy(alpha = 0.22f * (1f - t)), radius = r * (1.6f + t * 0.9f), center = Offset(x, y))
         }
@@ -690,6 +742,28 @@ private fun DrawScope.drawVenue(
             maxLines = 1,
         )
         drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
+    }
+
+    // ⑧b 已取件的灰点（用户 2026-10-01：不要消失，标成灰色「✓ 已取」）
+    completedMarkers.forEach { m ->
+        val x = px(m.cell.col + 0.5f)
+        val y = py(m.cell.row + 0.5f)
+        val r = (cell * 1.4f).coerceIn(8f, 14f)
+        drawCircle(pal.routeDone, radius = r, center = Offset(x, y))
+        drawCircle(Color.White, radius = r, center = Offset(x, y), style = Stroke(width = 2f))
+        val layout = measurer.measure(
+            "✓",
+            style = TextStyle(color = Color.White, fontSize = (r * 1.0f).toSp(), fontWeight = FontWeight.Bold),
+            maxLines = 1,
+        )
+        drawText(layout, topLeft = Offset(x - layout.size.width / 2f, y - layout.size.height / 2f))
+        // 旁边标一下是哪个码（小字，避免「这个灰点是谁」）
+        val tag = measurer.measure(
+            m.label,
+            style = TextStyle(color = pal.label, fontSize = 9.sp),
+            maxLines = 1,
+        )
+        drawText(tag, topLeft = Offset(x + r + 3f, y - tag.size.height / 2f))
     }
 
     // ⑨ 入口标记（绿色圆角方块 + 入）

@@ -40,19 +40,24 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavController
 import com.xxxx.parcel.MainActivity
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
+import com.xxxx.parcel.ui.components.BarcodeFullScreenDialog
 import com.xxxx.parcel.ui.components.BarcodeStrip
 import com.xxxx.parcel.ui.components.HomeTopBar
+import com.xxxx.parcel.ui.components.HomeRouteInfo
 import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.ui.components.TimeFilterSheet
 import com.xxxx.parcel.ui.components.timeFilterOptions
+import com.xxxx.parcel.util.CompletedMarker
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_DP
 import com.xxxx.parcel.util.DEFAULT_BOTTOM_HEIGHT_SENIOR_DP
 import com.xxxx.parcel.util.GuideMapPlacement
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.getBarcodeBottomHeightDp
 import com.xxxx.parcel.util.getGuideDetail
+import com.xxxx.parcel.util.getGuideMapHeightDp
 import com.xxxx.parcel.util.getGuideMapPlacement
+import com.xxxx.parcel.util.saveGuideMapHeightDp
 import com.xxxx.parcel.util.getHorizontalLayout
 import com.xxxx.parcel.util.getPreferLockerAddress
 import com.xxxx.parcel.util.getShowCodeTime
@@ -113,7 +118,11 @@ fun HomeScreen(
     val guideDetail = getGuideDetail(context)
     var homeRoute by remember { mutableStateOf<PickupRoute?>(null) }
     var homePickupLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var homeCompletedMarkers by remember { mutableStateOf<List<CompletedMarker>>(emptyList()) }
     var homeStop by remember { mutableIntStateOf(0) }
+    var homeBarcodeFull by remember { mutableStateOf(false) }
+    // 地图窗格高度（0 = 用默认比例；用户上下拖动后持久化，用户 2026-10-01）
+    var mapHeightDp by remember { mutableIntStateOf(getGuideMapHeightDp(context)) }
     var homeFullMap by remember { mutableStateOf(false) }
     var homeMapCollapsed by remember { mutableStateOf(false) }
     val homeMapEnabled = guideMapPlacement == GuideMapPlacement.HOME_OVERLAY
@@ -208,9 +217,11 @@ fun HomeScreen(
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
-            // 图示窗格高度：容器高度的 42%（用户 2026-10-01：地图要占大头、提示最多 2 行）
-            val mapPaneHeight = maxHeight * 0.42f
-            val mapHeight = if (homeMapCollapsed) 54.dp else mapPaneHeight
+            // 图示窗格高度：用户拖过就用用户的，否则默认 42% 容器高（用户 2026-10-01：地图要占大头）
+            val mapPaneHeight = if (mapHeightDp > 0) mapHeightDp.dp else maxHeight * 0.42f
+            val mapHeight = if (homeMapCollapsed) 48.dp else mapPaneHeight
+            // 拖动上限在这里先算好（lambda 里不能直接用 BoxWithConstraints 的 maxHeight）
+            val mapHeightMax = maxHeight * 0.75f
             val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
             // 手动可调的上限：最多占容器一半，别把列表挤没
             val maxBarcodeHeight = maxHeight * 0.5f
@@ -245,9 +256,10 @@ fun HomeScreen(
                         isTimeSort = isTimeSort,
                         routeSortEnabled = isRouteSort,
                         onListContentHeightPx = { listContentHeightPx = it },
-                        onRouteComputed = { route, labels ->
-                            homeRoute = route
-                            homePickupLabels = labels
+                        onRouteComputed = { info ->
+                            homeRoute = info.route
+                            homePickupLabels = info.pickupLabels
+                            homeCompletedMarkers = info.completedMarkers
                             homeStop = 0
                         },
                         // 地图改成占位（不遮挡内容）⇒ 列表不再需要底部留白
@@ -281,6 +293,14 @@ fun HomeScreen(
                             onExpand = { homeFullMap = true },
                             onMapTap = { homeFullMap = true },
                             pickupLabels = homePickupLabels,
+                            completedMarkers = homeCompletedMarkers,
+                            onResizeDelta = { dy ->
+                                // 向上拖（dy<0）⇒ 变高；上限不超过容器的 3/4，下限 140dp
+                                val deltaDp = with(density) { dy.toDp() }
+                                val next = (mapHeight - deltaDp).coerceIn(140.dp, mapHeightMax)
+                                mapHeightDp = next.value.toInt()
+                                saveGuideMapHeightDp(context, mapHeightDp)
+                            },
                         )
                     }
                 } else if (homeMapEnabled && hasPermission) {
@@ -321,6 +341,8 @@ fun HomeScreen(
                             saveBarcodeBottomHeightDp(context, bottomHeightDp)
                         },
                         onOpenSettings = { navController.navigate("barcode") },
+                        // 点一下 = 全屏出示条码（用户 2026-10-01：恢复此功能）；长按才进设置
+                        onTap = { homeBarcodeFull = true },
                     )
                 }
             }
@@ -335,6 +357,10 @@ fun HomeScreen(
             },
             onDismiss = { showBottomSheet = false }
         )
+
+        if (homeBarcodeFull) {
+            BarcodeFullScreenDialog(context = context, onDismiss = { homeBarcodeFull = false })
+        }
 
         if (homeFullMap) {
             homeRoute?.let { route ->
@@ -355,6 +381,7 @@ fun HomeScreen(
                             expandLabel = "收起",
                             pickupLabels = homePickupLabels,
                             showStopCodes = true,
+                            completedMarkers = homeCompletedMarkers,
                         )
                     }
                 }

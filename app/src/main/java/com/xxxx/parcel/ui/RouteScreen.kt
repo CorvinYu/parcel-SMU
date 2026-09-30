@@ -65,6 +65,8 @@ import com.xxxx.parcel.util.RouteLeg
 import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.compactNumbers
+import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapPlacement
@@ -72,6 +74,7 @@ import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteJCells
 import com.xxxx.parcel.util.isMapPageEnabled
+import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.saveGuideDetail
@@ -115,10 +118,14 @@ fun RouteScreen(
             !it.isCompleted && effectiveCompartmentNumber(it.compartmentNumber, it.code).isNotBlank()
         }
     }
-    val route = remember(pending, options) {
+    // 刚取完的那一件 ⇒ 路线从现场接着走（用户 2026-10-01）
+    val checkoutOrigin = remember(pending, options) { lastCheckoutOrigin(context, options) }
+    val route = remember(pending, options, checkoutOrigin) {
         planPickupRoute(
             rawCodes = pending.map { effectiveCompartmentNumber(it.compartmentNumber, it.code) },
             options = options,
+            startCell = checkoutOrigin?.cell,
+            startLabel = checkoutOrigin?.label ?: "入口闸机",
         )
     }
     val byCode = remember(pending) {
@@ -207,7 +214,8 @@ fun RouteScreen(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Text(
-                                "路径：入口闸机进 → 逐件取" +
+                                "路径：" + (if (checkoutOrigin != null) "从 ${checkoutOrigin.label} 接着走" else "入口闸机进") +
+                                    " → 逐件取" +
                                     (if (route.hasSfCheckout) " → 顺丰专用闸机出库 → 继续逐件取" else "") +
                                     " → ${route.exit.label}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -235,6 +243,7 @@ fun RouteScreen(
                             onCurrentStopChange = { currentStop = it },
                             onExpand = { fullScreenMap = true },
                             onMapTap = { fullScreenMap = true },
+                            completedMarkers = completedMarkersOf(checkoutOrigin),
                         )
                     }
 
@@ -465,6 +474,7 @@ fun RouteScreen(
                         onCurrentStopChange = { currentStop = it },
                         onExpand = { fullScreenMap = true },
                         onMapTap = { fullScreenMap = true },
+                        completedMarkers = completedMarkersOf(checkoutOrigin),
                     )
                 }
             }
@@ -488,6 +498,7 @@ fun RouteScreen(
                         onExpand = { fullScreenMap = false },
                         expandLabel = "收起",
                         showStopCodes = true,
+                        completedMarkers = completedMarkersOf(checkoutOrigin),
                     )
                 }
             }

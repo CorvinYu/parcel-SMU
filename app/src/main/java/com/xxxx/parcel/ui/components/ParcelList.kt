@@ -60,15 +60,19 @@ import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteOptions
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.CheckoutOrigin
+import com.xxxx.parcel.util.CompletedMarker
 import com.xxxx.parcel.util.assignStableNumbers
 import com.xxxx.parcel.util.classifyPickupCategory
 import com.xxxx.parcel.util.compactNumbers
+import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.formatPickupCode
 import com.xxxx.parcel.util.getAddressMappings
 import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.loadStableNumbers
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.util.routeAnchorCode
@@ -195,8 +199,8 @@ fun ParcelList(
     routeSortEnabled: Boolean = false,
     /** 上报「当前页列表内容高度（px；列表可滚动时为 null）」，用于底部条码自动让位 */
     onListContentHeightPx: (Int?) -> Unit = {},
-    /** 上报规划出来的取件路线与「货格号 → 件号」标签（供首页图示窗格复用，**不重复规划**） */
-    onRouteComputed: (PickupRoute?, Map<String, String>) -> Unit = { _, _ -> },
+    /** 上报规划出来的路线 + 件号标签 + 已取灰点（供首页图示窗格复用，**不重复规划**） */
+    onRouteComputed: (HomeRouteInfo) -> Unit = {},
     /** 列表底部留白（首页开启图示浮层时给窗格让位） */
     listBottomPadding: Dp = 0.dp,
 ) {
@@ -261,10 +265,15 @@ fun ParcelList(
     // 🔴 路线**总是**规划：地图窗格 / 顺丰出库步骤都要用，
     //    不能因为「按取件路线排序」关着就整条消失（那是另一件事）。
     //    ① ② ③ 序号与逐卡「怎么走」提示仍只在排序开启时展示（它们以顺序为前提）。
-    val stationRoute = remember(filteredParcelsData, routeOptions) {
+    // 刚取完的那一件在哪（3 小时内）：路线从**现场那一点**接着走，并在图上留一个灰点（用户 2026-10-01）
+    val checkoutOrigin = remember(filteredParcelsData, routeOptions) {
+        lastCheckoutOrigin(context, routeOptions)
+    }
+    val stationRoute = remember(filteredParcelsData, routeOptions, checkoutOrigin) {
         planStationRoute(
             filteredParcelsData.filter { it.categoryOf() == PickupCategory.STATION },
             routeOptions,
+            checkoutOrigin,
         )
     }
     val homeRoute = stationRoute.route
@@ -309,7 +318,15 @@ fun ParcelList(
         }
         out
     }
-    LaunchedEffect(homeRoute, pickupLabels) { onRouteComputed(homeRoute, pickupLabels) }
+    LaunchedEffect(homeRoute, pickupLabels, checkoutOrigin) {
+        onRouteComputed(
+            HomeRouteInfo(
+                route = homeRoute,
+                pickupLabels = pickupLabels,
+                completedMarkers = completedMarkersOf(checkoutOrigin),
+            )
+        )
+    }
 
     // 文字提示（首页开关打开时）：**按地址**挂一行「怎么走」（与件号解耦）；顺丰出库那一段单独给
     val hintByAddress: Map<String, String> = remember(homeRoute, guideText, stationRoute) {
@@ -605,6 +622,13 @@ private data class StationRoute(
     val addressByCode: Map<String, String> = emptyMap(),
 )
 
+/** 首页把规划结果交给上层（首页地图窗格用它，避免二次规划）。 */
+data class HomeRouteInfo(
+    val route: PickupRoute?,
+    val pickupLabels: Map<String, String> = emptyMap(),
+    val completedMarkers: List<CompletedMarker> = emptyList(),
+)
+
 /**
  * 计算「快递站」列表的取件顺序。
  *
@@ -614,6 +638,7 @@ private data class StationRoute(
 private fun planStationRoute(
     parcels: List<ParcelData>,
     options: RouteOptions,
+    origin: CheckoutOrigin? = null,
 ): StationRoute {
     val pending = parcels.mapNotNull { parcel ->
         // 🔴 只把**未取件**的短信交给规划：全取完的地址返回 null
@@ -625,7 +650,13 @@ private fun planStationRoute(
     }
     if (pending.isEmpty()) return StationRoute(null)
 
-    val route = planPickupRoute(pending.map { it.second }, options)
+    // 起点：刚取完 ⇒ 从现场那一点接着走；否则从入口进
+    val route = planPickupRoute(
+        rawCodes = pending.map { it.second },
+        options = options,
+        startCell = origin?.cell,
+        startLabel = origin?.label ?: "入口闸机",
+    )
     val remaining = pending.toMutableList()
     val orderedAddresses = ArrayList<String>(remaining.size)
     val addressByCode = LinkedHashMap<String, String>()

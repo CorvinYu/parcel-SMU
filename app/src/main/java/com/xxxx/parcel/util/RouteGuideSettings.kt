@@ -14,6 +14,7 @@ private const val KEY_MAP = "route_guide_map_placement"
 private const val KEY_DETAIL = "route_guide_detail"
 private const val KEY_MAP_VIEW = "route_guide_map_view"
 private const val KEY_MAP_PAGE = "route_guide_map_page"
+private const val KEY_MAP_HEIGHT = "route_guide_map_height"
 
 private fun guidePrefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -110,4 +111,12 @@ fun isMapPageEnabled(context: Context): Boolean =
 
 fun saveMapPageEnabled(context: Context, value: Boolean) {
     guidePrefs(context).edit().putBoolean(KEY_MAP_PAGE, value).apply()
+}
+
+/** 首页地图窗格高度（dp，用户上下拖动调节后持久化；0 = 未设过，用默认比例）。 */
+fun getGuideMapHeightDp(context: Context): Int =
+    guidePrefs(context).getInt(KEY_MAP_HEIGHT, 0).coerceIn(0, 900)
+
+fun saveGuideMapHeightDp(context: Context, valueDp: Int) {
+    guidePrefs(context).edit().putInt(KEY_MAP_HEIGHT, valueDp.coerceIn(0, 900)).apply()
 }

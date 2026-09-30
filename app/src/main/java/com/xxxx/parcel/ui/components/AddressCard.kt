@@ -146,10 +146,13 @@ fun AddressCard(
                 modifier = Modifier.size(if (isSeniorMode) 48.dp else 36.dp),
                 onClick = {
                     if (parcelData.num > 0) {
-                        val smsList = parcelData.smsDataList
-                            .filterNot { it.isCompleted }
-                            .map { it.sms }
-                        addCompletedIds(context, viewModel, smsList)
+                        val pending = parcelData.smsDataList.filterNot { it.isCompleted }
+                        addCompletedIds(
+                            context,
+                            viewModel,
+                            pending.map { it.sms },
+                            pending.map { it.code },
+                        )
                         updateAllWidget()
                     }
                 },
@@ -284,7 +287,8 @@ fun AddressCard(
                                                             addCompletedIds(
                                                                 context,
                                                                 viewModel,
-                                                                listOf(smsData.sms)
+                                                                listOf(smsData.sms),
+                                                                listOf(smsData.code),
                                                             )
                                                         }
                                                         updateAllWidget()

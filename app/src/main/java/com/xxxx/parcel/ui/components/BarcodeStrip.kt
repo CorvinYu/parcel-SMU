@@ -1,14 +1,20 @@
 package com.xxxx.parcel.ui.components
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
+import android.view.WindowManager
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -34,6 +41,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.xxxx.parcel.util.BarcodeSymbology
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getBarcodeSymbology
@@ -157,6 +166,7 @@ fun BarcodeStrip(
  *   列表一长就自动让位（缩到最小高度）——见 `HomeScreen` 里的 `targetBottomHeight`；
  * - 点一下卡片进条码设置页（原「全屏出示」已按用户要求删除）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BarcodeBottomCard(
     context: Context,
@@ -167,6 +177,8 @@ fun BarcodeBottomCard(
     onDragStart: () -> Unit,
     onDragEnd: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** 点一下卡片：全屏出示条码（默认回退到进设置页） */
+    onTap: () -> Unit = onOpenSettings,
 ) {
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
@@ -215,7 +227,12 @@ fun BarcodeBottomCard(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clickable { onOpenSettings() },
+                    .combinedClickable(
+                        // 点一下 = **全屏出示**（用户 2026-10-01：这个功能当年是误解，不能删）
+                        onClick = { if (hasBarcode) onTap() else onOpenSettings() },
+                        // 长按 = 进条码设置页
+                        onLongClick = { onOpenSettings() },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 if (!hasBarcode) {
@@ -235,6 +252,77 @@ fun BarcodeBottomCard(
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 条码**全屏出示**（用户 2026-10-01：恢复此功能 —— 当年是我误解了，并没有要删）。
+ *
+ * 整屏白底 + 尽量大的条码 + 屏幕亮度拉满，点任意处退出；退出时恢复原亮度。
+ */
+@Composable
+fun BarcodeFullScreenDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+) {
+    val payload = getBarcodePayload(context)
+    val symbology = getBarcodeSymbology(context)
+    val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
+    val activity = context as? Activity
+
+    // 亮屏：进出各设一次，退出恢复
+    DisposableEffect(Unit) {
+        val window = activity?.window
+        val original = window?.attributes?.screenBrightness
+        window?.let { w ->
+            val lp = w.attributes
+            lp.screenBrightness = 1f
+            w.attributes = lp
+        }
+        onDispose {
+            window?.let { w ->
+                val lp = w.attributes
+                lp.screenBrightness = original ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                w.attributes = lp
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable { onDismiss() },
+            color = Color.White,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (hasBarcode) {
+                    BarcodeImage(
+                        payload = payload,
+                        symbology = symbology,
+                        heightDp = 260,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Text("尚未设置快递中心条码", style = MaterialTheme.typography.headlineSmall, color = Color(0xFF333333))
+                }
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "点屏幕任意处退出 · 亮度已拉满",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF666666),
+                )
             }
         }
     }

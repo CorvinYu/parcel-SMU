@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,17 +39,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.xxxx.parcel.ui.components.BarcodeBottomCard
+import com.xxxx.parcel.ui.components.BarcodeFullScreenDialog
 import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.util.GuideDetail
 import com.xxxx.parcel.util.PickupRoute
 import com.xxxx.parcel.util.RouteStop
 import com.xxxx.parcel.util.VenueGuide
+import com.xxxx.parcel.util.completedMarkersOf
 import com.xxxx.parcel.util.effectiveCompartmentNumber
 import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapView
 import com.xxxx.parcel.util.getRouteOptions
+import com.xxxx.parcel.util.groupRouteStops
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
+import com.xxxx.parcel.util.lastCheckoutOrigin
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
@@ -81,16 +86,21 @@ fun MapPageScreen(
         }
     }
     val options = remember { getRouteOptions(context) }
-    val route = remember(pending, options) {
+    // 刚取完的那一件 ⇒ 从现场接着走（用户 2026-10-01）
+    val checkoutOrigin = remember(pending, options) { lastCheckoutOrigin(context, options) }
+    val route = remember(pending, options, checkoutOrigin) {
         planPickupRoute(
             rawCodes = pending.map { effectiveCompartmentNumber(it.compartmentNumber, it.code) },
             options = options,
+            startCell = checkoutOrigin?.cell,
+            startLabel = checkoutOrigin?.label ?: "入口闸机",
         )
     }
     val detail = getGuideDetail(context)
     val mapView = getGuideMapView(context)
     val byCode = remember(pending) { pending.associateBy { it.code } }
     var currentStop by remember(route) { mutableIntStateOf(0) }
+    var barcodeFull by remember { mutableStateOf(false) }
     val hasBarcode = remember { getBarcodePayload(context) != null || hasBarcodeOriginalImage(context) }
 
     Scaffold(
@@ -105,6 +115,9 @@ fun MapPageScreen(
             )
         }
     ) { padding ->
+        if (barcodeFull) {
+            BarcodeFullScreenDialog(context = context, onDismiss = { barcodeFull = false })
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -132,6 +145,7 @@ fun MapPageScreen(
                     initialView = mapView,
                     onCurrentStopChange = { currentStop = it },
                     showStopCodes = true,
+                    completedMarkers = completedMarkersOf(checkoutOrigin),
                 )
             } else {
                 Box(
@@ -159,6 +173,7 @@ fun MapPageScreen(
                     onDragStart = {},
                     onDragEnd = {},
                     onOpenSettings = { navController.navigate("barcode") },
+                    onTap = { barcodeFull = true },
                 )
             } else {
                 Surface(
@@ -179,7 +194,11 @@ fun MapPageScreen(
     }
 }
 
-/** 顶部浮窗：大号取件码 + 地址 + 「怎么走」，带上一站/下一站。 */
+/** 顶部浮窗：大号取件码 + 地址 + 本段距离，带上一站/下一站。
+ *
+ * 用户 2026-10-01：**同货架的多件合并显示**（标题同时写出来，如「S3-2-2628 · S3-3-7606」），
+ * 并且**去掉紫色「怎么走」块** —— 下面地图上已经有了。
+ */
 @Composable
 private fun CurrentStopCard(
     route: PickupRoute,
@@ -190,23 +209,21 @@ private fun CurrentStopCard(
 ) {
     val stops = route.stops
     val idx = if (stops.isEmpty()) 0 else currentStop.coerceIn(0, stops.size - 1)
-    val stop = stops.getOrNull(idx)
-    val target = (stop as? RouteStop.Pickup)?.spot
+    val groups = remember(route) { groupRouteStops(route) }
+    val group = groups.firstOrNull { idx in it.indexes } ?: groups.firstOrNull()
+    val groupIndexes = group?.indexes ?: listOf(idx)
+    val first = groupIndexes.first()
+    val last = groupIndexes.last()
     val leg = route.legs.getOrNull(idx)
-    val hints = remember(leg, target, detail) { leg?.let { VenueGuide.describe(it, target) } ?: emptyList() }
-    val shown = hints.filter {
-        it.kind == VenueGuide.HintKind.MOVE ||
-            it.kind == VenueGuide.HintKind.STUB_OUT ||
-            it.kind == VenueGuide.HintKind.STUB_IN ||
-            it.kind == VenueGuide.HintKind.ARRIVE ||
-            (detail == GuideDetail.FULL && it.kind == VenueGuide.HintKind.NOTE)
-    }
-    val title = when (stop) {
-        is RouteStop.Pickup -> stop.code.toString()
-        RouteStop.SfCheckout -> "顺丰出库（顺丰专用闸机）"
-        is RouteStop.Exit -> "出站：${stop.kind.label}"
-        null -> "—"
-    }
+    val title = groupIndexes.mapNotNull { i ->
+        when (val s = stops.getOrNull(i)) {
+            is RouteStop.Pickup -> s.code.toString()
+            RouteStop.SfCheckout -> "顺丰出库（顺丰专用闸机）"
+            is RouteStop.Exit -> "出站：${s.kind.label}"
+            null -> null
+        }
+    }.joinToString(" · ").ifBlank { "—" }
+    val position = if (groupIndexes.size > 1) "当前 ${first + 1}-${last + 1}/${stops.size}" else "当前 ${idx + 1}/${stops.size}"
 
     Card(
         modifier = Modifier
@@ -219,13 +236,13 @@ private fun CurrentStopCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${if (idx == 0) "当前" else "第 ${idx + 1} 站"} · ${idx + 1}/${stops.size}",
+                        position,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.outline,
                     )
                     Text(
                         title,
-                        fontSize = 26.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -238,7 +255,9 @@ private fun CurrentStopCard(
                     Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "下一站")
                 }
             }
-            val address = (stop as? RouteStop.Pickup)?.let { addressOf(it.code.toString()) }.orEmpty()
+            val address = stops.getOrNull(idx)?.let { s ->
+                (s as? RouteStop.Pickup)?.let { addressOf(it.code.toString()) }
+            }.orEmpty()
             if (address.isNotBlank()) {
                 Text(
                     address,
@@ -248,27 +267,10 @@ private fun CurrentStopCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (shown.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Text(
-                        text = shown.joinToString("　") {
-                            if (detail == GuideDetail.FULL) it.text else it.brief
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                    )
-                }
-            }
             if (leg != null) {
                 Text(
-                    "本段 ${fmtTiles(leg.tiles)} 格 · 全程 ${fmtTiles(route.totalTiles)} 格",
+                    "本段 ${fmtTiles(leg.tiles)} 格 · 全程 ${fmtTiles(route.totalTiles)} 格" +
+                        if (groupIndexes.size > 1) " · 这 ${groupIndexes.size} 件在同一货架" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.padding(top = 4.dp),
