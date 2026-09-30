@@ -128,12 +128,6 @@ fun RouteMiniMap(
      * 地图取件页不传（用户 2026-10-01：顶部已有取件码卡，紫色文字描述路线是重复的）。
      */
     showHintPill: Boolean = true,
-    /**
-     * 展开态**上沿不要圆角**：首页窗格上沿的 R 角处会直接露出（自定义图片）背景，看着像把
-     * 列表最下面那条胶囊「切」了一下（用户 2026-10-01 两次提到，并指出是**左上/右上角**）。
-     * 下沿仍保留 16dp 圆角 ⇒ 既没有缺口，也不像一整块方砖。
-     */
-    squareTop: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -254,17 +248,7 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        // 上沿是否留圆角（见 squareTop 说明）：首页上沿直角、下沿 16dp 圆角
-        shape = if (squareTop) {
-            RoundedCornerShape(
-                topStart = 0.dp,
-                topEnd = 0.dp,
-                bottomStart = Corners.card,
-                bottomEnd = Corners.card,
-            )
-        } else {
-            Corners.cardShape
-        },
+        shape = Corners.cardShape,
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {

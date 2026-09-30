@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +30,7 @@ import androidx.compose.animation.core.snap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,6 +98,7 @@ import com.xxxx.parcel.util.saveRouteSortList
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @SuppressLint("StateFlowValueCalledInComposition")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,8 +148,8 @@ fun HomeScreen(
     var mapPageEnabled by remember { mutableStateOf(isMapPageEnabled(context)) }
     // 「顺丰出库件数提醒（测试）」：菜单里可直接开关，默认关闭（用户 2026-10-01）
     var sfCountEnabled by remember { mutableStateOf(isSfCheckoutCountEnabled(context)) }
-    // 地图窗格高度（0 = 用默认比例；用户上下拖动后持久化，用户 2026-10-01）
-    var mapHeightDp by remember { mutableIntStateOf(getGuideMapHeightDp(context)) }
+    // 地图窗格高度（dp；用 Float 保存，避免每帧取整丢精度导致「拖了不动」）
+    var mapHeightDp by remember { mutableFloatStateOf(getGuideMapHeightDp(context).toFloat()) }
     var homeFullMap by remember { mutableStateOf(false) }
     var homeMapCollapsed by remember { mutableStateOf(false) }
     val homeMapEnabled = guideMapPlacement == GuideMapPlacement.HOME_OVERLAY
@@ -277,21 +282,25 @@ fun HomeScreen(
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
             // 地图窗格与下方条码之间的空隙（用户 2026-10-01：原来 8+8 太大 ⇒ 各留 4dp）
             val paneGap = 4.dp
-            // 列表至少留这么高，否则地图的圆角会直接盖在列表里最后那枚胶囊上
-            // （用户 2026-10-01：地图的 R 角「锋利地遮挡下层内容，直接显示背景而不是下面的胶囊」）
-            val minListHeight = 150.dp
+            // 列表仍要能看见内容：地图是**浮**在列表底部之上的，这里给列表留一点余量
+            val minListHeight = 110.dp
             // 手动可调的条码上限：最多占容器一半
             val maxBarcodeHeight = maxHeight * 0.5f
             val userHeight = bottomHeightDp.dp.coerceIn(minBarcodeHeight, maxBarcodeHeight)
-            // 🔴 地图高度的**天花板**：必须给列表留够 minListHeight、给条码留出位置。
-            //    条码那部分按**用户设定上限**（userHeight）预留，与地图无关 ⇒ 不会出现循环依赖。
-            val barcodeAllowance = if (barcodeBottomEnabled) userHeight + paneGap else 0.dp
+            // 🔴 地图高度的**天花板**：给列表留够、给条码留出它**实际会占**的位置。
+            //    条码没被钉住时会自动缩到最小 ⇒ 按 minBarcodeHeight 预留；钉住了才按用户设定值。
+            //    （之前一律按用户设定值 ⇒ 天花板偏小，往上拖很快就顶到上限，像是不跟手。）
+            val barcodeAllowance = when {
+                !barcodeBottomEnabled -> 0.dp
+                barcodePinned -> userHeight + paneGap
+                else -> minBarcodeHeight + paneGap
+            }
             val mapHeightCeiling = (maxHeight - minListHeight - barcodeAllowance)
                 .coerceAtLeast(140.dp)
-                .coerceAtMost(maxHeight * 0.75f)
+                .coerceAtMost(maxHeight * 0.8f)
             // 图示窗格高度：用户拖过就用用户的（并受天花板约束），否则默认 42% 容器高
             val mapDefaultHeight = maxHeight * 0.42f
-            val mapPaneHeight = (if (mapHeightDp > 0) mapHeightDp.dp else mapDefaultHeight)
+            val mapPaneHeight = (if (mapHeightDp > 0f) mapHeightDp.dp else mapDefaultHeight)
                 .coerceAtMost(mapHeightCeiling)
             val mapHeight = if (homeMapCollapsed) 48.dp else mapPaneHeight
             val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
@@ -313,6 +322,9 @@ fun HomeScreen(
             )
 
             Column(modifier = Modifier.fillMaxSize()) {
+                // 🔴 **列表与地图放在同一个 Box**：地图贴着列表底部**浮在上面** ⇒
+                //    地图的圆角处露出的是**列表内容（蓝色提示胶囊等）**，而不是光秃秃的背景。
+                //    （用户 2026-10-01：「你应该解决问题，而不是逃避」—— 上沿改直角只是躲开了问题。）
                 Box(modifier = Modifier.weight(1f)) {
                     if (hasPermission) ParcelList(
                         context = context,
@@ -334,17 +346,13 @@ fun HomeScreen(
                             homeCompletedMarkers = info.completedMarkers
                             homeStop = 0
                         },
-                        // 地图改成占位（不遮挡内容）⇒ 列表不再需要底部留白
-                        listBottomPadding = 0.dp,
+                        // 地图是浮层（不参与布局）⇒ 列表底部要留出地图的高度，最后一件才滚得出来
+                        listBottomPadding = if (mapActive) mapHeight + paneGap else 0.dp,
                         // 下拉刷新信号：列表据此重排未取件的①②③
                         refreshSignal = refreshSignal,
-                        // 入口 / 出站胶囊：点一下全屏出示条码（没设置过就带去设置页）。
-                        // 🔴 **在点按那一刻才读**预置（SharedPreferences + File.isFile）：不要放在组合里，
-                        //    否则列表滚动/翻页时每帧都读一次（审查指出的性能点）。
-                        // 入口 / 出站卡片：点一下进**全屏条码**（用户 2026-10-01：没设置过也先进这一屏，
-                        // 由全屏页引导去导入，而不是直接跳到设置页）
+                        // 入口 / 出站卡片：点一下进**全屏条码**（没设置过也先进这一屏，由全屏页引导去导入）
                         onShowBarcode = { homeBarcodeFull = true },
-                        // 「顺丰出库」卡片右侧的件数提醒（测试功能、菜单里开，默认关闭）
+                        // 「顺丰出库」卡片右侧的件数提醒
                         showSfCheckoutCount = sfCountEnabled,
                     ) else
                         Column(
@@ -356,68 +364,60 @@ fun HomeScreen(
                                 Text("获取短信权限")
                             }
                         }
-                }
 
-                // 路线图示：**占位在列表下方**（不叠在卡片上、不挤占列表内容；收起时只有一行胶囊）
-                if (mapActive) {
-                    homeRoute?.let { route ->
-                        RouteMiniMap(
-                            route = route,
-                            currentStop = homeStop,
-                            detail = guideDetail,
-                            // 用户 2026-10-01：首页地图也默认特写（跟随「地图视图」设置，可切回全览）
-                            initialView = getGuideMapView(context),
+                    // 路线图示：浮在列表底部（不挤占列表、圆角处露出列表内容）
+                    if (mapActive) {
+                        homeRoute?.let { route ->
+                            RouteMiniMap(
+                                route = route,
+                                currentStop = homeStop,
+                                detail = guideDetail,
+                                // 首页地图也默认特写（跟随「地图视图」设置，可切回全览）
+                                initialView = getGuideMapView(context),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
+                                    .height(mapHeight),
+                                collapsed = homeMapCollapsed,
+                                onCollapsedChange = { homeMapCollapsed = it },
+                                onCurrentStopChange = { homeStop = it },
+                                onExpand = { homeFullMap = true },
+                                onMapTap = { homeFullMap = true },
+                                pickupLabels = homePickupLabels,
+                                completedMarkers = homeCompletedMarkers,
+                                // 首页窗格**不显示**那条紫色「怎么走」提示（与上面重复）
+                                showHintPill = false,
+                                onResizeDelta = { dy ->
+                                    // 🔴 读**当前**状态（不能读组合时捕获的旧值）；上限 = 天花板。
+                                    val currentDp = if (mapHeightDp > 0f) mapHeightDp.dp else mapDefaultHeight
+                                    val deltaDp = with(density) { dy.toDp() }
+                                    val next = (currentDp - deltaDp).coerceIn(140.dp, mapHeightCeiling)
+                                    // 🔴 这里**不再钉住条码**：钉住会让条码从「自动的最小高度」跳到用户设定值
+                                    //    （可能相差上百 dp），地图上沿随之被顶走 ⇒ 手感上就是不跟手。
+                                    mapHeightDp = next.value
+                                    saveGuideMapHeightDp(context, next.value.roundToInt())
+                                },
+                            )
+                        }
+                    } else if (homeMapEnabled && hasPermission) {
+                        // 选了「首页底部浮层」却画不出来时，**明确说原因**（不许静默消失）
+                        Surface(
                             modifier = Modifier
+                                .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                // 左右与底部间距保持一致（用户 2026-10-01）：左右 10dp、底部 6dp +
-                                // 条码卡上方 4dp = 10dp ⇒ 三个方向的视觉留白相同
-                                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp)
-                                .height(mapHeight),
-                            collapsed = homeMapCollapsed,
-                            onCollapsedChange = { homeMapCollapsed = it },
-                            onCurrentStopChange = { homeStop = it },
-                            onExpand = { homeFullMap = true },
-                            onMapTap = { homeFullMap = true },
-                            pickupLabels = homePickupLabels,
-                            completedMarkers = homeCompletedMarkers,
-                            // 用户 2026-10-01：首页窗格也**不显示**那条紫色「怎么走」提示（与上面重复）
-                            showHintPill = false,
-                            // 上沿直角（R 角处会直接露出自定义背景图，像把列表最后那条胶囊切了一刀）
-                            squareTop = true,
-                            onResizeDelta = { dy ->
-                                // 🔴 必须读**当前**的 mapHeightDp / 天花板，不能读组合时捕获的旧值：
-                                //    `RouteMiniMap` 里的指针输入块只创建一次，捕获的旧值会让拖动「失效」
-                                //    （用户 2026-10-01）。上限 = 天花板（给列表与条码留位置）。
-                                val currentDp = if (mapHeightDp > 0) mapHeightDp.dp else mapDefaultHeight
-                                val deltaDp = with(density) { dy.toDp() }
-                                val next = (currentDp - deltaDp).coerceIn(140.dp, mapHeightCeiling)
-                                // 🔴 跟手：条码会自动膨胀去填「列表剩下的空白」，而列表空白又随地图高度变化
-                                //    ⇒ 拖 1 格、地图上沿实际移动 2 格（用户 2026-10-01）。拖地图时把条码钉住。
-                                if (!barcodePinned) {
-                                    saveBarcodeBottomPinned(context, true)
-                                    barcodePinned = true
-                                }
-                                mapHeightDp = next.value.toInt()
-                                saveGuideMapHeightDp(context, mapHeightDp)
-                            },
-                        )
-                    }
-                } else if (homeMapEnabled && hasPermission) {
-                    // 选了「首页底部浮层」却画不出来时，**明确说原因**（不许静默消失）
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 10.dp, end = 10.dp, bottom = 8.dp),
-                        shape = Corners.cardShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Text(
-                            text = "路线图：暂无可规划的取件码（需要「快递站」页里有带「货格号」的未取件；" +
-                                "已取完的会自动从图上消失）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        )
+                                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
+                            shape = Corners.cardShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Text(
+                                text = "路线图：暂无可规划的取件码（需要「快递站」页里有带「货格号」的未取件；" +
+                                    "已取完的会自动从图上消失）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
                     }
                 }
 
@@ -476,12 +476,19 @@ fun HomeScreen(
             homeRoute?.let {
                 Dialog(
                     onDismissRequest = { homeFullMap = false },
-                    properties = DialogProperties(usePlatformDefaultWidth = false),
+                    properties = DialogProperties(
+                        usePlatformDefaultWidth = false,
+                        // 🔴 用户 2026-10-01：全屏地图时底部会露出主界面（下方的地图胶囊）⇒
+                        //    让对话框窗口铺满整个屏幕（含系统栏区域），背景就是一块干净的 Surface。
+                        decorFitsSystemWindows = false,
+                    ),
                 ) {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
+                                // 内容避开状态栏 / 导航栏，但背景仍铺满
+                                .windowInsetsPadding(WindowInsets.systemBars)
                                 .padding(10.dp),
                         ) {
                             // 用户 2026-10-01：把「地图取件」页的**整个第一部分**搬过来 ——
