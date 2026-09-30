@@ -48,8 +48,9 @@ import com.xxxx.parcel.ui.components.HomeTopBar
 import com.xxxx.parcel.ui.components.HomeRouteInfo
 import com.xxxx.parcel.ui.components.ParcelList
 import com.xxxx.parcel.ui.components.RouteMiniMap
-import com.xxxx.parcel.ui.components.RouteStopHeader
 import com.xxxx.parcel.ui.components.TimeFilterSheet
+import com.xxxx.parcel.ui.components.TripStopSection
+import com.xxxx.parcel.ui.components.rememberTripView
 import com.xxxx.parcel.ui.components.timeFilterOptions
 import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.util.CompletedMarker
@@ -62,6 +63,7 @@ import com.xxxx.parcel.util.getBarcodePayload
 import com.xxxx.parcel.util.getGuideDetail
 import com.xxxx.parcel.util.getGuideMapHeightDp
 import com.xxxx.parcel.util.getGuideMapView
+import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.getGuideMapPlacement
 import com.xxxx.parcel.util.saveGuideMapHeightDp
 import com.xxxx.parcel.util.saveMapPageEnabled
@@ -155,6 +157,10 @@ fun HomeScreen(
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
     val successData by viewModel.successSmsData.collectAsState()
+    // 首页「全屏地图」用**与地图取件页完全一样**的整段行程视图（取件码卡 + 可点标记 + 横向序列）
+    val mapOptions = remember { getRouteOptions(context) }
+    val tripView = rememberTripView(successData, mapOptions)
+    var fsCurrent by remember { mutableStateOf<Int?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -374,6 +380,10 @@ fun HomeScreen(
                             onMapTap = { homeFullMap = true },
                             pickupLabels = homePickupLabels,
                             completedMarkers = homeCompletedMarkers,
+                            // 用户 2026-10-01：首页窗格也**不显示**那条紫色「怎么走」提示（与上面重复）
+                            showHintPill = false,
+                            // 上沿直角（R 角处会直接露出自定义背景图，像把列表最后那条胶囊切了一刀）
+                            squareTop = true,
                             onResizeDelta = { dy ->
                                 // 🔴 必须读**当前**的 mapHeightDp / 天花板，不能读组合时捕获的旧值：
                                 //    `RouteMiniMap` 里的指针输入块只创建一次，捕获的旧值会让拖动「失效」
@@ -463,7 +473,7 @@ fun HomeScreen(
         }
 
         if (homeFullMap) {
-            homeRoute?.let { route ->
+            homeRoute?.let {
                 Dialog(
                     onDismissRequest = { homeFullMap = false },
                     properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -474,16 +484,19 @@ fun HomeScreen(
                                 .fillMaxSize()
                                 .padding(10.dp),
                         ) {
-                            // 用户 2026-10-01：全屏地图**最上面**要有一块和地图取件页一样的当前取件码
-                            RouteStopHeader(
-                                route = route,
-                                stopIndex = homeStop,
-                                modifier = Modifier.fillMaxWidth(),
+                            // 用户 2026-10-01：把「地图取件」页的**整个第一部分**搬过来 ——
+                            // 当前取件码卡（点击标记已取 / 再点恢复）+ 下方横向可滑的整段序列
+                            TripStopSection(
+                                context = context,
+                                viewModel = viewModel,
+                                view = tripView,
+                                current = fsCurrent,
+                                onCurrentChange = { fsCurrent = it },
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             RouteMiniMap(
-                                route = route,
-                                currentStop = homeStop,
+                                route = tripView.route,
+                                currentStop = tripView.stopIndexOf(tripView.clampCurrent(fsCurrent)),
                                 detail = guideDetail,
                                 // 全屏也跟随「地图视图」设置（默认特写）
                                 initialView = getGuideMapView(context),

@@ -128,6 +128,12 @@ fun RouteMiniMap(
      * 地图取件页不传（用户 2026-10-01：顶部已有取件码卡，紫色文字描述路线是重复的）。
      */
     showHintPill: Boolean = true,
+    /**
+     * 展开态**上沿不要圆角**：首页窗格上沿的 R 角处会直接露出（自定义图片）背景，看着像把
+     * 列表最下面那条胶囊「切」了一下（用户 2026-10-01 两次提到，并指出是**左上/右上角**）。
+     * 下沿仍保留 16dp 圆角 ⇒ 既没有缺口，也不像一整块方砖。
+     */
+    squareTop: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
     val pal = remember(dark) { if (dark) MapPalette.DARK else MapPalette.LIGHT }
@@ -201,8 +207,9 @@ fun RouteMiniMap(
     val entranceCell = remember { siteEntranceCell() }
 
     if (collapsed) {
-        // 收起态：**整颗胶囊**（全圆角、无硬边），不要再像一块被切掉的方卡。
-        // 🔴 用户 2026-10-01：**点整颗胶囊**就应该展开（原来只有右边那个 ▲ 小按钮能点）
+        // 收起态：**整颗胶囊**（全圆角、无硬边），点整颗胶囊展开。
+        // 🔴 用户 2026-10-01：里面那行**深色（怎么走）小字删掉** —— 与上面的路线页/地图重复，
+        //    收起态只需要「下一站 N/M · 取件码」这一条，并把白字放大一点。
         Card(
             modifier = modifier.then(
                 if (onCollapsedChange != null) {
@@ -227,28 +234,16 @@ fun RouteMiniMap(
                         .clip(CircleShape)
                         .background(stopColor(stop, pal)),
                 )
-                Column(
+                Text(
+                    text = titleOf(route, idx),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .weight(1f)
                         .padding(start = 10.dp),
-                ) {
-                    Text(
-                        text = titleOf(route, idx),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (mainHints.isNotEmpty()) {
-                        Text(
-                            text = oneLine,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+                )
                 IconButton(onClick = { onCollapsedChange?.invoke(false) }) {
                     Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "展开地图")
                 }
@@ -259,7 +254,17 @@ fun RouteMiniMap(
 
     Card(
         modifier = modifier,
-        shape = Corners.cardShape,
+        // 上沿是否留圆角（见 squareTop 说明）：首页上沿直角、下沿 16dp 圆角
+        shape = if (squareTop) {
+            RoundedCornerShape(
+                topStart = 0.dp,
+                topEnd = 0.dp,
+                bottomStart = Corners.card,
+                bottomEnd = Corners.card,
+            )
+        } else {
+            Corners.cardShape
+        },
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -279,20 +284,28 @@ fun RouteMiniMap(
                         .pointerInput(Unit) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                var lastScreenY = down.position.y + handleTopInRoot
+                                // 🔴 跟手（用户 2026-10-01 第三次反馈）：把手**自己会随窗格高度上下移动**，
+                                //    所以「局部位移」≠「手指在屏幕上走了多少」。用**累计量**换算：
+                                //    屏幕累计位移 = 局部累计位移 + 把手自身的累计位移；
+                                //    每次只补「距目标还差多少」⇒ 自纠正、不累加误差（即使差一帧也不会漂）。
+                                val startTop = handleTopInRoot
+                                val startLocal = down.position.y
+                                var applied = 0f
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                     if (!change.pressed) break
-                                    val screenY = change.position.y + handleTopInRoot
-                                    val dy = screenY - lastScreenY
-                                    lastScreenY = screenY
-                                    if (dy != 0f) resizeCb?.invoke(dy)
+                                    val localTotal = change.position.y - startLocal
+                                    val nodeTotal = handleTopInRoot - startTop
+                                    val screenTotal = localTotal + nodeTotal
+                                    val want = screenTotal - applied
+                                    if (want != 0f) {
+                                        resizeCb?.invoke(want)
+                                        applied = screenTotal
+                                    }
                                     change.consume()
                                 }
-                                // 🔴 用户 2026-10-01：原来「快速下滑 ⇒ 收起」已被**彻底删除**
-                                //    （那个行为会让普通的下滑拖动在松手时突然最小化，看着就是「不跟手」）。
-                                //    收起只保留右上角那个 ▼ 按钮。
+                                // 用户 2026-10-01：原来「快速下滑 ⇒ 收起」已**彻底删除**（收起只保留右上角 ▼）
                             }
                         },
                     contentAlignment = Alignment.Center,
