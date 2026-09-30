@@ -628,8 +628,9 @@ private fun DrawScope.drawVenue(
             val label = SiteData.rectLabels.getOrNull(i / 4)?.trim().orEmpty()
             if (cell >= 11f && label.isNotEmpty()) {
                 val style = TextStyle(color = pal.label, fontSize = 9.sp)
-                // 又高又窄的（闸机带）文字**竖排** —— 用户 2026-10-01：「7个普通闸机」要纵向排列
-                if (isGate || (r1 - r0) > (c1 - c0)) {
+                // 🔴 只有闸机带才竖排（用户 2026-10-01）：J/J1 这种短标签之前也被竖排，J 和数字之间空一大截，
+                //    看起来像被劈开。普通货架标签一律横排。
+                if (isGate) {
                     val laid = label.map { measurer.measure(it.toString(), style = style, maxLines = 1) }
                     val lineH = (laid.maxOfOrNull { it.size.height } ?: 10) + 1f
                     var yy = y + h / 2f - laid.size * lineH / 2f
@@ -828,44 +829,58 @@ private fun DrawScope.drawVenue(
         }
     }
 
-    // ⑪ 全屏时在**货架旁直接写取件码**（件数多时只标当前与后两件，避免糊成一片）
+    // ⑪ 全屏时在**货架旁直接写取件码**：按**组**写，同一货架的多件一起写出来
+    //    （用户 2026-10-01：同货架 ≥2 件时以前只显示第一个，其余的看不到）
     if (showStopCodes) {
-        val pickupIndexes = route.stops.indices.filter { route.stops[it] is RouteStop.Pickup }
-        val chosen = if (pickupIndexes.size <= 14) {
-            pickupIndexes
+        val pickGroups = groups.filter { it.isPickup }
+        val chosen = if (pickGroups.size <= 14) {
+            pickGroups
         } else {
-            pickupIndexes.filter { it >= idx }.take(3).ifEmpty { pickupIndexes.takeLast(2) }
+            pickGroups.filter { g -> g.indexes.any { it >= idx } }.take(3).ifEmpty { pickGroups.takeLast(2) }
         }
-        chosen.forEach { si ->
-            val st = route.stops.getOrNull(si) as? RouteStop.Pickup ?: return@forEach
-            val cellPos = route.legs.getOrNull(si)?.cells?.lastOrNull() ?: return@forEach
-            val layout = measurer.measure(
-                st.code.toString(),
-                style = TextStyle(color = pal.codeInk, fontSize = 10.sp, fontWeight = FontWeight.Medium),
-                maxLines = 1,
-            )
+        val style = TextStyle(color = pal.codeInk, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        val measureStyle = TextStyle(fontSize = 10.sp)
+        val maxLineW = (size.width * 0.46f).coerceAtLeast(120f)
+        chosen.forEach { g ->
+            val codes = g.indexes.mapNotNull { i -> (route.stops.getOrNull(i) as? RouteStop.Pickup)?.code?.toString() }
+            if (codes.isEmpty()) return@forEach
+            // 太宽就折行（每个码都不许丢）
+            val lines = ArrayList<String>()
+            var cur = ""
+            codes.forEach { c ->
+                val cand = if (cur.isEmpty()) c else "$cur · $c"
+                val w = measurer.measure(cand, style = measureStyle, maxLines = 1).size.width
+                if (w <= maxLineW || cur.isEmpty()) {
+                    cur = cand
+                } else {
+                    lines += cur
+                    cur = c
+                }
+            }
+            if (cur.isNotEmpty()) lines += cur
+
+            val laid = lines.map { measurer.measure(it, style = style, maxLines = 1) }
             val padX = 6f
             val padY = 3f
-            val w = layout.size.width + padX * 2
-            val h = layout.size.height + padY * 2
-            val bx = px(cellPos.col + 0.5f) + (cell * 1.5f).coerceIn(10f, 18f)
-            val by = py(cellPos.row + 0.5f) - h / 2f
-            drawRoundRect(
-                color = pal.codeBg,
-                topLeft = Offset(bx, by),
-                size = Size(w, h),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f),
-            )
-            if (si == idx) {
+            val lineH = (laid.maxOfOrNull { it.size.height } ?: 12) + 1f
+            val w = (laid.maxOfOrNull { it.size.width } ?: 0) + padX * 2
+            val h = lineH * laid.size + padY * 2
+            val bx = px(g.cell.col + 0.5f) + (cell * 1.5f).coerceIn(10f, 18f)
+            val by = py(g.cell.row + 0.5f) - h / 2f
+            val radius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+            drawRoundRect(color = pal.codeBg, topLeft = Offset(bx, by), size = Size(w, h), cornerRadius = radius)
+            if (idx in g.indexes) {
                 drawRoundRect(
                     color = pal.accent,
                     topLeft = Offset(bx, by),
                     size = Size(w, h),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f),
+                    cornerRadius = radius,
                     style = Stroke(width = 1.5f),
                 )
             }
-            drawText(layout, topLeft = Offset(bx + padX, by + padY))
+            laid.forEachIndexed { li, l ->
+                drawText(l, topLeft = Offset(bx + padX, by + padY + li * lineH))
+            }
         }
     }
 }

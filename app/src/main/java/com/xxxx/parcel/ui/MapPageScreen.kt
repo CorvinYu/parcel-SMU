@@ -59,6 +59,7 @@ import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.groupRouteStops
 import com.xxxx.parcel.util.hasBarcodeOriginalImage
 import com.xxxx.parcel.util.lastCheckoutOrigin
+import com.xxxx.parcel.util.parseCompartmentCode
 import com.xxxx.parcel.util.planPickupRoute
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 
@@ -103,7 +104,15 @@ fun MapPageScreen(
     }
     val detail = getGuideDetail(context)
     val mapView = getGuideMapView(context)
-    val byCode = remember(pending) { pending.associateBy { it.code } }
+    // 🔴 必须按**有效货格号**建索引：短信里的取件码未必等于货格号（例如取件码是 2628、货格号是 S3-2-2628），
+    //    之前用 `it.code` 建映射 ⇒ 地图页点「已取件」匹配不到，点了没反应（用户 2026-10-01 反馈）。
+    val byCompartment = remember(pending) {
+        buildMap {
+            pending.forEach { s ->
+                parseCompartmentCode(effectiveCompartmentNumber(s.compartmentNumber, s.code))?.let { put(it, s) }
+            }
+        }
+    }
     // 🔴 不要用 route 作 key：点「已取件」后路线会少一件，若重置为 0 就会跳回第一站；
     //    保持下标不变 ⇒ 被取走的那一组消失后，同一下标正好落在**下一站**（用户 2026-10-01 要的自动跳下一格）
     var currentStop by remember { mutableIntStateOf(0) }
@@ -112,7 +121,9 @@ fun MapPageScreen(
 
     // 点顶部取件码 = 把这一组（同货架的全部码）标记为已取件
     val markCompleted: (List<String>) -> Unit = { codes ->
-        val targets = successData.filter { !it.isCompleted && it.code in codes }
+        val targets = codes
+            .mapNotNull { c -> parseCompartmentCode(c)?.let { byCompartment[it] } }
+            .distinct()
         if (targets.isNotEmpty()) {
             addCompletedIds(context, viewModel, targets.map { it.sms }, targets.map { it.code })
         }
@@ -143,7 +154,9 @@ fun MapPageScreen(
                 route = route,
                 currentStop = currentStop,
                 detail = detail,
-                addressOf = { code -> byCode[code]?.address.orEmpty() },
+                addressOf = { code ->
+                    parseCompartmentCode(code)?.let { byCompartment[it]?.address }.orEmpty()
+                },
                 onStep = { currentStop = it },
                 onMarkCompleted = markCompleted,
             )

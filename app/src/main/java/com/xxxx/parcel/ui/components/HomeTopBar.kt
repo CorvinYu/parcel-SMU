@@ -125,6 +125,24 @@ fun HomeTopBar(
             }
 
             Spacer(Modifier.width(8.dp))
+            // 地图取件的**明显入口**（用户 2026-10-01）：常驻顶栏，一眼就能看到
+            Button(
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                colors = ButtonColors(
+                    containerColor = Color(0xFF2F6FE4),
+                    contentColor = Color.White,
+                    disabledContentColor = Color.DarkGray,
+                    disabledContainerColor = Color.LightGray
+                ),
+                onClick = onOpenMapPage,
+            ) {
+                Text(
+                    text = "地图",
+                    fontWeight = FontWeight.Bold,
+                    style = if (isSeniorMode) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             // 顶栏菜单：项目较多，改用**可滚动的底部面板** —— 小屏 / 老人模式下也不会超出屏幕底部
             var showMenu by remember { mutableStateOf(false) }
             IconButton(onClick = { showMenu = true }) {
