@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -53,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavController
+import com.xxxx.parcel.ui.theme.Corners
 import com.xxxx.parcel.ui.components.RouteMiniMap
 import com.xxxx.parcel.util.GuideDetail
 import com.xxxx.parcel.util.GuideMapPlacement
@@ -545,7 +545,7 @@ private fun WalkHintCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        shape = RoundedCornerShape(14.dp),
+        shape = Corners.cardShape,
         colors = if (highlight) {
             CardDefaults.cardColors(containerColor = Color(0xFFE8F0FE))
         } else {
@@ -584,7 +584,7 @@ private fun WalkHintCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = Corners.chipShape,
                     color = if (highlight) Color(0xFF1E6FE0) else MaterialTheme.colorScheme.surface,
                     modifier = Modifier.clickable { onSetCurrent() },
                 ) {
@@ -617,7 +617,7 @@ private fun GuideSettingsCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = Corners.cardShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

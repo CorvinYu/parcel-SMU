@@ -121,4 +121,30 @@ class RouteNumbersTest {
         assertEquals("已取件在 2 号原位；未取件按 D→C→A 拿 1/3/4", listOf("D", "B", "C", "A"), listOf("A", "B", "C", "D").sortedBy { m[it] })
         assertEquals(setOf(1, 2, 3, 4), m.values.toSet())
     }
+
+    @Test
+    fun `半取组（同地址取了一半）不会丢号或跳号`() {
+        // A 是半取组：同一地址 1 条已取、1 条未取 ⇒ A 既在 shown 里、又在 pendingInOrder 里；
+        // B 整组取完（保原号）；C 未取。
+        val sticky = mutableMapOf("A" to 1, "B" to 2, "C" to 3)
+        val shown = listOf("A", "B", "C")
+        val m = refreshStableNumbers(shown, listOf("C", "A"), sticky)
+        assertEquals("整组取完的 B 必须保原号", 2, m["B"])
+        assertEquals("号不许重、不许跳", setOf(1, 2, 3), m.values.toSet())
+        assertEquals(
+            "半取组（还有件没取）要跟着新顺序走：C 在 A 之前；B 留在 2 号",
+            listOf("C", "B", "A"),
+            shown.sortedBy { m[it] },
+        )
+    }
+
+    @Test
+    fun `pending 里同一地址重复出现也不会留下空洞`() {
+        // 防御性断言：调用方理论上不会给重复地址，但真给了也必须不重号、不跳号
+        val sticky = mutableMapOf("A" to 1, "B" to 2)
+        val shown = listOf("A", "B")
+        val m = refreshStableNumbers(shown, listOf("B", "B", "A"), sticky)
+        assertEquals("重复项只许占一个号", setOf(1, 2), m.values.toSet())
+        assertEquals(listOf("B", "A"), shown.sortedBy { m[it] })
+    }
 }

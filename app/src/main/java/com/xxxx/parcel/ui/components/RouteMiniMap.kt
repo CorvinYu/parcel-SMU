@@ -728,9 +728,13 @@ private fun DrawScope.drawVenue(
     if (nextDir != null) {
         firstRunMid(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
             val (ux, uy) = dirUnit(nextDir)
-            // 行进方向的右侧（垂直向量）偏出去，像路面上的导向箭头
-            val ox = -uy * 0.9f
-            val oy = ux * 0.9f
+            // 行进方向的右侧（垂直向量）偏出去，像路面上的导向箭头。
+            // 🔴 偏移量必须 ≥「站点圆半径 + 4px」（换算成格）：只在固定 0.9 格时，
+            //    全览缩放下 0.9 格可能还不到圆圈半径 ⇒ chevron 仍贴在圆上（用户反馈的原问题）。
+            val markerR = (cell * 1.5f).coerceIn(9f, 15f)
+            val offCells = maxOf(0.9f, (markerR + 4f) / cell)
+            val ox = -uy * offCells
+            val oy = ux * offCells
             drawChevron(
                 px(c.col + 0.5f + ox),
                 py(c.row + 0.5f + oy),

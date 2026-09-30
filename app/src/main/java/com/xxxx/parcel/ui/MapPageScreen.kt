@@ -268,7 +268,27 @@ private fun CurrentStopCard(
     onMarkCompleted: (List<String>) -> Unit,
 ) {
     val stops = route.stops
-    val idx = if (stops.isEmpty()) 0 else currentStop.coerceIn(0, stops.size - 1)
+    // 全部取完（route 里已无停靠点）：不要再显示「当前 1/0」这种怪串
+    if (stops.isEmpty()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 10.dp, top = 4.dp),
+            shape = Corners.cardShape,
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                Text("这一段都取完啦", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "路线上的取件码已经全部标记为已取；按「出站」指引从闸机出站即可。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
+        return
+    }
+    val idx = currentStop.coerceIn(0, stops.size - 1)
     val groups = remember(route) { groupRouteStops(route) }
     val group = groups.firstOrNull { idx in it.indexes } ?: groups.firstOrNull()
     val groupIndexes = group?.indexes ?: listOf(idx)

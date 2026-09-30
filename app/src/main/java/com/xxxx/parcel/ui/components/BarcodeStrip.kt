@@ -187,20 +187,27 @@ fun BarcodeBottomCard(
     val textStyle = if (isSeniorMode) MaterialTheme.typography.headlineSmall
     else MaterialTheme.typography.bodyLarge
     val density = LocalDensity.current
-    // 扣掉顶部把手与内边距，剩下的高度给条码
-    val innerHeightDp = (heightDp.value - 26f).coerceAtLeast(48f).toInt()
+    // 扣掉四边外边距（上下各 8dp）＋ 顶部把手与内边距，剩下的高度给条码
+    val innerHeightDp = (heightDp.value - 16f - 26f).coerceAtLeast(40f).toInt()
 
+    // 🔴 外边距**绝不能算进高度链路**：把 `padding` 写在 `height` 之前，整块占位会变成
+    //    `heightDp + 16dp`；而首页/地图页的地图窗格是 `weight(1f)`，多出来的 16dp 在小屏上会把
+    //    地图挤到 0 高（整块不渲染）。⇒ 外边距放**外层 Box**，外层占位仍恰好是 `heightDp`，
+    //    内圈白卡 = `heightDp − 16dp`。观感（四边留白 + 四角全圆）不变。
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(heightDp)
+            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+    ) {
     Surface(
         color = Color.White,
         shadowElevation = 8.dp,
-        // 与地图/提示卡统一：四角全圆 + **四边都有外边距**，做成一张真正「浮起来的圆角卡」。
+        // 与地图/提示卡统一：四角全圆 + 四边留白，做成一张真正「浮起来的圆角卡」。
         // 🔴 之前只给了 start/end/bottom 三边，**顶部贴死**上面的地图窗格 ⇒ 白卡的直边像把上面的
-        //    胶囊「切」了一刀（用户 2026-10-01 两次提到「很锋利地切割其他胶囊」）。补上 top 间距即可。
+        //    胶囊「切」了一刀（用户 2026-10-01 两次提到「很锋利地切割其他胶囊」）。
         shape = Corners.cardShape,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
-            .height(heightDp),
+        modifier = Modifier.fillMaxSize(),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 顶部拖动把手
@@ -258,6 +265,7 @@ fun BarcodeBottomCard(
                 }
             }
         }
+    }
     }
 }
 

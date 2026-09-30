@@ -136,7 +136,11 @@ fun refreshStableNumbers(
     }
 
     // 2) 未取件：按新顺序依次拿剩下的最小号
+    //    ⚠️ 同一个地址在 [pendingInOrder] 里出现两次时**只能占一个号**：否则第二次会把第一次占的号
+    //    顶掉，留下一个永远补不上的空洞（列表尾部会出现「①②③⑤」这种跳号）。
+    val seenPending = HashSet<String>()
     pendingInOrder.forEach { address ->
+        if (!seenPending.add(address)) return@forEach
         val n = nextFree(taken)
         sticky[address] = n
         taken += n

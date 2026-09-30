@@ -144,9 +144,6 @@ fun HomeScreen(
     var refreshing by remember { mutableStateOf(false) }
     var refreshSignal by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
-    // 入口 / 出站胶囊点一下要出示的条码是否已设置（没设置就带去设置页）。
-    // 直接读（不 remember）⇒ 从条码设置页返回后立刻生效。
-    val hasBarcode = getBarcodePayload(context) != null || hasBarcodeOriginalImage(context)
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
     val failedData by viewModel.failedMessages.collectAsState()
@@ -311,9 +308,13 @@ fun HomeScreen(
                         listBottomPadding = 0.dp,
                         // 下拉刷新信号：列表据此重排未取件的①②③
                         refreshSignal = refreshSignal,
-                        // 入口 / 出站胶囊：点一下全屏出示条码（没设置过就带去设置页）
+                        // 入口 / 出站胶囊：点一下全屏出示条码（没设置过就带去设置页）。
+                        // 🔴 **在点按那一刻才读**预置（SharedPreferences + File.isFile）：不要放在组合里，
+                        //    否则列表滚动/翻页时每帧都读一次（审查指出的性能点）。
                         onShowBarcode = {
-                            if (hasBarcode) homeBarcodeFull = true else navController.navigate("barcode")
+                            val ready = getBarcodePayload(context) != null ||
+                                hasBarcodeOriginalImage(context)
+                            if (ready) homeBarcodeFull = true else navController.navigate("barcode")
                         },
                     ) else
                         Column(
