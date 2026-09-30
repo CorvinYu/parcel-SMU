@@ -682,21 +682,6 @@ private fun DrawScope.drawVenue(
         drawPathOf(cells, ::px, ::py, cell, color, w)
     }
 
-    // ⑤b **方向指示**：圆头 chevron（不是尖三角 —— 用户 2026-10-01：那个三角形又丑又常盖住圆圈）。
-    //     位置改到「当前段第一截的**中点**」，并且**画在站点标记之前** ⇒ 任何标记都会盖在它上面，
-    //     结构上不可能再挡住圆圈。方向取 VenueGuide 压出来的第一个 MOVE 方向。
-    if (nextDir != null) {
-        firstRunMid(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
-            drawChevron(
-                px(c.col + 0.5f),
-                py(c.row + 0.5f),
-                nextDir,
-                (cell * 1.2f).coerceIn(7f, 16f),
-                pal.accent.copy(alpha = 0.92f),
-            )
-        }
-    }
-
     // ⑥ 行进光点：沿当前段跑（像外卖 App）
     route.legs.getOrNull(idx)?.cells?.takeIf { it.size > 1 }?.let { cells ->
         val k = phase * (cells.size - 1)
@@ -735,6 +720,25 @@ private fun DrawScope.drawVenue(
                 radius = rad,
             ),
         )
+    }
+
+    // ⑦b **方向指示**：圆头 chevron（不是尖三角 —— 用户 2026-10-01：那个三角形又丑又常盖住圆圈）。
+    //     位置：当前段第一截的中点格，再朝行进方向的**右侧偏 0.9 格** ⇒ 不压在站点圆点中心；
+    //     图层：在聚光灯（⑦）**之后**、站点标记（⑧）**之前** ⇒ 既不会被渐晕压暗，也不可能盖住圆圈。
+    if (nextDir != null) {
+        firstRunMid(route.legs.getOrNull(idx)?.cells.orEmpty())?.let { c ->
+            val (ux, uy) = dirUnit(nextDir)
+            // 行进方向的右侧（垂直向量）偏出去，像路面上的导向箭头
+            val ox = -uy * 0.9f
+            val oy = ux * 0.9f
+            drawChevron(
+                px(c.col + 0.5f + ox),
+                py(c.row + 0.5f + oy),
+                nextDir,
+                (cell * 1.1f).coerceIn(7f, 15f),
+                pal.accent.copy(alpha = 0.92f),
+            )
+        }
     }
 
     // ⑧ 站点标记：**按组合并**（同货架的连续取件只画一枚，标号写成 `1·2`），取件用件号、顺丰/出站用徽标
@@ -910,7 +914,11 @@ private fun DrawScope.drawPathOf(
     drawPath(path, color = color, style = Stroke(width = width, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
 }
 
-/** **首个「同方向段」的中点格**（与 [VenueGuide] 的压缩规则一致）。 */
+/** **首个「同方向段」的中点格**（与 [VenueGuide] 的压缩规则一致）。
+ *
+ * ⚠️ 绝不能返回 `cells[0]`（那就是当前站自己的格子 ⇒ chevron 会压在圆点上）；
+ * 单格长的段退回到 `cells[1]`。
+ */
 private fun firstRunMid(cells: List<GridCell>): GridCell? {
     if (cells.size < 2) return null
     val dr = cells[1].row - cells[0].row
@@ -922,10 +930,17 @@ private fun firstRunMid(cells: List<GridCell>): GridCell? {
         if (nr != dr || nc != dc) break
         j++
     }
-    // j+1 = 该同向段的终点格；取它与起点的中点（走向中途，不会压在站点圆点上）
     val end = j + 1
-    val mid = end / 2
+    val mid = if (end <= 1) 1 else end / 2
     return cells[mid]
+}
+
+/** 方向单位向量（北 = 行减小，与 [VenueGuide] 一致）。 */
+private fun dirUnit(dir: VenueGuide.Dir): Pair<Float, Float> = when (dir) {
+    VenueGuide.Dir.NORTH -> 0f to -1f
+    VenueGuide.Dir.SOUTH -> 0f to 1f
+    VenueGuide.Dir.EAST -> 1f to 0f
+    VenueGuide.Dir.WEST -> -1f to 0f
 }
 
 /**
@@ -935,14 +950,7 @@ private fun firstRunMid(cells: List<GridCell>): GridCell? {
  * 现在换成圆头线 + 白色描边（更像导航 App 的走向箭头），并且由调用方把它画在站点标记**之前**。
  */
 private fun DrawScope.drawChevron(cx: Float, cy: Float, dir: VenueGuide.Dir, sizePx: Float, color: Color) {
-    val ux: Float
-    val uy: Float
-    when (dir) {
-        VenueGuide.Dir.NORTH -> { ux = 0f; uy = -1f }
-        VenueGuide.Dir.SOUTH -> { ux = 0f; uy = 1f }
-        VenueGuide.Dir.EAST -> { ux = 1f; uy = 0f }
-        VenueGuide.Dir.WEST -> { ux = -1f; uy = 0f }
-    }
+    val (ux, uy) = dirUnit(dir)
     val nx = -uy
     val ny = ux
     val tipX = cx + ux * sizePx * 0.55f
