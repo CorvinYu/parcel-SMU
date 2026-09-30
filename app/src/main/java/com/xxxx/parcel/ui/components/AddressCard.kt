@@ -27,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -168,16 +169,22 @@ fun AddressCard(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
-                // 怎么走：跟在序号后面的一行短提示（由取件路线那一套格序列压出来）
+                // 怎么走：**带底色的胶囊**（用户 2026-10-01：小字要有背景；太长时要能分行，不截断）
                 if (guideHint != null) {
-                    Text(
-                        text = "→ $guideHint",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF1565C0),
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 2.dp),
-                    )
+                            .padding(top = 3.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFE8F0FE),
+                    ) {
+                        Text(
+                            text = "→ $guideHint",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF10366B),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
                 }
                 // 隐藏了地址头时就不再需要上面那条空隙，避免叠出一层多余留白
                 Spacer(modifier = Modifier.height(if (hideHeader) 2.dp else 4.dp))

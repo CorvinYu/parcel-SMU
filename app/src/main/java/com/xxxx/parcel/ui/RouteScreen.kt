@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -132,13 +133,10 @@ fun RouteScreen(
     var mapView by remember { mutableStateOf(getGuideMapView(context)) }
     var currentStop by remember(route) { mutableIntStateOf(0) }
     var fullScreenMap by remember { mutableStateOf(false) }
+    var mapCollapsed by remember { mutableStateOf(false) }
 
     val paneHeight = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
-    val overlayBottom = if (mapPlacement == GuideMapPlacement.ROUTE_OVERLAY && route.stops.isNotEmpty()) {
-        paneHeight + 12.dp
-    } else {
-        24.dp
-    }
+    val overlayShown = mapPlacement == GuideMapPlacement.ROUTE_OVERLAY && route.stops.isNotEmpty()
 
     Scaffold(
         topBar = {
@@ -157,13 +155,15 @@ fun RouteScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                 GuideSettingsCard(
                     textPlacement = textPlacement,
                     onTextPlacement = { textPlacement = it; saveGuideTextPlacement(context, it) },
@@ -215,17 +215,19 @@ fun RouteScreen(
                     }
 
                     if (mapPlacement == GuideMapPlacement.ROUTE_INLINE && route.stops.isNotEmpty()) {
-                        Card(modifier = Modifier.fillMaxWidth().height(paneHeight)) {
-                            RouteMiniMap(
-                                route = route,
-                                currentStop = currentStop,
-                                detail = detail,
-                                modifier = Modifier.fillMaxSize(),
-                                initialView = mapView,
-                                onCurrentStopChange = { currentStop = it },
-                                onExpand = { fullScreenMap = true },
-                            )
-                        }
+                        RouteMiniMap(
+                            route = route,
+                            currentStop = currentStop,
+                            detail = detail,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(paneHeight),
+                            initialView = mapView,
+                            collapsed = mapCollapsed,
+                            onCollapsedChange = { mapCollapsed = it },
+                            onCurrentStopChange = { currentStop = it },
+                            onExpand = { fullScreenMap = true },
+                        )
                     }
 
                     Text("建议顺序", fontWeight = FontWeight.Medium)
@@ -436,24 +438,22 @@ fun RouteScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
 
-                Spacer(Modifier.height(overlayBottom))
-            }
+                Spacer(Modifier.height(24.dp))
+                }
 
-            if (mapPlacement == GuideMapPlacement.ROUTE_OVERLAY && route.stops.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(paneHeight),
-                    color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = 10.dp,
-                ) {
+                // 地图窗格：**占位在列表下方**（不叠在内容上、不挤占；收起时只有一行胶囊）
+                if (overlayShown) {
                     RouteMiniMap(
                         route = route,
                         currentStop = currentStop,
                         detail = detail,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
+                            .height(if (mapCollapsed) 52.dp else paneHeight),
                         initialView = mapView,
+                        collapsed = mapCollapsed,
+                        onCollapsedChange = { mapCollapsed = it },
                         onCurrentStopChange = { currentStop = it },
                         onExpand = { fullScreenMap = true },
                     )
@@ -471,7 +471,9 @@ fun RouteScreen(
                         route = route,
                         currentStop = currentStop,
                         detail = detail,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp),
                         initialView = mapView,
                         onCurrentStopChange = { currentStop = it },
                         onExpand = { fullScreenMap = false },
@@ -522,21 +524,26 @@ private fun WalkHintCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
+        shape = RoundedCornerShape(14.dp),
         colors = if (highlight) {
             CardDefaults.cardColors(containerColor = Color(0xFFE8F0FE))
         } else {
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         },
     ) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "怎么走：${leg.from} → ${leg.to}",
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
-                Text("${fmtTiles(leg.tiles)} 格", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "${fmtTiles(leg.tiles)} 格",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
             }
             if (shown.isEmpty()) {
                 Text(
@@ -551,12 +558,23 @@ private fun WalkHintCard(
                     )
                 }
             }
-            Text(
-                "点一下把这站设为当前（下图随之特写）",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.clickable { onSetCurrent() },
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (highlight) Color(0xFF1E6FE0) else MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.clickable { onSetCurrent() },
+                ) {
+                    Text(
+                        if (highlight) "当前站" else "设为当前",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (highlight) Color.White else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -573,13 +591,29 @@ private fun GuideSettingsCard(
     mapView: GuideMapView,
     onMapView: (GuideMapView) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("提示与地图（试用）", fontWeight = FontWeight.Medium)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1E6FE0)),
+                )
+                Text(
+                    "提示与地图（试用）",
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
             Text(
-                "2026-10-01 新增：逐段「怎么走」＋ 路线图示窗格。位置和详略先用开关暴露，" +
-                    "你在驿站实际看过之后再定最终形态。",
+                "逐段「怎么走」＋ 路线图示。位置和详略先用开关暴露，你在驿站实际看过之后再定最终形态。",
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ChipRow("文字提示", GuideTextPlacement.entries.map { it.label }, textPlacement.label) { label ->
                 GuideTextPlacement.entries.firstOrNull { it.label == label }?.let(onTextPlacement)
@@ -593,6 +627,11 @@ private fun GuideSettingsCard(
             ChipRow("地图默认视图", GuideMapView.entries.map { it.label }, mapView.label) { label ->
                 GuideMapView.entries.firstOrNull { it.label == label }?.let(onMapView)
             }
+            Text(
+                "改完立刻生效；全部关掉就回到 0.1.9 的样子。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
         }
     }
 }
@@ -604,8 +643,12 @@ private fun ChipRow(
     selected: String,
     onSelect: (String) -> Unit,
 ) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()

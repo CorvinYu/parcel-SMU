@@ -117,6 +117,21 @@ fun compartmentFromPickupCode(rawCode: String): String? {
 fun effectiveCompartmentNumber(compartmentNumber: String, code: String): String =
     compartmentNumber.trim().ifBlank { compartmentFromPickupCode(code) ?: "" }
 
+/**
+ * 一个地址分组参与路线规划的**锚点货格号**。
+ *
+ * 入参只放**尚未取件**的短信（`compartmentNumber to code`）。全取完 ⇒ 传空列表 ⇒ 返回 null，
+ * 该地址必须从路线与地图上消失。
+ *
+ * 🔴 用户 2026-10-01 反馈：标记已取件后地图不同步。根因就是这里以前兜底取了「第一条短信（含已取件）」，
+ * 于是已取完的地址仍留在顺序里。**已取件的一律不参与规划**。
+ */
+fun routeAnchorCode(uncompleted: List<Pair<String, String>>): String? {
+    val first = uncompleted.firstOrNull() ?: return null
+    val code = effectiveCompartmentNumber(first.first, first.second)
+    return code.ifBlank { null }
+}
+
 /** 该取件码是否只是数字（快递柜）。 */
 fun isLockerCode(raw: String): Boolean {
     val text = raw.trim()

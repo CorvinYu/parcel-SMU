@@ -3,6 +3,7 @@ package com.xxxx.parcel.util
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -200,5 +201,19 @@ class RouteGuideTest {
         val blank = RouteLeg("入口闸机", "X", LegKind.ENTRANCE, emptyList(), 0.0, 0.0, 0.0)
         assertTrue("空段不许编指引", VenueGuide.describe(blank).isEmpty())
         assertEquals("", VenueGuide.summarize(blank))
+    }
+
+    @Test
+    fun `全取完的地址不进路线（标记已取件后地图要同步）`() {
+        // 全取完 ⇒ 调用方传空列表 ⇒ 必须返回 null（该地址从路线与图上消失）
+        assertNull("已取完的地址不得再参与规划", routeAnchorCode(emptyList()))
+        // 还没取 ⇒ 用它自己的货格号
+        assertEquals("D5-23", routeAnchorCode(listOf("" to "D5-23")))
+        assertEquals("D8-6", routeAnchorCode(listOf("D8-6" to "12345678")))
+        // 取件码本身就是货格号时的兜底仍然有效（嵌在中文长句里的不解析 —— 由短信解析器负责）
+        assertEquals("B4-3", routeAnchorCode(listOf("" to "B4-3")))
+        assertNull("嵌在中文句子里的货格号不在这里碰运气", routeAnchorCode(listOf("" to "请用B4-3到人工货架取包裹")))
+        // 两条里只留下未取件的那条 ⇒ 取锚点结果不变，但已取件那条不会再产生额外站点
+        assertEquals("S3-2-2628", routeAnchorCode(listOf("S3-2-2628" to "2628")))
     }
 }

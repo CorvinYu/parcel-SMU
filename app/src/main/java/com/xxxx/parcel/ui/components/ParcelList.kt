@@ -68,6 +68,7 @@ import com.xxxx.parcel.util.getCodeNotes
 import com.xxxx.parcel.util.getGuideTextPlacement
 import com.xxxx.parcel.util.getRouteOptions
 import com.xxxx.parcel.util.planPickupRoute
+import com.xxxx.parcel.util.routeAnchorCode
 import com.xxxx.parcel.util.saveCodeNote
 import com.xxxx.parcel.viewmodel.ParcelViewModel
 import kotlinx.coroutines.launch
@@ -556,10 +557,13 @@ private fun planStationRoute(
     options: RouteOptions,
 ): StationRoute {
     val pairs = parcels.mapNotNull { parcel ->
-        val sms = parcel.smsDataList.firstOrNull { !it.isCompleted }
-            ?: parcel.smsDataList.firstOrNull()
-        val code = sms?.let { effectiveCompartmentNumber(it.compartmentNumber, it.code) } ?: ""
-        if (code.isEmpty()) null else parcel.address to code
+        // 🔴 只把**未取件**的短信交给规划：全取完的地址返回 null ⇒ 从顺序与地图上消失
+        // （此前兜底取了已取件那条 ⇒ 标记已取件后地图不同步，用户 2026-10-01 反馈）
+        val uncompleted = parcel.smsDataList
+            .filter { !it.isCompleted }
+            .map { it.compartmentNumber to it.code }
+        val code = routeAnchorCode(uncompleted) ?: return@mapNotNull null
+        parcel.address to code
     }
     if (pairs.isEmpty()) return StationRoute(emptyMap(), null)
 

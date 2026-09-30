@@ -112,6 +112,7 @@ fun HomeScreen(
     var homeRoute by remember { mutableStateOf<PickupRoute?>(null) }
     var homeStop by remember { mutableIntStateOf(0) }
     var homeFullMap by remember { mutableStateOf(false) }
+    var homeMapCollapsed by remember { mutableStateOf(false) }
     val homeMapEnabled = guideMapPlacement == GuideMapPlacement.HOME_OVERLAY
 
     val selectedTimeFilterIndex by viewModel.timeFilterIndex.collectAsState()
@@ -202,8 +203,9 @@ fun HomeScreen(
                 listContentHeightPx?.let { px -> with(density) { px.toDp() } }
             }
             val minBarcodeHeight = if (isSeniorMode) 120.dp else 88.dp
-            // 图示窗格高度：容器高度的 1/3 左右
+            // 图示窗格高度：容器高度的 1/3 左右；收起时只剩一行胶囊
             val mapPaneHeight = maxHeight * 0.34f
+            val mapHeight = if (homeMapCollapsed) 54.dp else mapPaneHeight
             val mapActive = homeMapEnabled && homeRoute?.stops?.isNotEmpty() == true
             // 手动可调的上限：最多占容器一半，别把列表挤没
             val maxBarcodeHeight = maxHeight * 0.5f
@@ -242,8 +244,8 @@ fun HomeScreen(
                             homeRoute = it
                             homeStop = 0
                         },
-                        // 浮层开启时给列表底部留白，最后一张卡不会被窗格压住
-                        listBottomPadding = if (mapActive) mapPaneHeight else 0.dp,
+                        // 地图改成占位（不遮挡内容）⇒ 列表不再需要底部留白
+                        listBottomPadding = 0.dp,
                     ) else
                         Column(
                             modifier = Modifier.fillMaxSize(),
@@ -254,28 +256,24 @@ fun HomeScreen(
                                 Text("获取短信权限")
                             }
                         }
+                }
 
-                    // 路线图示浮层：贴在列表区底部（在底部条码浮窗**之上**，两者同时开也不叠在一起）
-                    if (mapActive) {
-                        homeRoute?.let { route ->
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .fillMaxWidth()
-                                    .height(mapPaneHeight),
-                                color = MaterialTheme.colorScheme.surface,
-                                shadowElevation = 10.dp,
-                            ) {
-                                RouteMiniMap(
-                                    route = route,
-                                    currentStop = homeStop,
-                                    detail = guideDetail,
-                                    modifier = Modifier.fillMaxSize(),
-                                    onCurrentStopChange = { homeStop = it },
-                                    onExpand = { homeFullMap = true },
-                                )
-                            }
-                        }
+                // 路线图示：**占位在列表下方**（不叠在卡片上、不挤占列表内容；收起时只有一行胶囊）
+                if (mapActive) {
+                    homeRoute?.let { route ->
+                        RouteMiniMap(
+                            route = route,
+                            currentStop = homeStop,
+                            detail = guideDetail,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
+                                .height(mapHeight),
+                            collapsed = homeMapCollapsed,
+                            onCollapsedChange = { homeMapCollapsed = it },
+                            onCurrentStopChange = { homeStop = it },
+                            onExpand = { homeFullMap = true },
+                        )
                     }
                 }
 
@@ -324,7 +322,9 @@ fun HomeScreen(
                             route = route,
                             currentStop = homeStop,
                             detail = guideDetail,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(10.dp),
                             onCurrentStopChange = { homeStop = it },
                             onExpand = { homeFullMap = false },
                             expandLabel = "收起",
