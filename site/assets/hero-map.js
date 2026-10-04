@@ -30,7 +30,7 @@
   var btnView = host.querySelector('.hm-view');
   var ctx = canvas.getContext('2d');
 
-  var ASSET_V = '20261001d';   // 自研资源版本号（改了 JS/数据就 bump）
+  var ASSET_V = '20261004a';   // 自研资源版本号（改了 JS/数据就 bump）
   var N_MIN = 4, N_MAX = 7;      // 每趟取件点个数（随机）
   var ROAM_MS = 15000;           // 一趟走完的目标时长
   var STOP_MS = 620;             // 每站停留

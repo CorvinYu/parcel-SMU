@@ -559,14 +559,19 @@
 
   /* ---------- 5) 取件码定位：完全由 Excel 合并区坐标驱动 ----------
    * 形如 `D8-6` / `S3-2-2628` / `J5-21` / `Y8-1-3` / `A4-1`。
-   * 精度分三档：
-   *   ① **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增**（实测锚点 O7:U7 / O9:U9 / O10:U10）
-   *      ⇒ 按格号取货架**横向**位置（只影响投影到哪一个通道格）
-   *   ② **J 柜列**：沿列**由外端（靠通道）向里递增**，每列 ≥21 格（实测 j5-21）
-   *      ⇒ 按格号取**纵深**位置，并把「从通道走进柜列」的那段 `stub` 计入走位
-   *      ⚠️ 每列实际格数未实测（`货位清单` Q1b/Q5）⇒ 用 `jCells`（默认 21）等比铺开
-   *   ③ **Y 大件**：精确版里是**一整块**（`Y区域`）⇒ 只能定位到东侧通道最近点，`approx=true`
-   * 普通排货架：仍取合并区中心（同一货架内不同格视为同一点）
+   *
+   * 🔴 2026-10-03 换用用户 10-02 更新版地图后，Excel 里**每个货格都有自己的合并区**
+   *    （`S1-1`…`S1-10`、`Y1-1`…`Y9`、`Y8-2-1`…），原来那个笼统的 `S1` 标签**已不存在**。
+   *    因此定位改为三级优先（与 App 端 `PickupRoute.locate` 完全一致）：
+   *      ① **子位精确**：`S1-8` / `Y5-3` / `Y8-2-1` —— 命中该货格自己的合并区
+   *      ② **货架级并集**：`S1` = 所有 `S1-*` 的并集（旧图是单个大块，新图被拆成多个小块）
+   *      ③ **区级兜底**：`S区域` / `Y区域` ⇒ `approx = true`
+   *    只做 ②③ 的话，`S3-2-2628` 这类取件码（货架号只有 S3）在新图上会定位失败。
+   *
+   * 精度补充（在 ②③ 时使用）：
+   *    - **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增** ⇒ 按格号取横向位置
+   *    - **J 柜列**：沿列**由外端（靠通道）向里递增**，每列 ≥21 格 ⇒ 按格号取纵深，并把 `stub` 计入走位
+   *    - **Y 大件**：货架内按子位等比铺开
    */
   function makeLocator(cor, model, opts) {
     opts = opts || {};
@@ -584,19 +589,52 @@
         e.d0 = Math.min(e.d0, r.d0); e.d1 = Math.max(e.d1, r.d1);
       }
     });
+
+    /* 前缀并集：查 `S1` 时并集所有 `S1-*`（只认 `-` 分隔，避免 S1 误匹配 S10） */
+    function byPrefix(key) {
+      if (byLabel[key]) return byLabel[key];
+      var pre = key + '-', acc = null;
+      Object.keys(byLabel).forEach(function (k) {
+        if (k.indexOf(pre) !== 0) return;
+        var r = byLabel[k];
+        if (!acc) acc = { label: key, c0: r.c0, c1: r.c1, r0: r.r0, r1: r.r1, lat0: r.lat0, lat1: r.lat1, d0: r.d0, d1: r.d1 };
+        else {
+          acc.c0 = Math.min(acc.c0, r.c0); acc.c1 = Math.max(acc.c1, r.c1);
+          acc.r0 = Math.min(acc.r0, r.r0); acc.r1 = Math.max(acc.r1, r.r1);
+          acc.lat0 = Math.min(acc.lat0, r.lat0); acc.lat1 = Math.max(acc.lat1, r.lat1);
+          acc.d0 = Math.min(acc.d0, r.d0); acc.d1 = Math.max(acc.d1, r.d1);
+        }
+      });
+      return acc;
+    }
+
     return function (raw) {
       var t = String(raw).trim().toUpperCase();
       var m = t.match(/^([A-Z])\s*(\d{1,2})(?:\s*[-－–—]\s*(\d{1,3}))?(?:\s*[-－–—]\s*(\d{1,4}))?$/);
       if (!m) return null;
       var letter = m[1], shelf = +m[2], cell = m[3] ? +m[3] : null, sub = m[4] ? +m[4] : null;
-      var e = byLabel[letter + shelf];
-      var approx = false;
-      if (!e) { e = byLabel[letter + '区域'] || byLabel[letter + '区']; approx = !!e; }
+      var shelfLabel = letter + shelf;
+
+      /* ① 子位精确命中 */
+      var cellRect = null;
+      if (cell !== null) {
+        var base = (sub !== null) ? shelfLabel + '-' + cell : shelfLabel;
+        var idx = (sub !== null) ? sub : cell;
+        cellRect = byLabel[(base + '-' + idx).toUpperCase()] || null;
+      }
+      /* ② 货架级并集 */
+      var shelfRect = byPrefix(shelfLabel);
+      /* ③ 区级兜底 */
+      var e = cellRect || shelfRect || byPrefix(letter + '区域') || byPrefix(letter + '区');
       if (!e) return null;
-      /* ---- 区内格位 → 精确坐标（S 用横向、J 用纵深；其余取合并区中心）---- */
+      var approx = !cellRect && !shelfRect;
+
+      /* ---- 区内格位 → 精确坐标 ---- */
       var lat = (e.lat0 + e.lat1) / 2, depth = (e.d0 + e.d1) / 2;
       var posNote = '';
-      if (letter === 'S') {
+      if (cellRect) {
+        posNote = shelfLabel + ' 第' + cell + '格（地图精确格位）';
+      } else if (letter === 'S') {
         var sn = (shelf === 1) ? 10 : 8;                       // s1=10 格、s2/s3=8 格（实测锚点）
         var sk = Math.min(Math.max((cell || 1) - 1, 0), sn - 1);
         lat = e.lat0 + (sn > 1 ? sk / (sn - 1) : 0) * (e.lat1 - e.lat0);
@@ -605,17 +643,34 @@
         var jk = Math.min(Math.max((cell || 1) - 1, 0), jCells - 1);
         depth = e.d0 + (jCells > 1 ? jk / (jCells - 1) : 0) * (e.d1 - e.d0);   // d0 = 靠通道的外端
         posNote = 'j' + shelf + ' 第' + (cell || 1) + '格（沿列由外端向里，按 ' + jCells + ' 格铺开）';
+      } else if (letter === 'Y') {
+        var yn = (shelf >= 8) ? 3 : 4;
+        var yk = Math.min(Math.max((cell || 1) - 1, 0), yn - 1);
+        lat = e.lat0 + (yn > 1 ? yk / (yn - 1) : 0) * (e.lat1 - e.lat0);
+        posNote = 'y' + shelf + ' 第' + (cell || 1) + '格（共 ' + yn + ' 格）';
       }
       /* 投影：从整个合并区出发、绕开墙与货架的 BFS（不允许穿墙）。
          ⚠️ 决胜基准必须是**按格位算出来的精确点**，不能是合并区中心 ——
-         否则 S 区同一货架的不同格会全部投到同一格，段距恒为 0（踩过）。 */
+         否则 S 区同一货架的不同格会全部投到同一格，段距恒为 0（踩过）。
+         🔴 J 柜列只在**南端开口**，必须限定从开口投影（否则会从柜列东侧通道穿出去）。 */
       var src = [];
-      for (var r = e.r0; r <= e.r1; r++) for (var c = e.c0; c <= e.c1; c++) src.push([r, c]);
+      if (letter === 'J') {
+        for (var c2 = e.c0; c2 <= e.c1; c2++) {
+          var kk = model.kindAt ? model.kindAt(e.r1 + 1, c2) : null;
+          if (kk === 1) src.push([e.r1 + 1, c2]);
+        }
+      }
+      if (!src.length) {
+        for (var r = e.r0; r <= e.r1; r++) for (var c = e.c0; c <= e.c1; c++) src.push([r, c]);
+      }
       var near = model.nearestWalkFrom(src, model.rowOf(depth), model.colOf(lat));
       if (!near) return null;
-      /* 区内那一段（投影格 ↔ 取件格）走位：J 柜列的纵深必须算进距离，其余近似为 0 */
+      /* 区内那一段（投影格 ↔ 取件格）走位：J 柜列的纵深必须算进距离，其余近似为 0。
+         🔴 不能用 Math.abs(depth - pc.depth)：柜列两侧都有通道时 BFS 会把不同格投到不同行，
+         abs 会让 stub 不再随格位单调递增（2026-10-03 被单测抓到 0.50→0.30→0.30→0.50）。
+         正确做法：以柜列**南端开口**（e.d0）为固定基准。 */
       var pc = model.pointOf(near.row, near.col);
-      var stub = (letter === 'J') ? Math.abs(depth - pc.depth) : 0;
+      var stub = (letter === 'J') ? Math.max(depth - e.d0, 0) : 0;
       return {
         code: raw, letter: letter, shelf: shelf, cell: cell, sub: sub, rect: e, approx: approx,
         lat: lat, depth: depth, cellPos: near, stub: stub,
@@ -623,7 +678,7 @@
           + (posNote ? '　' + posNote : '')
           + '（lat ' + lat.toFixed(1) + '，深 ' + depth.toFixed(1) + ' → 通道格 '
           + near.row + ',' + near.col + (stub > 0.01 ? '，区内走位 ' + stub.toFixed(1) + ' 格' : '') + '）'
-          + (approx ? '　⚠ 该区在精确版里是一整块，只定位到最近通道点' : '')
+          + (approx ? '　⚠ 该区在精确版里未细分，只定位到最近通道点' : '')
       };
     };
   }
