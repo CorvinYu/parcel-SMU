@@ -10,6 +10,15 @@
 > 本版内容：场地地图换到 10-02 精确版（S 区补齐 / Y 区编号 / Y1 横排，通道 3362→4765、纵干 3→4）、
 > 全屏出示条码去掉「亮度拉满」（用户实测拉满反而难扫）。
 
+> 🔴 **发布链路有两条，别只跑一条**：
+> ① **APK**：改版本号 → `assembleRelease -x lintVital*` → 验签 → commit → `push-incremental.py` → `publish-<版本>.py`（建 Release + 传 APK）；
+> ② **下载页**：`sync_release.py --deploy`（版本号/字节数/SHA-256/日期 + 上传 APK 与页面）。
+> ⚠️ **只要换了场地图（改 Excel → `extract-corridors.py`），就必须再跑
+> `python .devtools/build-hero-map.py` 重建 `site/assets/` 的 hero 资源，并用
+> `python .devtools/add-asset-version.py <版本号>` bump 缓存版本号** —— 否则 App 更新了、网页地图还是旧场地
+> （2026-10-04 就是这么漏的：网页地图停在 3362 通道格的旧图，而 App 已是 4765）。
+> 校验：`build-hero-map.py --check`（三项一致）+ `.devtools/check-hero-live.py`（外网确认 `walkCells":4765`）。
+
 ## ✅ 已完成（截至 0.1.8）
 
 - **同步上游**：`shareven/parcel` 的 16 个新提交（基线 v1.0.68），并把海大版自定义背景功能移植过去

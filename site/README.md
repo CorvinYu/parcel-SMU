@@ -48,9 +48,22 @@ site/
 
 | 文件 | 作用 | 来源 |
 |---|---|---|
-| `assets/venue-model.js` | 3362 个可走格 / 218 个货架合并区 / 3 处闸机带 | `docs/floorplan-corridors.json`（用户 Excel 填充色导出） |
+| `assets/venue-model.js` | 4765 个可走格 / 281 个货架合并区 / 3 处闸机带 | `docs/floorplan-corridors.json`（用户 Excel 填充色导出） |
 | `assets/route-core.js` | 建模 · 绕墙投影 · BFS 最短路 · Held–Karp 精确排序 · 路线断言 | `.devtools/route-core.js`（与 App 端 `SiteModel` + `PickupRoute` 同源） |
 | `assets/hero-map.js` | 画法（照原型搬）+ 动画 + 相机 + 交互 | 手写（本文件同目录） |
+
+> 🔴 **换场地图之后必须重建这三个文件**（2026-10-04 踩过）：
+> `venue-model.js` / `route-core.js` / `venue-mini.svg` **不是 `sync_release.py` 管的** ——
+> `sync_release.py --deploy` 只改**版本号/字节数/SHA-256/日期**并上传**现有** assets。
+> 换了 Excel（`extract-corridors.py` 重导 `docs/floorplan-corridors.json`）之后，还要：
+> ```powershell
+> python .devtools/build-hero-map.py            # 重建 venue-model.js / route-core.js / venue-mini.svg
+> python .devtools/add-asset-version.py 20261004a   # bump 资源版本号（防浏览器跑旧 JS）
+> python .devtools/build-hero-map.py --check    # 校验三项与源文件一致
+> python .devtools/check-hero-live.py           # 上线后外网确认 walkCells 是新图的 4765
+> ```
+> 漏掉的后果：App 已是新场地，网页地图仍是旧图（通道 3362、Y 区一整块）。
+> 判据很简单：`venue-model.js` 里的 `stats.walkCells` 应为 **4765**（旧图是 3362）。
 
 再生成 / 校验：
 
