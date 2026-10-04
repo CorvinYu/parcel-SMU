@@ -12,8 +12,8 @@ import hashlib, io, json, os
 import openpyxl
 from openpyxl.utils import get_column_letter
 
-SRC = r'E:\claude\parcel-SPU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
-OUT = r'E:\claude\parcel-SPU\docs\floorplan-corridors.json'
+SRC = r'E:\claude\parcel-SMU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
+OUT = r'E:\claude\parcel-SMU\docs\floorplan-corridors.json'
 
 SPINE_COL, BASE_ROW = 37.5, 53.5
 ROLE = {'theme3': 'walk', 'theme1': 'wall', 'theme9': 'shelfmark', 'theme5': 'gate', 'theme7': 'misc'}

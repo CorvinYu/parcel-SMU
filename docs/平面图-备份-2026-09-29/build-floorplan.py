@@ -11,7 +11,7 @@
 """
 import base64, io, json, os
 
-ROOT = r'E:\claude\parcel-SPU'
+ROOT = r'E:\claude\parcel-SMU'
 PNG = os.path.join(ROOT, r'.devtools\floorplan-excel.png')
 COR = os.path.join(ROOT, r'docs\floorplan-corridors.json')
 CORE = os.path.join(ROOT, r'.devtools\route-core.js')

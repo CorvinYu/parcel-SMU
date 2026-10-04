@@ -186,8 +186,8 @@ $mac = 'corvinyu@192.168.9.7'
 $dst = '/Users/corvinyu/server/data/caddy/data/k'
 
 ssh -i $k $mac "mkdir -p $dst/assets"
-scp -i $k -q E:\claude\parcel-SPU\site\index.html        "${mac}:$dst/index.html"
-scp -i $k -q E:\claude\parcel-SPU\site\assets\*          "${mac}:$dst/assets/"
+scp -i $k -q E:\claude\parcel-SMU\site\index.html        "${mac}:$dst/index.html"
+scp -i $k -q E:\claude\parcel-SMU\site\assets\*          "${mac}:$dst/assets/"
 ssh -i $k $mac "ls -la $dst; ls $dst/assets | wc -l"
 ```
 
@@ -210,11 +210,11 @@ ssh -i $k $mac "rm -f $dst/index.html"
 | 位置 | 内容 | 谁改 |
 |---|---|---|
 | `<title>` / `<meta name="description">` | 版本号、体积 | 🤖 工具 |
-| `.hero`、`#download`、`.mbar` 里的下载链接（3 处 `<a href>`） | `./parcel-spu-v<版本>.apk` | 🤖 工具 |
-| GitHub 镜像链接（2 处） | `releases/download/v<版本>/parcel-spu-v<版本>.apk` | 🤖 工具 |
+| `.hero`、`#download`、`.mbar` 里的下载链接（3 处 `<a href>`） | `./parcel-smu-v<版本>.apk` | 🤖 工具 |
+| GitHub 镜像链接（2 处） | `releases/download/v<版本>/parcel-smu-v<版本>.apk` | 🤖 工具 |
 | hero chips | `Android 10+`、体积、更新日期 | 🤖 工具 |
 | `#install` 的 `.kv` 区 | 版本、字节数、日期、**SHA-256**（含 `data-copy` 属性） | 🤖 工具 |
-| 安装步骤里的文件名、校验命令 | `parcel-spu-v<版本>.apk` | 🤖 工具 |
+| 安装步骤里的文件名、校验命令 | `parcel-smu-v<版本>.apk` | 🤖 工具 |
 | 功能卡 / FAQ 的**功能描述** | 例如某形态被删掉、某能力新增 | ✍️ 人工 |
 | FAQ「安装时提示应用未安装」 | 签名变更说明是否仍然适用 | ✍️ 人工 |
 
@@ -222,7 +222,7 @@ ssh -i $k $mac "rm -f $dst/index.html"
 条码出示形态由四种改两种（全屏出示与铺满背景已删）、路线适用范围改成"带格口 + 实体货格号都认"、
 补上"首页 ①②③ 排序"与"条码试验"页、签名 FAQ 改为"装最新版"。
 
-APK 本身由工具负责放进站点根目录（`$dst/parcel-spu-v<版本>.apk`），旧包按需保留。
+APK 本身由工具负责放进站点根目录（`$dst/parcel-smu-v<版本>.apk`），旧包按需保留。
 
 ## 界面元素（0.2.0 起全部内联，没有图片插槽）
 

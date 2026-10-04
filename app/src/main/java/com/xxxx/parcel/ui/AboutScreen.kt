@@ -51,7 +51,7 @@ fun getAppVersionName(context: Context): String {
 fun AboutScreen(navController: NavController) {
     val context = LocalContext.current
     val upstreamUrl = "https://github.com/shareven/parcel"
-    val forkUrl = "https://github.com/CorvinYu/parcel-SPU"
+    val forkUrl = "https://github.com/CorvinYu/parcel-SMU"
 
 
     Scaffold(

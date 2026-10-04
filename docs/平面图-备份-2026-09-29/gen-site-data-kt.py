@@ -8,7 +8,7 @@
 """
 import io, json, os
 
-ROOT = r'E:\claude\parcel-SPU'
+ROOT = r'E:\claude\parcel-SMU'
 SRC = os.path.join(ROOT, r'docs\floorplan-corridors.json')
 OUT = os.path.join(ROOT, r'app\src\main\java\com\xxxx\parcel\util\SiteData.kt')
 

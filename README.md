@@ -10,7 +10,7 @@
 
 ## 📲 下载
 
-最新版本见 **[Releases](https://github.com/CorvinYu/parcel-SPU/releases)**；
+最新版本见 **[Releases](https://github.com/CorvinYu/parcel-SMU/releases)**；
 也可直接从镜像下载：**[k.corvinyu.icu](https://k.corvinyu.icu/)**
 （镜像与 Releases 是**同一份文件**，页面上给出体积与 SHA-256，可自行校验）。
 

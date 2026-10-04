@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""parcel-SPU landing page asset pipeline.
+"""parcel-SMU landing page asset pipeline.
 
 0.2.0 起，页面上的所有界面图形都改成**内联 HTML/CSS/SVG 元素**（见 index.html 的
 「界面元素一览」与能力卡），所以这里只剩两件事：
@@ -22,7 +22,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
-ROOT = Path(__file__).resolve().parents[2]          # E:\claude\parcel-SPU
+ROOT = Path(__file__).resolve().parents[2]          # E:\claude\parcel-SMU
 SITE = ROOT / "site"
 OUT = SITE / "assets"                               # 会上线
 CACHE = SITE / "tools" / ".cache"                   # 中间产物，不上线

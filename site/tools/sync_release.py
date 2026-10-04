@@ -37,13 +37,13 @@ import urllib.request
 
 PROJ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PAGE = os.path.join(PROJ, "site", "index.html")
-OWNER, REPO = "CorvinYu", "parcel-SPU"
+OWNER, REPO = "CorvinYu", "parcel-SMU"
 API = "https://api.github.com/repos/%s/%s" % (OWNER, REPO)
 LIVE = "https://k.corvinyu.icu/"
 KEY = r"E:\claude\nas-pt-ops\sshkey_nas"
 MAC = "corvinyu@192.168.9.7"
 REMOTE_DIR = "/Users/corvinyu/server/data/caddy/data/k"
-UA = {"User-Agent": "parcel-spu-site-sync"}
+UA = {"User-Agent": "parcel-smu-site-sync"}
 # 未认证额度只有 60 次/小时（本机实测会 403 rate limit exceeded）；有令牌就带上。
 # 只发给 api.github.com —— 下载直链是 assets 域，不该把令牌带给它。
 TOKEN = os.environ.get("GH_RELEASE_TOKEN", "").strip()
@@ -135,21 +135,31 @@ def main():
         print("!! 找不到 tag %s" % args.tag); return 2
 
     html = io.open(PAGE, encoding="utf-8").read()
-    m = re.search(r"parcel-spu-(v[0-9][^\"'\s]*?)\.apk", html)
-    if not m:
+    # 前缀兼容 parcel-spu / parcel-smu：仓库 2026-10 由 parcel-SPU 改名 parcel-SMU，
+    # 产物名随之从 parcel-spu-*.apk 变成 parcel-smu-*.apk，页面上两种都可能出现。
+    apk_names = sorted(set(re.findall(r"parcel-s(?:pu|mu)-v[0-9][^\"'\s]*?\.apk", html)))
+    if not apk_names:
         print("!! 页面里找不到 APK 文件名，无法判断当前版本"); return 2
+    m = re.search(r"parcel-s(?:pu|mu)-(v[0-9][^\"'\s]*?)\.apk", html)
     cur_tag = m.group(1)
     current = next((r for r in rels if r["tag"] == cur_tag), None)
     print("页面当前：%s   目标：%s（%s，%s，%s）" % (cur_tag, target["tag"], target["date"],
                                                 mb(target["size"]), target["digest"][:12]))
     if current is None:
         print("!! 页面上的 %s 在 GitHub Releases 里找不到对应资源，先人工核对" % cur_tag); return 2
-    if current["tag"] == target["tag"]:
+    if current["tag"] == target["tag"] and apk_names == [target["apk"]]:
         print("已是目标版本，无需改动。")
         if not args.deploy:
             return 0
 
     pairs = []
+    # 🔴 文件名整串替换必须先做：它同时覆盖「版本号」和「parcel-spu → parcel-smu 前缀」
+    # 两种变化。若先跑下面的 tag 替换，vX → vY 提前生效后这里就再也匹配不上了。
+    # 判据是 Release 上**真实的 asset 名**（target["apk"]），页面永远跟着实体文件走。
+    # 页面里出现的每一个别名都要收敛到目标名，否则会留下指向不存在文件的死链。
+    for name in apk_names:
+        if name != target["apk"]:
+            pairs.append((name, target["apk"]))
     if cur_tag != target["tag"]:
         pairs.append((cur_tag, target["tag"]))                      # v0.1.7 → v0.1.8
     if current["size"] != target["size"]:
@@ -178,6 +188,11 @@ def main():
         print("!! 旧 SHA-256 仍在，中止"); return 3
     if target["tag"] not in html:
         print("!! 替换后页面里没有新版本号，中止"); return 3
+    # 页面里不应再残留任何「旧前缀 + 旧版本」的 APK 文件名（防止只改了一半）
+    stale = re.findall(r"parcel-s(?:pu|mu)-v[0-9][^\"'\s]*?\.apk", html)
+    bad = sorted({s for s in stale if s != target["apk"]})
+    if bad:
+        print("!! 页面里仍有非目标的 APK 文件名：%s" % ", ".join(bad[:4])); return 3
 
     if args.dry_run:
         print("（dry-run，未写文件）"); return 0

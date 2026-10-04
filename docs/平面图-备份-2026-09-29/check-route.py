@@ -8,11 +8,11 @@ import io, json, sys
 import openpyxl
 from PIL import Image, ImageDraw, ImageFont
 
-BASE = r'E:\claude\parcel-SPU\.devtools\floorplan-excel.png'
-SAMPLE = sys.argv[1] if len(sys.argv) > 1 else r'E:\claude\parcel-SPU\.devtools\route-sample.json'
-SRC = r'E:\claude\parcel-SPU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
-OUT = r'E:\claude\parcel-SPU\.devtools\floorplan-check.png' if len(sys.argv) <= 1 \
-    else r'E:\claude\parcel-SPU\.devtools\floorplan-check-page.png'
+BASE = r'E:\claude\parcel-SMU\.devtools\floorplan-excel.png'
+SAMPLE = sys.argv[1] if len(sys.argv) > 1 else r'E:\claude\parcel-SMU\.devtools\route-sample.json'
+SRC = r'E:\claude\parcel-SMU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
+OUT = r'E:\claude\parcel-SMU\.devtools\floorplan-check.png' if len(sys.argv) <= 1 \
+    else r'E:\claude\parcel-SMU\.devtools\floorplan-check-page.png'
 L_LANE, T, CELL = 190, 66, 13
 
 sample = json.load(io.open(SAMPLE, encoding='utf-8'))

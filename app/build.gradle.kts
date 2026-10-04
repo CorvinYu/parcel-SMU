@@ -81,7 +81,7 @@ android {
 android.applicationVariants.all {
     if (buildType.name == "release") {
         outputs.all {
-            (this as BaseVariantOutputImpl).outputFileName = "parcel-spu-v${versionName}.apk"
+            (this as BaseVariantOutputImpl).outputFileName = "parcel-smu-v${versionName}.apk"
         }
     }
 }

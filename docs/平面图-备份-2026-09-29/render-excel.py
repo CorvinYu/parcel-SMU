@@ -7,7 +7,7 @@ import openpyxl
 from openpyxl.utils import range_boundaries, get_column_letter
 from PIL import Image, ImageDraw, ImageFont
 
-SRC = r'E:\claude\parcel-SPU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
+SRC = r'E:\claude\parcel-SMU\docs\海大快递站平面图-2026-09-29-用户精确版.xlsx'
 P = 26                      # 每瓷砖像素
 CELL = P / 2                # 每单元格像素
 L_LANE, T, R, B = 190, 66, 40, 54
@@ -131,6 +131,6 @@ dr.text((X(4)-6, Y(16)), '顺丰专用闸机 C13', font=fnt(11, True), fill='#7f
 dr.rectangle([X(4), Y(11), X(6), Y(13)], fill='#fca5a5', outline='#b91c1c', width=2)
 dr.text((X(4)-6, Y(12)), '出站闸机 C12', font=fnt(11, True), fill='#7f1d1d', anchor='rm')
 
-png = r'E:\claude\parcel-SPU\.devtools\floorplan-excel.png'; img.save(png)
+png = r'E:\claude\parcel-SMU\.devtools\floorplan-excel.png'; img.save(png)
 print('PNG:', png, img.size, os.path.getsize(png), '字节')
 print('单元格范围: 行', minrow, '-', maxrow, ' 列', mincol, '-', maxcol)
