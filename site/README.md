@@ -1,24 +1,108 @@
 # k.corvinyu.icu 下载页（海大取件码）
 
 本目录是 `https://k.corvinyu.icu/` 的静态站点源码。**零外部依赖、零构建步骤**：
-`index.html` 单文件内联 CSS/JS，图片全部在 `assets/`。
+`index.html` 单文件内联 CSS/JS；界面图形也全部内联（HTML/CSS/SVG），
+`assets/` 里只有图标、OG 图，以及首屏动态地图要用的场地模型与寻路核心。
 
 ```
 site/
 ├─ index.html          页面本体（内联样式与脚本，无 CDN、无外部请求）
-├─ assets/             图片素材（由 tools/build_assets.py 生成，勿手改）
-│   ├─ icon.png / icon-512.png / apple-touch-icon.png / favicon.ico
-│   ├─ hero-list.jpg   首屏手机截图（来自仓库 show1.jpg，900px 宽）
-│   ├─ shot-1..9.jpg   实机截图画廊（来自 show1..9.jpg，720px 宽）
-│   ├─ og.png          社交分享大图 1200×630
-│   └─ haida-*.jpg     ← 海大版专属功能截图插槽，**目前不存在**
+│                      **界面图形全部是页面里的 HTML/CSS/内联 SVG 元素**（见「界面元素一览」一节），
+│                      不引用任何截图文件
+├─ assets/             前端资源（**生成的，勿手改**；见下）
+│   ├─ icon.png / apple-touch-icon.png / favicon-64.png / favicon.ico   ← build_assets.py
+│   ├─ og.png          社交分享大图 1200×630                            ← build_assets.py
+│   ├─ venue-model.js  场地模型（通道网格 / 货架合并区 / 闸机）           ← build-hero-map.py
+│   ├─ venue-mini.svg  静态平面示意图（能力卡用）                        ← build-hero-map.py
+│   ├─ route-core.js   寻路核心：建模 / 定位 / BFS 最短路 / Held–Karp    ← 复制自 .devtools/
+│   └─ hero-map.js     首屏动态地图（画法 + 动画 + 交互，手写）
 ├─ tools/
-│   ├─ build_assets.py 图标/截图/OG 图生成（Python + Pillow）
+│   ├─ build_assets.py 图标 + OG 图生成（Python + Pillow）；`--check` 校验 assets 与页面引用一致
 │   ├─ sync_release.py **发新版本后同步页面字段（从 GitHub Releases 自动取真实值）**
 │   ├─ shoot.js        CDP 多视口截图 + 页面结构体检（Node 22+，零依赖）
 │   └─ check_live.js   线上自检：同源资源状态码 / 外部域名 / APK HEAD（Node 18+，零依赖）
 └─ .shots/             本地验证产物（截图与 report.json），已 gitignore
 ```
+
+## 🗺 首屏动态地图（0.2.0 起的地图卖点）
+
+首屏右侧是一张**可交互的取件路线图**：每趟**随机 4~7 个真实货位** → 在真实通道网格上求最短路
+→ 相机跟着当前段飞、光点沿路线走，**跑完一趟自动换下一批**（不点也能一直看）。
+
+**画法照着 `.devtools/map-prototype-template.html`**（那份「A 清爽浅色 / B 夜跑深色」的路线图风格原型）：
+柔和竖向渐变底 + 点阵底纹 + 虚线场地外框 + 货架圆角块（浅色带投影）+ 路线**三段着色**
+（已走灰蓝 / 这一段高亮 + 光晕 / 待走浅蓝）+ **聚焦聚光灯**（当前段之外压暗，浅色主题用冷灰蓝阴影色，
+不用近白蒙版）+ 站点圆点与呼吸光晕 + **当前段流动虚线**（流动感代替箭头）+
+相机飞行（**对数插值缩放 + easeInOutQuint**，近目标不重启动画）。
+调色板就是原型的两套，页面切主题时整张图跟着换（`--m-*` 变量，深色 = B 方案）。
+
+**与 App 同步的两处要点**：
+
+- 闸机带**不可通行**：寻路用 `modelRoute`（`gateSpans: []` 建出来的模型），停靠点取闸机**带外门口的通道格**
+  （`mouthsOf()`）。验证脚本会断言「路线 0 格落在闸机带内」。
+- 当前段**最后绘制**（否则后面的灰色 / 浅蓝段会盖住高亮段）。
+- 随机池按**配额**挑：普通排 189 个货架 vs 顺丰 3 个、大件 1 个，纯随机几乎抽不到 S/Y ⇒
+  每批**保底 1 个特色区**（顺丰 / J 柜列 / 大件），再按概率补。验证脚本会抽样 12 批统计出现率。
+
+数据与寻路**不重写**，只调两个权威件：
+
+| 文件 | 作用 | 来源 |
+|---|---|---|
+| `assets/venue-model.js` | 3362 个可走格 / 218 个货架合并区 / 3 处闸机带 | `docs/floorplan-corridors.json`（用户 Excel 填充色导出） |
+| `assets/route-core.js` | 建模 · 绕墙投影 · BFS 最短路 · Held–Karp 精确排序 · 路线断言 | `.devtools/route-core.js`（与 App 端 `SiteModel` + `PickupRoute` 同源） |
+| `assets/hero-map.js` | 画法（照原型搬）+ 动画 + 相机 + 交互 | 手写（本文件同目录） |
+
+再生成 / 校验：
+
+```powershell
+python .devtools/build-hero-map.py            # 同步上面两个权威件 + 重画 venue-mini.svg
+python .devtools/build-hero-map.py --check    # 校验站点里的副本与源文件是否一致（JSON 比内容、JS 比 sha）
+node   .devtools/verify-hero-map.js           # 真机 Chrome（CDP）：点数 4~7 / 去重 / 断言 / 动画 / 换一批 /
+                                              #   点站跳转 / 视角切换 / 跑完自动换批 / 主题重画 / 截图
+node   .devtools/calc-sample-route.js D5-23 B4-3 S3-2-2628   # 用真实模型算样例路线的件数/全程/每段（页面卡里的数字来自这里）
+python .devtools/check-live.py                # 上线后外网复核（本机直连；失败时用下面的 Mac 脚本）
+sh     .devtools/check-live-mac.sh            # 在 Mac 上跑（必须经 Clash 代理，那台机器是 fake-IP）
+```
+
+交互：**全览·特写**（也可双击图切换）· **换一批** · **暂停/播放** · 点列表任一站或图上编号点跳过去 ·
+鼠标拖动平移 · 滚出视口自动暂停。**滚轮不劫持**（页面正常滚动），触摸拖动也不抢页面手势。
+节奏：每批开头在**全览**停留 1.8s（先看清整条路线），再进特写跟随 + 聚光灯；走完停 1.6s 自动换下一批。
+
+**地图上不再画取件号小签**（用户两次反馈：小屏糊、位置怪 ⇒ 已整块删除，只保留 ①②③ 编号点）。
+取件码只在下方列表里出现。
+
+**手机端（≤720px）首屏顺序**：大标题 → 副标题 → **完整地图 hero** → 说明 → 下载按钮 →（**非官方分支胶囊挪到最末**）。
+做法是给左栏 `display:contents`，让它的子元素变成网格项，再用 `order` 与地图交错排序
+（`.hero h1{order:1}` / `.stage{order:3}` / `.badge{order:9}`）。
+地图头部压缩：隐藏面板标题行与图例、三个按钮铺满一行、`aspect-ratio:1.72`，
+保证 390×844 打开时「标题 + 整块地图面板」都在首屏内（实测面板底边 657px < 可用 758px）。
+下方停靠列表**只露约 3 行且不可手指滑动**（`max-height:96px; overflow:hidden; touch-action:pan-y`，
+随当前站自动滚到可见位置）· 首屏关键词胶囊隐藏 · 说明文字压到 2 行。
+自动换批时特色区**轮转保底**（顺丰 → J 柜列 → 大件），否则普通排 189 个货架会把 S/Y 淹掉。
+
+**改了 JS / 场地数据要 bump 资源版本号**：`python .devtools/add-asset-version.py <版本>` —
+它会给 `index.html` 里的 `hero-map.js?v=` / `venue-mini.svg?v=` 和 `hero-map.js` 内部动态加载的
+`route-core.js?v=` / `venue-model.js?v=` 统一打上版本号，避免浏览器拿缓存跑旧代码（**踩过**：
+第一次上线后线上验证一直失败，就是 Chrome 缓存了旧的 `hero-map.js`）。
+
+> ⚠️ 四个坑（都踩过）：
+> 1. 场地数据**必须**用 `<script src>` 加载（`venue-model.js`）而不是 `fetch('*.json')` ——
+>    后者在 `file://` 下会被 Chrome 拦成 `Failed to fetch`，本地双击打开就看不到地图。
+> 2. `RouteCore.solve()` 的 `entranceCell` 要 **`{row, col}` 对象**；传 `[row, col]` 数组会让起点失效、
+>    直接抛「无可行顺序」。
+> 3. 同一排货架的不同货位会投到**同一个通道格**（普通排不区分货架内位置）⇒ 每趟每排只取一件，
+>    否则图上两个编号会重叠成一个。
+> 4. `hero-map.js` 里「每格像素」的函数与状态对象**不能同名**（第一版状态对象叫 `S`，把 `S()` 覆盖成
+>    非函数，整张图直接白屏 + 报 `S is not a function`）——状态对象现叫 `ST`。
+> 另外相机的 scale 夹在「全览 ~ 全览×2.4」之间：不夹的话，很短的一段会放大到只剩两排货架。
+> 5. **聚光灯在浅色主题不能用近白蒙版**（会糊成一片白雾），要用冷灰蓝的阴影色；深色主题也别压太狠。
+> 6. **闸机带不可走要先建第二个模型**：`buildModel({gateSpans: []})`；门口格用原模型（带闸机）取带内格再找四邻的可走格。
+
+> **0.2.0 起不再有「界面截图」**：页面上的标签页、取件码行、①②③ 序号、路线步骤、
+> 条码、开关、滑块、渐变预设、桌面小组件，都是**直接画在页面里的扁平化元素**
+> （HTML + CSS + 内联 SVG），配色与中文文案对着 App 源码写。
+> 好处：任何分辨率都清晰、跟着页面深浅主题变色、体积极小，
+> 而且不再需要把真机截图（含真实取件码与地址）放上网。
 
 ## 🔄 发新版本后：一条命令同步页面字段
 
@@ -56,7 +140,7 @@ node site/tools/check_live.js https://k.corvinyu.icu/
 
 会逐个请求页面上所有同源资源（报告状态码 / Content-Type / 字节数）、列出页面引用的
 外部域名（确认没有第三方 CDN 与统计）、并用 HEAD 校验 APK 链接。
-4 个 `haida-*.jpg` 插槽 404 属预期，不计为异常。
+0.2.0 起 `assets/` 只剩图标与 OG 图，**没有「预期 404」的插槽**了 —— 任何 404 都是真问题。
 
 > ⚠️ **本机（笔记本）访问 Cloudflare 不稳定**：`fetch`/`curl` 常 `connect timeout` 或
 > 半途 `SSL: UNEXPECTED_EOF_WHILE_READING`（代理与直连都会撞）。Python `urllib` **直连**
@@ -127,21 +211,26 @@ ssh -i $k $mac "rm -f $dst/index.html"
 
 APK 本身由工具负责放进站点根目录（`$dst/parcel-spu-v<版本>.apk`），旧包按需保留。
 
-## 海大版三大卖点的截图插槽
+## 界面元素（0.2.0 起全部内联，没有图片插槽）
 
-页面「海大版专属能力」四张卡各有一个 `<figure class="slot" data-slot="…">`。
-**把文件按下面的名字丢进 `assets/` 即可自动替换示意图形**，不用改 HTML：
+页面「海大版专属能力」四张卡与「界面元素一览」一节的图形，都是**页面里真实的 HTML/CSS/SVG 元素**，
+（原来的 `<figure class="slot">` 图片插槽已删除）。要改一处元素，就改 `index.html` 里对应的那一小块：
 
-| 文件名 | 对应卡片 | 建议 |
-|---|---|---|
-| `haida-barcode.jpg` | 快递中心条码 · 常驻出示 | 竖版手机截图，≥720×1560，顶部常驻条 / 全屏出示形态最好各来一张 |
-| `haida-route.jpg` | 取件路线 · 精确最优 | 竖版，最好拍到带 ①②③ 序号的路线结果 |
-| `haida-category.jpg` | 列表三分类 · 横向跟手翻页 | 竖版，拍到「快递柜」页与左侧大号柜号 |
-| `haida-background.jpg` | 自定义页面背景 | 竖版，能体现渐变/自定义图效果 |
+| 想改什么 | 在 index.html 里找 |
+|---|---|
+| 元素图的通用样式与语义色 | 样式区「界面元素图」一段（`.uifig` / `.uitab` / `.uipill` / `.uistep` / `.uibc` / `.uiswitch` / `.uislider` …，深/浅两套 `--el-*` 变量） |
+| 首屏元素拼贴 | `<div class="ui-board">`（四块 `.uifig`：分类+①②③ / 步骤 / 条码 / 柜号+渐变） |
+| 能力卡里的元素图 | 四张 `.card` 内的 `<figure class="uifig tight">` |
+| 元素一览的 9 个格子 | `#shots` 一节里的 `<figure class="tile">` |
+| 条码条纹 | `<symbol id="bc128">`（真实 Code128，由 `.devtools/gen-barcode.java svg <payload>` 生成后粘进来；**不要手写条纹**） |
 
-机制：`<img>` 上有 `src`，加载成功就移除 `figure` 上的 `empty` 类（CSS 因此隐藏示意 SVG
-与「实机截图待补拍」角标）；文件不存在时保持示意图，页面不报错。
-**现有 9 张截图都来自通用数据场景，没有任何一张展示这三个海大版功能**，所以插槽是空的。
+约定：
+
+- 语义色取自 App 源码的浅/深两套（顶栏标志、步骤卡、提示条、渐变预设），跟着页面主题切换；
+- 文案逐字对着源码（`HomeTopBar.kt` / `ParcelList.kt` / `AddressCard.kt` / `AppBackgroundScreen.kt` …）；
+- 取件码口径：`formatPickupCode()` 会把 ≥8 位纯数字按 4 位分组（`54018314` → `5401 8314`）；
+  `preferLockerAddress` 默认 true ⇒ 快递柜卡片右侧只写「N格口」；
+- 元素里的数据（取件码 / 地址 / 时间）是**示例**，不要写真实用户的取件码。
 
 ## 本地验证（改完页面务必跑一遍）
 
@@ -185,7 +274,16 @@ node site/tools/shoot.js site/.shots "file:///tmp/pspu-site/index.html"
 ## 素材重新生成
 
 ```powershell
-python site/tools/build_assets.py     # 需要 Pillow；图标取自 app/src/main/res/mipmap-xxxhdpi/
+python site/tools/build_assets.py            # 图标 + OG 图（需要 Pillow；图标取自 app/src/main/res/mipmap-xxxhdpi/）
+python site/tools/build_assets.py --check    # 只校验：assets/ 与 index.html 的引用是否一一对应
+```
+
+界面元素不需要「重新生成」——它们就在 `index.html` 里（见上一节）。
+唯一需要用工具生成的是**条码条纹**：
+
+```powershell
+# 用项目自带的 ZXing（与 App 同一个库）把 Code128 打成 SVG path，再粘进 <symbol id="bc128">
+& "$env:JAVA_HOME\bin\java.exe" -cp <zxing-core-3.5.3.jar> .devtools\gen-barcode.java svg <payload>
 ```
 
 ## 维护约定

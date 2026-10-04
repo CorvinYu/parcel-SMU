@@ -72,14 +72,34 @@ class RouteGuideTest {
     // ---------------------------------------------------------------- 结构命名
 
     @Test
-    fun `走廊带按行区间合并后正好 9 条、纵干 3 条`() {
-        assertEquals("横走廊带数", 9, VenueGuide.bands.size)
-        assertEquals("纵向干线数", 3, VenueGuide.trunks.size)
+    fun `走廊带按行区间合并后主区 9 条、纵干 4 条`() {
+        // 🔴 2026-10-03 换用用户 10-02 更新版地图后：
+        //   ① 走廊不再规整为 4 行高（出现 18~19 / 20~21 / 25 等），必须按「行区间相邻即合并」
+        //      ⇒ 主货架区恢复为规整的 9 条（6~9 … 54~57）
+        //   ② 新图 Y 区向南扩展（通道到第 69 行）⇒ 多出 2 条 Y 区南部走廊带（列 97~129）
+        //   合计 11 条；主货架区的 9 条必须与旧图一一对应，否则「第 N 条」会错位。
+        assertEquals("横走廊带总数", 11, VenueGuide.bands.size)
+        // 2026-10-03：用户 10-02 更新版地图新增了东侧纵向通道 ⇒ 3 条变 4 条
+        assertEquals("纵向干线数", 4, VenueGuide.trunks.size)
+        // 主货架区的 9 条：**编号从入口起算**（入口以南的 2 条 Y 区南部带排在最后）
+        val mainBands = VenueGuide.bands.filter { it.r0 in 6..57 }
+        assertEquals("主货架区应有 9 条走廊带", 9, mainBands.size)
+        assertEquals(
+            "主区行区间应与旧图一致（从入口往里）",
+            listOf(54, 48, 42, 35, 30, 24, 18, 12, 6),
+            mainBands.map { it.r0 },
+        )
         assertEquals(
             "最南那条被主通道 1 格断开 ⇒ 必须合并回一条，否则「第 N 条」会整体错位",
             1, VenueGuide.bands.count { it.r0 == 54 && it.r1 == 57 },
         )
-        assertTrue("第 1 条应最靠门口", VenueGuide.bands.first().r0 > VenueGuide.bands.last().r0)
+        assertEquals(
+            "🔴 主货架区那条必须是第 1 条（入口就在它上面）——" +
+                "否则用户按「第 1 条横走廊」找不到路",
+            54, VenueGuide.bands.first().r0,
+        )
+        assertTrue("最后两条应是入口以南的 Y 区南部带",
+            VenueGuide.bands.takeLast(2).all { it.r0 > 59 })
         assertEquals("主通道必须被认出来", 1, VenueGuide.trunks.count { it.name == "主通道" })
         assertTrue("地标应能推出货架字母", VenueGuide.bands.any { it.landmark.contains("/") })
     }
@@ -140,12 +160,18 @@ class RouteGuideTest {
     }
 
     @Test
-    fun `Y 区的提示如实标注只能带到东侧通道口`() {
+    fun `Y 区已有精确格位，提示不再声称只能到通道口`() {
+        // 🔴 2026-10-03：用户 10-02 更新后 Y 区被拆成 `Y1-1`…`Y8-7-3` 独立货格 ⇒ 可精确定位。
+        //    旧版此测试断言「必须标注只能带到东侧通道口」——那是旧图（Y 区一整块）的行为，已过时。
         val y = spot("Y5-7-1")
+        assertFalse("新图 Y 区已细分 ⇒ 不该再标为近似", y.approximate)
         val route = planPickupRoute(listOf("Y5-7-1", "B1-1"), options)
         val leg = route.legs.first { it.to == "Y5-7-1" }
         val notes = VenueGuide.describe(leg, y).filter { it.kind == VenueGuide.HintKind.NOTE }
-        assertTrue("必须如实标注 Y 区精度：${notes.map { it.text }}", notes.any { it.text.contains("只能带到东侧通道口") })
+        assertTrue(
+            "不该再出现「只能带到东侧通道口」这类旧精度声明：${notes.map { it.text }}",
+            notes.none { it.text.contains("只能带到东侧通道口") },
+        )
     }
 
     @Test

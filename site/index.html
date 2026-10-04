@@ -53,7 +53,6 @@
   --topbar:rgba(7,13,24,.72);
   --blob1:rgba(47,227,196,.22); --blob2:rgba(255,194,71,.16); --blob3:rgba(96,124,255,.2);
   --grid-line:rgba(255,255,255,.045);
-  --phone-body:linear-gradient(160deg,#2b3d55,#0d1725);
   --code-bg:rgba(255,255,255,.06);
 }
 :root[data-theme="light"]{
@@ -68,7 +67,6 @@
   --topbar:rgba(246,243,234,.8);
   --blob1:rgba(18,143,123,.2); --blob2:rgba(196,140,40,.18); --blob3:rgba(90,120,220,.14);
   --grid-line:rgba(20,33,47,.05);
-  --phone-body:linear-gradient(160deg,#e7e0d1,#c9bfa9);
   --code-bg:rgba(20,33,47,.05);
 }
 *,*::before,*::after{box-sizing:border-box}
@@ -179,38 +177,13 @@ code,kbd{font-family:var(--ff-mono);font-size:.9em}
 .chip b{color:var(--text);font-weight:700}
 .chip.mono{font-family:var(--ff-mono);font-size:12px}
 
-/* 手机舞台 */
-.stage{position:relative;display:flex;justify-content:center;align-items:center;min-height:min(560px,72vw)}
-.ring{
-  position:absolute;width:min(430px,86%);aspect-ratio:1;border-radius:50%;
-  border:1px dashed var(--border-strong);opacity:.55;
-  animation:spin 46s linear infinite
+/* hero 右侧：界面元素拼贴的舞台（列方向，元素板在上、说明 chips 在下） */
+.stage{
+  position:relative;display:flex;flex-direction:column;justify-content:center;
+  align-items:stretch;gap:16px;min-height:min(560px,72vw)
 }
-@keyframes spin{to{transform:rotate(360deg)}}
-.phone{
-  position:relative;width:min(296px,74vw);aspect-ratio:9/19.2;padding:9px;border-radius:44px;
-  background:var(--phone-body);
-  box-shadow:0 44px 90px -34px rgba(0,0,0,.85),inset 0 0 0 1px rgba(255,255,255,.1)
-}
-.phone img{width:100%;height:100%;object-fit:cover;object-position:top center;border-radius:36px}
-.phone::after{
-  content:"";position:absolute;top:17px;left:50%;transform:translateX(-50%);
-  width:80px;height:7px;border-radius:99px;background:rgba(0,0,0,.6)
-}
-.float{
-  position:absolute;display:flex;align-items:center;gap:9px;padding:10px 15px;border-radius:14px;
-  background:var(--surface-solid);border:1px solid var(--border);
-  box-shadow:var(--card-shadow);font-size:13.5px;font-weight:650;z-index:2
-}
-.float span{color:var(--text-3);font-weight:600;font-size:12px;display:block}
-.float.f1{top:22%;left:0;animation:bob 5.5s ease-in-out infinite}
-.float.f2{bottom:22%;right:0;animation:bob 6.5s ease-in-out infinite .8s}
-.float.f3{bottom:7%;left:4%;animation:bob 7.2s ease-in-out infinite 1.6s}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 @media(max-width:720px){
-  .float{font-size:12.5px;padding:8px 12px}
-  .float.f1{top:-1%;left:0}.float.f2{bottom:9%;right:0}.float.f3{display:none}
-  .ring{display:none}
+  .stage{min-height:0;gap:12px}
 }
 @supports not ((-webkit-background-clip:text) or (background-clip:text)){
   .hero h1{color:var(--text);background:none}
@@ -244,22 +217,209 @@ code,kbd{font-family:var(--ff-mono);font-size:.9em}
   border:1px solid color-mix(in srgb,var(--accent-2) 35%,transparent);margin-left:8px;vertical-align:2px
 }
 
-/* 截图插槽 */
-.slot{
-  margin:0 0 14px;position:relative;border-radius:var(--r-md);overflow:hidden;
-  border:1px solid var(--border);background:var(--surface-2);aspect-ratio:4/3;
-  display:grid;place-items:center
+/* ============================================================ 界面元素图
+   扁平化做法：把 App 里的界面元素（分类标签 / 取件码行 / 路线步骤 / 条码 / 开关 / 滑块…）
+   直接用 HTML+CSS 画出来内联在页面里。**不是手机截图、也没有任何图片文件**。
+   语义色取自 App 源码的浅/深两套，跟着页面主题切换：
+     · 顶栏标志 HomeTopBar.kt：#E3F3E8/#1F6B3B、#FCE8DE/#9C4A1B、#2F6FE4（深色 #1E4634/#9BE3BD…）
+     · 步骤卡 ParcelList.kt：入口 #E7F6E9/#14601F、顺丰 #FFF3E0/#E65100、出站 #EEF0F4/#39414D
+     · 「怎么走」AddressCard.kt：#E8F0FE/#10366B
+     · 背景预设 Theme.kt：默认渐变 #CEB6F6→#F6F3F4→#F6C8D8（浅）/ #2C105E→#020202→#590E26（深）
+   取件码口径：util/SmsUtil.kt formatPickupCode() ⇒ 纯数字且 ≥8 位按 4 位分组（54018314 → 5401 8314）；
+   util/save_data.kt getPreferLockerAddress() 默认 true ⇒ 右侧只写「N格口」，不重复柜号。 */
+:root[data-theme="dark"]{
+  --el-bg:#0d1826; --el-line:rgba(255,255,255,.10);
+  --el-text:#e8eff7; --el-text-2:#a2b5c9; --el-text-3:#71859b;
+  --el-ok-bg:#1E4634; --el-ok-fg:#9BE3BD;
+  --el-bad-bg:#4A2E1C; --el-bad-fg:#FFC59B;
+  --el-map:#3B62D6;
+  --el-in-bg:#16351F; --el-in-fg:#8FE0A8; --el-in-dot:#1B8A2E;
+  --el-sf-bg:#3A2716; --el-sf-fg:#FFB271; --el-sf-dot:#E65100;
+  --el-out-bg:#232E3B; --el-out-fg:#C8D3DF; --el-out-dot:#5B6472;
+  --el-hint-bg:#152741; --el-hint-fg:#9EC5FF;
+  --el-pill:#e8eff7; --el-pill-fg:#0b1424;
+  --el-block:rgba(255,255,255,.055);
+  --el-sw:#2fe3c4;
+  /* 首屏动态地图：**B 夜跑深色**方案（取自 .devtools/map-prototype-template.html 的 dark 调色板，
+     与 App 的 RouteMiniMap 同源）。hero-map.js 从这些变量读色，页面切主题会重画。 */
+  --m-bg1:#131C2B; --m-bg2:#0F1724;
+  --m-texture:rgba(255,255,255,.055); --m-line:#2A3A52;
+  --m-accent:#5B95F5; --m-accent2:#8AB6FF;
+  --m-sf:#F07A2B; --m-exit:#D0483C;
+  --m-shelf:#2C3B54; --m-shelfEdge:#4C6187;
+  --m-gate:#4A3A22; --m-gateEdge:#7C5F2C;
+  --m-entrance:#255C3B; --m-entranceInk:#CFEFD8;
+  --m-todo:#4E6E9E; --m-done:#43536B;
+  --m-vignette:rgba(8,12,20,.74); --m-shadow:rgba(0,0,0,0);
+  --m-label:#8FA2B8; --m-outline:rgba(120,150,200,.35);
+  --m-ink:#E8EEF7; --m-ink2:#9DACBE;
 }
-.slot img{width:100%;height:100%;object-fit:cover}
-.slot-art{width:100%;height:100%;display:grid;place-items:center;padding:10px;color:var(--accent)}
-.slot-hint{
-  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
-  font-size:11.5px;color:var(--text-3);background:var(--surface-solid);
-  border:1px solid var(--border);padding:3px 10px;border-radius:999px;white-space:nowrap
+:root[data-theme="light"]{
+  --el-bg:#fffefb; --el-line:rgba(20,33,47,.12);
+  --el-text:#14212f; --el-text-2:#56687b; --el-text-3:#8b9aa9;
+  --el-ok-bg:#E3F3E8; --el-ok-fg:#1F6B3B;
+  --el-bad-bg:#FCE8DE; --el-bad-fg:#9C4A1B;
+  --el-map:#2F6FE4;
+  --el-in-bg:#E7F6E9; --el-in-fg:#14601F; --el-in-dot:#1B8A2E;
+  --el-sf-bg:#FFF3E0; --el-sf-fg:#C24E00; --el-sf-dot:#E65100;
+  --el-out-bg:#EEF0F4; --el-out-fg:#39414D; --el-out-dot:#5B6472;
+  --el-hint-bg:#E8F0FE; --el-hint-fg:#10366B;
+  --el-pill:#14212f; --el-pill-fg:#ffffff;
+  --el-block:rgba(20,33,47,.05);
+  --el-sw:#0d7d6c;
+  /* 首屏动态地图：**A 清爽浅色**方案（同一份原型的 light 调色板） */
+  --m-bg1:#F8FBFF; --m-bg2:#EFF4FB;
+  --m-texture:rgba(30,60,110,.07); --m-line:#E1E8F1;
+  --m-accent:#2F6FE4; --m-accent2:#5B95F5;
+  --m-sf:#F07A2B; --m-exit:#D0483C;
+  --m-shelf:#E7EDF6; --m-shelfEdge:#D2DCE9;
+  --m-gate:#FDEBD2; --m-gateEdge:#EFC189;
+  --m-entrance:#B7E3BF; --m-entranceInk:#155724;
+  --m-todo:#8FBCF5; --m-done:#B9C4D0;
+  --m-vignette:rgba(238,242,248,.80); --m-shadow:rgba(28,50,88,.10);
+  --m-label:#5B6B7C; --m-outline:rgba(110,140,190,.45);
+  --m-ink:#16202C; --m-ink2:#5C6B7C;
 }
-.slot:not(.empty) .slot-art,.slot:not(.empty) .slot-hint{display:none}
-.slot.empty img{display:none}
-.art{width:100%;height:auto;max-height:150px;opacity:.95}
+.uifig{
+  margin:0 0 14px;padding:16px;border-radius:var(--r-md);
+  border:1px solid var(--border);background:var(--el-bg);
+  display:flex;flex-direction:column;gap:9px;overflow:hidden
+}
+.uifig.tight{gap:8px}
+.uirow{display:flex;align-items:center;gap:10px}
+.uitabs{display:flex;gap:4px;padding-bottom:9px;border-bottom:1px solid var(--el-line)}
+.uitab{
+  font-size:12.5px;font-weight:700;color:var(--el-text-3);padding:4px 9px;border-radius:9px;white-space:nowrap
+}
+.uitab.on{color:var(--el-bg);background:var(--el-text)}
+.uitab.on-soft{color:var(--el-text);background:var(--el-block);box-shadow:inset 0 -2px 0 var(--el-text)}
+.uipill{
+  width:26px;height:26px;flex:none;border-radius:999px;background:var(--el-pill);color:var(--el-pill-fg);
+  display:grid;place-items:center;font-size:12.5px;font-weight:800
+}
+.uicode{
+  font-family:var(--ff-mono);font-size:15.5px;font-weight:700;color:var(--el-text);
+  letter-spacing:.01em;white-space:nowrap
+}
+.uimeta{margin-left:auto;text-align:right;font-size:11px;color:var(--el-text-3);line-height:1.45;white-space:nowrap}
+.uihint{font-size:11.5px;color:var(--el-hint-fg);background:var(--el-hint-bg);border-radius:9px;padding:5px 9px}
+.uibadge{
+  height:26px;min-width:26px;padding:0 9px;border-radius:999px;
+  display:inline-grid;place-items:center;font-size:12.5px;font-weight:800
+}
+.uibadge.ok{background:var(--el-ok-bg);color:var(--el-ok-fg)}
+.uibadge.bad{background:var(--el-bad-bg);color:var(--el-bad-fg)}
+.uibadge.map{background:var(--el-map);color:#fff}
+.uistep{display:flex;align-items:center;gap:10px;border-radius:12px;padding:8px 11px;font-size:12.5px}
+.uistep .cir{
+  width:24px;height:24px;flex:none;border-radius:999px;display:grid;place-items:center;
+  color:#fff;font-size:10.5px;font-weight:800
+}
+.uistep .t{font-weight:750}
+.uistep .d{font-size:11px;opacity:.8}
+.uistep .s{margin-left:auto;font-size:11px;opacity:.85;white-space:nowrap}
+.uistep.in{background:var(--el-in-bg);color:var(--el-in-fg)}
+.uistep.in .cir{background:var(--el-in-dot)}
+.uistep.sf{background:var(--el-sf-bg);color:var(--el-sf-fg)}
+.uistep.sf .cir{background:var(--el-sf-dot)}
+.uistep.out{background:var(--el-out-bg);color:var(--el-out-fg)}
+.uistep.out .cir{background:var(--el-out-dot)}
+.uilocker{
+  width:38px;height:38px;flex:none;border-radius:11px;display:grid;place-items:center;
+  font-size:19px;font-weight:800;background:var(--el-block);color:var(--el-text)
+}
+.uibc{background:#fff;border:1px solid var(--el-line);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
+.uibc svg{display:block;width:100%;height:36px;fill:#0b0b0b}
+.uibc .cap{font-size:11px;color:#6b7280;font-weight:650}
+.uislider{position:relative;height:5px;border-radius:999px;background:var(--el-block)}
+.uislider i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:var(--accent)}
+.uislider b{
+  position:absolute;top:50%;width:15px;height:15px;border-radius:999px;background:var(--accent);
+  transform:translate(-50%,-50%);box-shadow:0 2px 6px -2px rgba(0,0,0,.5)
+}
+.uiswitch{width:36px;height:21px;border-radius:999px;background:var(--el-sw);position:relative;flex:none}
+.uiswitch::after{content:"";position:absolute;right:3px;top:3px;width:15px;height:15px;border-radius:999px;background:#fff}
+.uiswitch.off{background:var(--el-block)}
+.uiswitch.off::after{left:3px;right:auto;background:var(--el-text-3)}
+.uifield{
+  flex:1;min-width:0;border:1px solid var(--el-line);border-radius:9px;padding:7px 10px;
+  font-size:12px;color:var(--el-text-3);background:transparent
+}
+.uichip{
+  font-size:11.5px;font-weight:650;padding:5px 10px;border-radius:999px;
+  background:var(--el-block);color:var(--el-text-2);white-space:nowrap
+}
+.uichip.on{background:var(--el-text);color:var(--el-bg)}
+/* 能力卡里的静态平面图（由 .devtools/build-hero-map.py 从同一份场地数据生成） */
+.venue-mini{width:100%;height:auto;border-radius:10px;background:var(--el-block);border:1px solid var(--el-line)}
+.uilegend{font-size:11px;color:var(--el-text-3);margin-top:2px}
+.uitxt{font-size:12.5px;color:var(--el-text-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uistrong{font-size:12.5px;font-weight:750;color:var(--el-text)}
+.uimenu{font-size:12.5px;color:var(--el-text-2);padding:3px 0}
+
+/* ============================================================ 首屏动态地图 */
+.maphero{
+  position:relative;display:flex;flex-direction:column;gap:10px;width:100%;
+  padding:14px;border:1px solid var(--border);border-radius:var(--r-lg);
+  background:var(--el-bg);box-shadow:var(--card-shadow)
+}
+.hm-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hm-title{font-size:13.5px;font-weight:750;color:var(--el-text)}
+.hm-btns{display:flex;gap:6px;margin-left:auto}
+.hm-btn{
+  font:inherit;font-size:12px;font-weight:650;padding:5px 12px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border-strong);background:transparent;color:var(--el-text-2);transition:var(--t)
+}
+.hm-btn:hover{color:var(--el-text);border-color:var(--el-text-2)}
+.hm-btn.primary{background:var(--el-text);color:var(--el-bg);border-color:transparent}
+.hm-flag{font-size:12.5px;font-weight:750;color:var(--accent);min-height:18px}
+.hm-stat{font-size:12px;color:var(--el-text-2)}
+.hm-stat b{color:var(--el-text);font-weight:750}
+.hm-stage{
+  position:relative;width:100%;aspect-ratio:1.92;border-radius:var(--r-sm);
+  background:var(--mp-canvas);border:1px solid var(--el-line);overflow:hidden
+}
+.hm-canvas{position:absolute;left:0;top:0;display:block}
+.hm-legend{display:flex;gap:11px;flex-wrap:wrap;font-size:11px;color:var(--el-text-3)}
+.hm-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.hm-list{
+  position:relative;display:flex;flex-direction:column;gap:2px;max-height:216px;overflow:auto;
+  border-top:1px solid var(--el-line);padding-top:8px;scrollbar-width:thin
+}
+/* 行数超过可视高度时才做底部淡出，免得半截一行很脏 */
+.hm-list.scroll{
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 20px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 20px),transparent)
+}
+.hm-row{
+  display:flex;align-items:center;gap:8px;width:100%;padding:5px 7px;border:0;border-radius:8px;
+  background:transparent;font:inherit;text-align:left;cursor:pointer;color:var(--el-text-2);
+  transition:background var(--t)
+}
+.hm-row:hover{background:var(--el-block)}
+.hm-row .hm-n{
+  flex:0 0 19px;height:19px;border-radius:999px;display:grid;place-items:center;
+  font-size:10.5px;font-weight:800;background:var(--el-block);color:var(--el-text)
+}
+.hm-row .hm-code{font-family:var(--ff-mono);font-size:12.5px;font-weight:700;color:var(--el-text)}
+.hm-row .hm-zone{font-size:11px;color:var(--el-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hm-row .hm-leg{margin-left:auto;font-size:11px;color:var(--el-text-3);white-space:nowrap}
+.hm-row.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.hm-row.on .hm-code{color:var(--accent)}
+.hm-row.past{opacity:.6}
+.hm-row.sf .hm-n{background:var(--el-sf-dot);color:#fff}
+.hm-row.exit .hm-n{background:var(--el-out-dot);color:#fff}
+.hm-msg{display:none;font-size:11.5px;color:#ff9a9a}
+.hm-foot{font-size:11px;color:var(--el-text-3);line-height:1.5}
+/* hero 下方的一排元素面板 */
+.ui-strip{
+  display:grid;gap:12px;margin-top:clamp(22px,3.6vw,38px);
+  grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr))
+}
+.ui-strip .uifig{margin:0}
+/* hero 的元素拼贴：竖排面板（每块都是 App 里的一组元素），窄栏也不会挤到折行 */
+.ui-board{display:flex;flex-direction:column;gap:12px;width:100%}
+
 
 /* ============================================================ table */
 .tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface)}
@@ -271,18 +431,19 @@ tr:last-child td{border-bottom:0}
 td b{color:var(--text)}
 td code{background:var(--code-bg);padding:2px 7px;border-radius:6px;color:var(--text)}
 
-/* ============================================================ gallery */
-.gal{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(178px,100%),1fr))}
-.shot{
+/* ============================================================ 元素一览（格子） */
+.gal{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr))}
+.tile{
   margin:0;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--border);
-  background:var(--surface);cursor:zoom-in;transition:var(--t)
+  background:var(--surface);transition:var(--t);display:flex;flex-direction:column
 }
-.shot:hover{transform:translateY(-4px);border-color:var(--border-strong)}
-.shot img{width:100%;aspect-ratio:9/19.5;object-fit:cover;object-position:top center}
-.shot figcaption{padding:10px 12px 12px;font-size:13px;color:var(--text-2);line-height:1.5}
+.tile:hover{transform:translateY(-4px);border-color:var(--border-strong)}
+.tile-art{padding:14px;background:var(--el-bg);border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.tile figcaption{padding:11px 13px 13px;font-size:13px;color:var(--text-2);line-height:1.5}
 @media(max-width:640px){
   .gal{grid-template-columns:repeat(2,1fr);gap:12px}
-  .shot figcaption{font-size:12px;padding:9px 10px 11px}
+  .tile figcaption{font-size:12px;padding:9px 10px 11px}
+  .tile-art{padding:11px}
 }
 .note{
   margin-top:20px;padding:14px 18px;border-radius:var(--r-md);font-size:13.5px;color:var(--text-2);
@@ -374,21 +535,6 @@ footer{border-top:1px solid var(--border);padding:44px 0 34px;background:var(--b
   .top-act .js-top-dl{display:none}
 }
 
-/* ============================================================ lightbox */
-dialog.lb{
-  border:0;padding:0;background:transparent;max-width:100vw;max-height:100vh;
-  width:100%;height:100%
-}
-dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
-.lb-in{
-  width:100%;height:100%;display:grid;place-items:center;padding:20px;cursor:zoom-out
-}
-.lb-in img{
-  max-width:min(94vw,430px);max-height:88vh;width:auto;border-radius:16px;
-  box-shadow:0 40px 80px -30px rgba(0,0,0,.9)
-}
-.lb-cap{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);color:#dbe6f0;font-size:13.5px;text-align:center}
-
 /* ============================================================ motion */
 .reveal{opacity:1}
 .js .reveal{opacity:0;transform:translateY(16px)}
@@ -396,13 +542,57 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   .js .reveal{opacity:1;transform:none}
-  .ring,.float{animation:none!important}
   *{transition-duration:.01ms!important}
 }
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ============================================================ 手机端（放最后，覆盖上面的基础规则）
+   首屏顺序：大标题 → 副标题 → **完整地图 hero** → 说明 → 下载按钮 →（非官方分支胶囊挪到最末）
+   左栏用 display:contents 让子元素变成网格项，才能和地图交错排序。 */
+@media(max-width:720px){
+  .hero-grid{gap:14px}
+  .hero-grid > div:first-child{display:contents}
+  .hero h1{order:1;margin-top:4px}
+  .hero .sub{order:2;margin-top:2px}
+  .hero-grid > .stage{order:3}
+  .hero .lede{order:4;margin-top:0}
+  .hero .cta-row{order:5}
+  .hero .chips{order:6;display:none}
+  .hero .badge{order:9}                       /* 【非官方分支】胶囊挪到最后 */
+  .hero .badge b{white-space:nowrap}
+
+  /* 地图 hero 头部压缩：省掉标题行与图例，按钮铺满一行 */
+  .maphero{padding:12px;gap:8px}
+  .hm-head{gap:0}
+  .hm-title{display:none}
+  .hm-btns{width:100%;margin-left:0;gap:6px}
+  .hm-btns .hm-btn{flex:1;padding:5px 0;text-align:center}
+  .hm-flag{font-size:12.5px;min-height:0;margin-top:2px}
+  .hm-stat{font-size:11.5px}
+  .hm-legend{display:none}
+  .hm-stage{aspect-ratio:1.72}
+
+  /* 列表：不再让手指滑动（容易误触），只露约 3 行，随当前站自动滚到可见位置 */
+  .hm-list{max-height:96px;overflow:hidden;touch-action:pan-y;overscroll-behavior:contain}
+  .hm-row{padding:4px 6px}
+  .hm-row .hm-zone{display:none}              /* 只留序号 + 取件码 + 格数 */
+
+  .hm-foot{
+    font-size:10.5px;line-height:1.45;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden
+  }
+}
 </style>
 </head>
 <body>
+
+<!-- 内联 SVG 精灵：真实 Code128（由 App 同一个 ZXing MultiFormatWriter 生成，
+     payload=SMU20261001001，viewBox 含默认静区）。用 <use> 复用，避免把条纹复制多份。 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="bc128" viewBox="0 0 155 120" preserveAspectRatio="none">
+    <path d="M5 0h2v120h-2zM8 0h1v120h-1zM11 0h1v120h-1zM16 0h2v120h-2zM19 0h3v120h-3zM23 0h1v120h-1zM27 0h1v120h-1zM29 0h3v120h-3zM33 0h2v120h-2zM38 0h2v120h-2zM41 0h3v120h-3zM45 0h3v120h-3zM49 0h2v120h-2zM53 0h3v120h-3zM58 0h1v120h-1zM60 0h1v120h-1zM62 0h3v120h-3zM66 0h4v120h-4zM71 0h2v120h-2zM75 0h2v120h-2zM79 0h2v120h-2zM82 0h2v120h-2zM86 0h1v120h-1zM91 0h1v120h-1zM93 0h2v120h-2zM96 0h2v120h-2zM100 0h2v120h-2zM104 0h2v120h-2zM108 0h1v120h-1zM112 0h1v120h-1zM115 0h2v120h-2zM119 0h2v120h-2zM122 0h2v120h-2zM126 0h1v120h-1zM131 0h1v120h-1zM134 0h2v120h-2zM137 0h2v120h-2zM142 0h3v120h-3zM146 0h1v120h-1zM148 0h2v120h-2z"/>
+  </symbol>
+</svg>
 
 <!-- ===================================================== topbar -->
 <header class="topbar">
@@ -414,7 +604,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
     <nav class="nav" aria-label="页面导航">
       <a href="#haida">海大版能力</a>
       <a href="#features">功能一览</a>
-      <a href="#shots">实机截图</a>
       <a href="#install">安装</a>
       <a href="#faq">常见问题</a>
     </nav>
@@ -439,9 +628,8 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
         <h1>海大取件码</h1>
         <p class="sub">上海海事大学（临港校区）快递站场景优化</p>
         <p class="lede">
-          短信里的取件码自动上桌面；微信快递中心专属码截图导进来，<b>完全离线</b>识别后随时出示；
-          短信里带的取件码 / 货格号会自动排出一条<b>最短取件顺序</b>，首页就能按 <b>①②③</b> 顺序取。
-          列表按 快递站 / 快递柜 / 校外 三分类，自助取件一眼看清柜号。
+          短信里的取件码自动上桌面；专属码截图导进来即可<b>离线出示</b>；
+          取件码会排成一条<b>最短取件顺序</b>，还能在场地采样图上画出路线。
         </p>
 
         <div class="cta-row">
@@ -464,14 +652,63 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
       </div>
 
       <div class="stage">
-        <div class="ring" aria-hidden="true"></div>
-        <div class="float f1"><span>最短取件顺序</span>①②③ 精确最优</div>
-        <div class="float f2"><span>自助取件</span>5 号柜 · 大号柜号</div>
-        <div class="float f3"><span>条码出示</span>顶部常驻 / 底部浮窗</div>
-        <div class="phone">
-          <img src="assets/hero-list.jpg" alt="海大取件码 首页列表截图：按快递柜分组显示取件码与待取件计数" fetchpriority="high" width="900" height="1980">
+        <!-- 动态 hero：每次随机 10 个真实货位 → 真实场地路线 → 动画。
+             场地与寻路都复用仓库权威件（Excel 填充色导出的通道网格 + 同一套寻路核心）。 -->
+        <div class="maphero" id="heroMap">
+          <div class="hm-head">
+            <span class="hm-title">取件路线 · 每趟随机 4~7 件</span>
+            <span class="hm-btns">
+              <button class="hm-btn hm-view" type="button">全览</button>
+              <button class="hm-btn hm-new" type="button">换一批</button>
+              <button class="hm-btn hm-play primary" type="button" aria-pressed="true">暂停</button>
+            </span>
+          </div>
+          <div class="hm-flag">正在载入场地模型…</div>
+          <div class="hm-stat"></div>
+          <div class="hm-stage"><canvas class="hm-canvas"></canvas></div>
+          <div class="hm-legend">
+            <span><i style="background:var(--m-entrance)"></i>入口</span>
+            <span><i style="background:var(--m-accent)"></i>这一段</span>
+            <span><i style="background:var(--m-todo)"></i>待走</span>
+            <span><i style="background:var(--m-done)"></i>已走</span>
+            <span><i style="background:var(--m-sf)"></i>顺丰出库</span>
+            <span><i style="background:var(--m-exit)"></i>出站</span>
+          </div>
+          <div class="hm-list"></div>
+          <div class="hm-msg"></div>
+          <div class="hm-foot">
+            通道格来自实地分米级采样（3362 格），网格 BFS 最短路 + Held–Karp 精确排序，
+            每段都跑「只能走通道格、每步相邻」的断言。点列表任一站或图上的编号点可跳过去；
+            鼠标拖动可平移、双击切换全览 / 特写。
+          </div>
+        </div>
+
+        <div class="chips" style="justify-content:center">
+          <span class="chip"><b>①②③</b> 最短取件顺序</span>
+          <span class="chip"><b>地图取件</b> 一眼看懂怎么走</span>
+          <span class="chip"><b>条码</b> 离线出示</span>
         </div>
       </div>
+    </div>
+
+    <!-- 首屏下方：三块扁平元素（原来的拼贴里保留这三块） -->
+    <div class="ui-strip reveal" aria-hidden="true">
+
+      <div class="uifig">
+        <div class="uistep in"><span class="cir">入</span><span class="t">入口进站</span><span class="s">出示取件码</span></div>
+        <div class="uistep sf"><span class="cir">SF</span><span class="t">顺丰出库</span><span class="s">顺丰专用闸机</span></div>
+        <div class="uistep out"><span class="cir">出</span><span class="t">出站</span><span class="s">7个普通闸机</span></div>
+      </div>
+
+      <div class="uifig">
+        <div class="uibc">
+          <span class="cap">快递中心专属码 · 离线识别</span>
+          <svg><use href="#bc128"/></svg>
+        </div>
+        <div class="uirow"><span class="uichip on">顶部常驻条</span><span class="uichip">底部浮窗</span></div>
+        <div class="uilegend">与 App 同一个 ZXing 编码器（Code128，含默认静区）</div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -487,133 +724,78 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
 
     <div class="grid g-2">
       <article class="card reveal">
-        <figure class="slot empty" data-slot="assets/haida-barcode.jpg">
-          <img src="assets/haida-barcode.jpg" alt="快递中心条码出示界面实机截图" loading="lazy">
-          <div class="slot-art" aria-hidden="true">
-            <svg class="art" viewBox="0 0 220 104" fill="none">
-              <rect x="1" y="1" width="218" height="102" rx="12" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="6 6"/>
-              <g fill="currentColor" opacity=".85">
-                <rect x="20" y="18" width="3" height="46"/><rect x="27" y="18" width="1.6" height="46"/>
-                <rect x="33" y="18" width="4.4" height="46"/><rect x="42" y="18" width="1.6" height="46"/>
-                <rect x="48" y="18" width="3" height="46"/><rect x="55" y="18" width="5.6" height="46"/>
-                <rect x="65" y="18" width="2.2" height="46"/><rect x="71" y="18" width="4.4" height="46"/>
-                <rect x="80" y="18" width="1.6" height="46"/><rect x="86" y="18" width="3" height="46"/>
-                <rect x="93" y="18" width="1.6" height="46"/><rect x="99" y="18" width="5.6" height="46"/>
-                <rect x="109" y="18" width="3" height="46"/><rect x="116" y="18" width="1.6" height="46"/>
-                <rect x="122" y="18" width="4.4" height="46"/><rect x="131" y="18" width="2.2" height="46"/>
-                <rect x="137" y="18" width="3" height="46"/><rect x="144" y="18" width="1.6" height="46"/>
-                <rect x="150" y="18" width="5.6" height="46"/><rect x="160" y="18" width="3" height="46"/>
-                <rect x="167" y="18" width="1.6" height="46"/><rect x="173" y="18" width="4.4" height="46"/>
-                <rect x="182" y="18" width="2.2" height="46"/><rect x="188" y="18" width="3" height="46"/>
-                <rect x="195" y="18" width="5.6" height="46"/>
-              </g>
-              <rect x="20" y="76" width="180" height="2" rx="1" fill="currentColor" opacity=".3"/>
-              <text x="20" y="96" font-size="11" fill="currentColor" opacity=".55" font-family="monospace">快递中心专属码 · 离线识别</text>
-            </svg>
+        <figure class="uifig tight">
+          <div class="uibc">
+            <span class="cap">快递中心专属码 · 离线识别</span>
+            <svg><use href="#bc128"/></svg>
           </div>
-          <figcaption class="slot-hint">实机截图待补拍</figcaption>
+          <div class="uirow">
+            <span class="uichip on">顶部常驻条</span>
+            <span class="uichip">底部浮窗</span>
+            <span class="uichip">高度可拖动</span>
+          </div>
         </figure>
-        <h3>快递中心条码 · 常驻出示</h3>
         <p>把微信里的专属码截图导进来，识别后随时出示。完全离线（ZXing），不依赖 Google Play 服务。</p>
         <ul class="tick">
-          <li>两种常驻形态：<b>顶部常驻条</b> / <b>底部浮窗</b>（高度可上下拖动调节；取件码多到占满屏幕时自动让位缩小）</li>
-          <li>菜单里另有隐藏的「<b>条码试验</b>」页：把取件码按 Code128 / Code39 / ITF / EAN-13 / 二维码五种码制渲染，带去快递柜实测能否扫码取件</li>
+          <li>两种常驻形态：<b>顶部常驻条</b> / <b>底部浮窗</b>（高度可拖动，列表占满时自动让位）</li>
           <li>识别三级递进：整图 → 深色横带裁剪 → 中心裁剪</li>
         </ul>
       </article>
 
       <article class="card reveal">
-        <figure class="slot empty" data-slot="assets/haida-route.jpg">
-          <img src="assets/haida-route.jpg" alt="取件路线界面实机截图" loading="lazy">
-          <div class="slot-art" aria-hidden="true">
-            <svg class="art" viewBox="0 0 220 108" fill="none">
-              <g fill="currentColor" opacity=".22">
-                <rect x="14" y="34" width="26" height="9" rx="2"/><rect x="46" y="34" width="26" height="9" rx="2"/><rect x="78" y="34" width="26" height="9" rx="2"/><rect x="110" y="34" width="26" height="9" rx="2"/>
-                <rect x="14" y="50" width="26" height="9" rx="2"/><rect x="46" y="50" width="26" height="9" rx="2"/><rect x="78" y="50" width="26" height="9" rx="2"/><rect x="110" y="50" width="26" height="9" rx="2"/>
-                <rect x="14" y="66" width="26" height="9" rx="2"/><rect x="46" y="66" width="26" height="9" rx="2"/><rect x="78" y="66" width="26" height="9" rx="2"/><rect x="110" y="66" width="26" height="9" rx="2"/>
-              </g>
-              <path d="M27 88h100" stroke="currentColor" stroke-width="2" stroke-dasharray="5 5" opacity=".5"/>
-              <path d="M27 88V30h60v56h50" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
-              <g font-size="11" font-weight="700" text-anchor="middle">
-                <circle cx="27" cy="30" r="9" fill="currentColor"/><text x="27" y="34" fill="#04241f">1</text>
-                <circle cx="87" cy="30" r="9" fill="currentColor"/><text x="87" y="34" fill="#04241f">2</text>
-                <circle cx="137" cy="86" r="9" fill="currentColor"/><text x="137" y="90" fill="#04241f">3</text>
-              </g>
-              <text x="156" y="58" font-size="11" fill="currentColor" opacity=".6" font-family="monospace">23-32</text>
-            </svg>
+        <figure class="uifig tight">
+          <!-- 数字由 .devtools/calc-sample-route.js 用真实场地模型算出（别手改）：
+               [D5-23, B4-3, S3-2-2628] ⇒ B4-3 → D5-23 → S3-2-2628，3 件 · 全程 53.5 格 -->
+          <div class="uirow">
+            <span class="uichip on">待取 3 件</span>
+            <span class="uichip">全程 53.5 格</span>
+            <span class="uichip">精确最优</span>
           </div>
-          <figcaption class="slot-hint">实机截图待补拍</figcaption>
+          <div class="uirow"><span class="uipill">1</span><span class="uicode">B4-3</span><span class="uimeta">主货架区<br>→ 4 格</span></div>
+          <div class="uirow"><span class="uipill">2</span><span class="uicode">D5-23</span><span class="uimeta">主货架区<br>→ 9 格</span></div>
+          <div class="uirow"><span class="uipill">3</span><span class="uicode">S3-2-2628</span><span class="uimeta">顺丰 S 区<br>→ 20 格</span></div>
+          <div class="uistep sf"><span class="cir">SF</span><span class="t">顺丰出库</span><span class="s">顺丰专用闸机 · 20 格</span></div>
+          <div class="uistep out"><span class="cir">出</span><span class="t">出站</span><span class="s">7个普通闸机（出库 + 出站）</span></div>
         </figure>
-        <h3>取件路线 · 精确最优</h3>
-        <p>把短信里识别到的取件码 / 货格号自动排成一条最短取件顺序；场地拓扑按 <b>2026-10-01 现场踩点</b>重建。</p>
+        <p>把短信里识别到的取件码 / 货格号自动排成一条最短取件顺序，首页按 <b>①②③</b> 取即可。</p>
         <ul class="tick">
-          <li>顺序是<b>精确最优解</b>（树度量 + 子集 DP），不是贪心近似</li>
-          <li><b>四类分区全部纳入</b>：主货架区、J 柜列区、顺丰 S 区、大件 Y 区（含 <code>y2/y4/y5/y7</code> 反向编号与 <code>y8-行-子位</code> 三段式）</li>
-          <li>场地按现场踩点建模：16 排（无 I/J）、<b>每两排背靠背共用一条横向通道</b>、主纵向通道在货架 4 与 5 之间，同一条通道南北两侧可直接横穿</li>
-          <li>首页列表可<b>按取件路线排序</b>（菜单「海大版功能 → 按取件路线排序」，默认开），卡片上标 <b>①②③</b>，跟着序号取即可</li>
-          <li>场地参数（<b>排字母、通道间距、入口到主通道距离、横穿代价、是否折返</b>）界面内可改</li>
-          <li><b>适用范围</b>：带「格口」的写法（如「放入 7 号柜 23-32 格口」）与实体货格号（<code>D8-6</code>、<code>S3-2-2628</code>、<code>J5-21</code>）都能识别</li>
+          <li>≤16 件是<b>精确最优</b>（Held–Karp），不是贪心近似</li>
+          <li>有顺丰件会插一步「出库」，路线终点是出站闸机</li>
         </ul>
       </article>
 
       <article class="card reveal">
-        <figure class="slot empty" data-slot="assets/haida-category.jpg">
-          <img src="assets/haida-category.jpg" alt="列表三分类界面实机截图" loading="lazy">
-          <div class="slot-art" aria-hidden="true">
-            <svg class="art" viewBox="0 0 220 108" fill="none">
-              <g>
-                <rect x="14" y="14" width="66" height="26" rx="13" fill="currentColor" opacity=".9"/>
-                <text x="47" y="31" font-size="11.5" font-weight="700" text-anchor="middle" fill="#04241f">快递站</text>
-                <rect x="86" y="14" width="66" height="26" rx="13" fill="currentColor" opacity=".18"/>
-                <text x="119" y="31" font-size="11.5" font-weight="700" text-anchor="middle" fill="currentColor" opacity=".7">快递柜</text>
-                <rect x="158" y="14" width="48" height="26" rx="13" fill="currentColor" opacity=".18"/>
-                <text x="182" y="31" font-size="11.5" font-weight="700" text-anchor="middle" fill="currentColor" opacity=".7">校外</text>
-              </g>
-              <g opacity=".9">
-                <rect x="14" y="52" width="192" height="40" rx="10" fill="currentColor" opacity=".08"/>
-                <rect x="24" y="60" width="34" height="24" rx="6" fill="currentColor" opacity=".85"/>
-                <text x="41" y="77" font-size="13" font-weight="800" text-anchor="middle" fill="#04241f">5</text>
-                <rect x="68" y="64" width="52" height="6" rx="3" fill="currentColor" opacity=".5"/>
-                <rect x="68" y="76" width="96" height="5" rx="2.5" fill="currentColor" opacity=".28"/>
-              </g>
-              <text x="14" y="104" font-size="11" fill="currentColor" opacity=".55" font-family="monospace">横向跟手翻页 · 大号柜号</text>
-            </svg>
+        <figure class="uifig tight">
+          <div class="uitabs">
+            <span class="uitab">快递站</span>
+            <span class="uitab on-soft">快递柜</span>
+            <span class="uitab">校外</span>
           </div>
-          <figcaption class="slot-hint">实机截图待补拍</figcaption>
+          <div class="uirow"><span class="uilocker">3</span><span class="uicode">2164 5037</span><span class="uimeta">2026-10-01 09:12</span></div>
+          <div class="uirow"><span class="uilocker">5</span><span class="uicode">5739 1017</span><span class="uimeta">2026-10-01 08:47</span></div>
+          <div class="uilegend">纯数字取件码 ⇒ 快递柜；左侧大号数字就是柜号</div>
         </figure>
-        <h3>列表三分类 · 横向跟手翻页</h3>
-        <p>快递站 / 快递柜 / 校外 分开成三页，互相之间横向跟手滑动切换。</p>
+        <p>列表按 <b>快递站 / 快递柜 / 校外</b> 三分类，横向跟手翻页。</p>
         <ul class="tick">
-          <li>快递柜卡片左侧用大号数字标出柜号，自助取件一眼可见</li>
-          <li>分类按短信<b>正文</b>判定（有些短信解析出的地址里并不含「海事大学」）</li>
+          <li>纯数字 ⇒ 快递柜，左侧<b>大号数字就是柜号</b></li>
+          <li>含字母 ⇒ 快递站（顺丰 S、大件 Y、J 柜列都在这里）</li>
         </ul>
       </article>
 
       <article class="card reveal">
-        <figure class="slot empty" data-slot="assets/haida-background.jpg">
-          <img src="assets/haida-background.jpg" alt="自定义页面背景界面实机截图" loading="lazy">
-          <div class="slot-art" aria-hidden="true">
-            <svg class="art" viewBox="0 0 220 108" fill="none">
-              <defs>
-                <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="currentColor" stop-opacity=".55"/>
-                  <stop offset="1" stop-color="currentColor" stop-opacity=".08"/>
-                </linearGradient>
-              </defs>
-              <rect x="14" y="14" width="192" height="80" rx="12" fill="url(#bgGrad)"/>
-              <rect x="30" y="30" width="98" height="9" rx="4.5" fill="currentColor" opacity=".75"/>
-              <rect x="30" y="46" width="140" height="7" rx="3.5" fill="currentColor" opacity=".45"/>
-              <rect x="30" y="60" width="70" height="7" rx="3.5" fill="currentColor" opacity=".3"/>
-              <circle cx="176" cy="70" r="7" fill="currentColor" opacity=".8"/>
-            </svg>
+                <figure class="uifig tight">
+          <img class="venue-mini" src="assets/venue-mini.svg?v=20261001d" alt="海大快递站平面示意图：货架、通道、闸机与入口（按实地分米级采样逐格生成）" loading="lazy">
+          <div class="uirow">
+            <span class="uichip on">入口</span>
+            <span class="uichip">普通闸机</span>
+            <span class="uichip">顺丰专用闸机</span>
+            <span class="uichip">顺丰侧出口</span>
           </div>
-          <figcaption class="slot-hint">实机截图待补拍</figcaption>
         </figure>
-        <h3>自定义页面背景</h3>
-        <p>预设渐变，或用自己的图片当背景；模糊、遮罩强度、缩放模式、作用范围都可调。</p>
+        <p>场地按<b>实地分米级采样</b>逐格建模：3362 个可走格、3 条纵向干线 + 9 条横向走廊、3 处闸机带。</p>
         <ul class="tick">
-          <li>海大版早期功能，已随上游基线一起保留</li>
-          <li>配合桌面卡片暗色模式，墙上挂的取件码更好认</li>
+          <li>首页可挂<b>地图窗格</b>（浮在列表底部、高度可拖、可收起成胶囊）</li>
+          <li><b>地图取件页</b>：顶部当前取件码 + 整段序列，点一下标记已取并自动前进</li>
         </ul>
       </article>
     </div>
@@ -629,19 +811,14 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
       <p>沿袭原项目（已同步上游 v1.0.68）的日常能力，装完即可用。</p>
     </div>
     <div class="grid g-4">
-      <div class="card reveal"><h3>桌面卡片 / 小组件</h3><p>取件码直接摆在桌面上，不用每次翻短信；支持暗色模式。</p></div>
-      <div class="card reveal"><h3>短信自动解析</h3><p>自动从短信里解析取件码与地址，按地址分组折叠展示。</p></div>
-      <div class="card reveal"><h3>自定义解析规则</h3><p>不认识的短信可以自己加规则：取件码前缀关键词、不解析关键词都能配。</p></div>
-      <div class="card reveal"><h3>第三方通知监听</h3><p>监听快递类 App 通知，把取件信息也自动收进来，补齐短信覆盖不到的部分。</p></div>
-      <div class="card reveal"><h3>备注与分享</h3><p>长按取件码加备注、直接分享给同学。</p></div>
-      <div class="card reveal"><h3>时间过滤</h3><p>近 7 天 / 全部一键切换，历史包裹不占屏。</p></div>
-      <div class="card reveal"><h3>显示 / 隐藏格口号</h3><p>格口号与时间可分别开关，屏幕想清爽就清爽。</p></div>
-      <div class="card reveal"><h3>淘宝 / 拼多多身份码</h3><p>常用第三方取件入口集中在一处，一键跳转。</p></div>
+      <div class="card reveal"><h3>桌面小组件</h3><p>取件码直接摆在桌面上，不用每次翻短信。</p></div>
+      <div class="card reveal"><h3>短信自动解析</h3><p>自动解析取件码与地址、按地址分组；不认识的短信可以自己加规则。</p></div>
+      <div class="card reveal"><h3>第三方通知监听</h3><p>监听快递类 App 通知，补齐短信覆盖不到的部分。</p></div>
       <div class="card reveal"><h3>地址归类</h3><p>把同一驿站的不同写法归一，列表不再被拆成十几组。</p></div>
       <div class="card reveal"><h3>老人模式</h3><p>大字号大按钮，长辈也能自己看取件码。</p></div>
-      <div class="card reveal"><h3>完全离线识别</h3><p>条码识别在手机本地完成，不需要 Google Play 服务，也不需要网络。</p></div>
-      <div class="card reveal"><h3>开源可自审</h3><p>代码公开在 GitHub（MIT 上游 + 海大版改动），有疑虑可自行查看或自行编译。</p></div>
+      <div class="card reveal"><h3>离线 + 开源</h3><p>识别在手机本地完成，不联网；代码公开可自审。</p></div>
     </div>
+
   </div>
 </section>
 
@@ -681,31 +858,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
   </div>
 </section>
 
-<!-- ===================================================== 截图 -->
-<section class="sec alt" id="shots">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <span class="eyebrow">Screenshots</span>
-      <h2>实机截图</h2>
-      <p>点任意一张放大查看。</p>
-    </div>
-    <div class="gal reveal">
-      <figure class="shot"><img src="assets/shot-1.jpg" alt="首页列表截图" loading="lazy"><figcaption>首页列表 · 按快递柜分组 + 待取件计数</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-4.jpg" alt="桌面小组件暗色截图" loading="lazy"><figcaption>桌面小组件（暗色）· 待取件「7」</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-5.jpg" alt="桌面小组件浅色截图" loading="lazy"><figcaption>桌面小组件（浅色）</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-2.jpg" alt="横向地址分页截图" loading="lazy"><figcaption>横向地址分页（旧版布局，菜单内可开启）</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-3.jpg" alt="右上角菜单总览截图" loading="lazy"><figcaption>右上角菜单 · 全部设置入口</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-6.jpg" alt="监听第三方 App 通知设置截图" loading="lazy"><figcaption>监听第三方 App 通知</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-7.jpg" alt="新增自定义取件短信截图" loading="lazy"><figcaption>新增自定义取件短信</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-8.jpg" alt="地址归类截图" loading="lazy"><figcaption>地址归类 · 把同一驿站归一</figcaption></figure>
-      <figure class="shot"><img src="assets/shot-9.jpg" alt="新增解析规则截图" loading="lazy"><figcaption>新增解析规则 · 取件码前缀关键词</figcaption></figure>
-    </div>
-    <p class="note">
-      以上为应用实机截图，取自通用数据场景（未做打码处理）。
-      海大版专属界面（条码出示 / 取件路线 / 三分类）的实拍位置已在上面各功能卡内预留，补拍后替换即可。
-    </p>
-  </div>
-</section>
 
 <!-- ===================================================== 安装 -->
 <section class="sec" id="install">
@@ -719,28 +871,27 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
     <div class="steps reveal">
       <div class="step">
         <h4>下载安装包</h4>
-        <p>点页面上的「下载 APK」按钮，保存 <code>parcel-spu-v0.2.0.apk</code>（22.7 MB）。手机浏览器直接下载的话，下拉通知栏点安装即可。</p>
+        <p>点「下载 APK」保存 <code>parcel-spu-v0.2.0.apk</code>（22.7 MB），手机浏览器下载完下拉通知栏点安装。</p>
       </div>
       <div class="step">
         <h4>允许安装未知来源应用</h4>
-        <p>系统提示「禁止安装未知应用」时，选择<b>允许来自此来源</b>，然后继续安装。装完可以把这个权限关掉。</p>
+        <p>提示「禁止安装未知应用」时选<b>允许来自此来源</b>，装完可以关掉这个权限。</p>
       </div>
       <div class="step">
         <h4>授予短信权限</h4>
-        <p>首次打开会申请读取短信，用于自动解析取件码。<b>小米手机</b>还需要额外设置：<code>权限管理 → 其他权限 → 通知类短信 → 始终允许</code>，否则取件短信可能被拦截而收不到。</p>
+        <p>首次打开会申请读取短信。<b>小米手机</b>需额外开：<code>权限管理 → 其他权限 → 通知类短信 → 始终允许</code>。</p>
       </div>
       <div class="step">
         <h4>把取件码放上桌面</h4>
-        <p>在系统「全部卡片 / 插件 / 安卓小组件」里找到「海大取件码」添加即可。之后也可以在右上角菜单里开启快递中心条码、取件路线等功能。</p>
+        <p>在系统「小组件 / 插件」里找到「海大取件码」添加即可；条码、取件路线等在右上角菜单里。</p>
       </div>
     </div>
 
     <div class="warn reveal">
-      <b>⚠️ 从旧版升级注意</b>
+      <b>⚠️ 从旧版升级</b>
       <ul>
-        <li><b>0.1.7 起换了新的签名密钥</b>（v1.0.57-haida.1 的密钥已丢失）。如果你装过 <code>v1.0.57-haida.1</code> 或更早的版本，<b>必须先卸载旧版</b>再装，否则会提示「应用未安装 / 签名冲突」。</li>
-        <li>已经在 0.1.7 或之后的版本上，后续版本可以直接覆盖安装。</li>
-        <li>安装包请只从本页面或本项目的 GitHub Releases 获取。</li>
+        <li><b>0.1.7 起换了签名密钥</b>：装过 <code>v1.0.57-haida.1</code> 或更早的，<b>必须先卸载旧版</b>。</li>
+        <li>0.1.7 及之后的版本可以直接覆盖安装；安装包只从本页或 GitHub Releases 获取。</li>
       </ul>
     </div>
 
@@ -759,9 +910,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
         <span>校验方法</span><code>Windows: certutil -hashfile parcel-spu-v0.2.0.apk SHA256</code>
         <code>macOS / Linux: shasum -a 256 parcel-spu-v0.2.0.apk</code>
       </div>
-      <div class="kv-row">
-        <span>同一文件</span><code>本页直连与 GitHub Release 的 APK 为同一份文件，SHA-256 一致</code>
-      </div>
     </div>
   </div>
 </section>
@@ -775,36 +923,20 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
     </div>
     <div class="faq reveal">
       <details>
-        <summary>安装时提示「应用未安装」或签名冲突怎么办？</summary>
-        <p>说明手机上还有用旧签名密钥打包的版本（<code>v1.0.57-haida.1</code> 及更早）。请先卸载旧版，再安装最新版。签名密钥换过之后，新旧两个包无法互相覆盖。</p>
+        <summary>安装时提示「应用未安装」或签名冲突？</summary>
+        <p>手机上还有用旧签名打包的版本（<code>v1.0.57-haida.1</code> 及更早）。先卸载旧版再装最新版即可。</p>
       </details>
       <details>
         <summary>有些短信解析不出来？</summary>
-        <p>分类与解析依赖短信正文特征，某些无发送者号码的「服务信息」短信可能识别不了。可以：①在菜单里开启<b>监听第三方 App 通知</b>作为补充；②用「新增自定义取件短信 / 新增规则」手动补一条规则。不确定格式的短信不要硬猜，直接加规则最稳。</p>
-      </details>
-      <details>
-        <summary>小米手机收不到取件码？</summary>
-        <p>需要给到「通知类短信」权限：<code>权限管理 → 其他权限 → 通知类短信 → 始终允许</code>。只给普通短信权限时，系统会拦掉这一类通知短信。</p>
-      </details>
-      <details>
-        <summary>快递中心条码导入后识别失败？</summary>
-        <p>识别策略是三级递进（整图 → 按深色横带裁剪 → 中心裁剪）。建议直接导微信里的<b>原始截图</b>，不要二次截图或强压缩，条码边缘越清晰成功率越高。</p>
+        <p>解析依赖短信正文特征，少数「服务信息」短信识别不了。可以开启<b>监听第三方 App 通知</b>，或用「新增自定义取件短信 / 新增规则」手动补一条。</p>
       </details>
       <details>
         <summary>取件路线排不出来？</summary>
-        <p>取件路线的输入是短信里识别到的<b>取件码 / 货格号</b>：带「格口」的写法（例如「放入 7 号柜 23-32 格口」）与实体货格号（<code>D8-6</code> / <code>S3-2-2628</code> / <code>J5-21</code>）都能识别（0.1.8 起补齐后者）。若还是排不出来，先确认菜单里的「按取件路线排序」是开着的，再到「取件路线」页看「无法定位」里列出的原文；场地参数（排字母、通道间距、入口到主通道距离、横穿代价、是否折返）都可以在界面里改。</p>
+        <p>路线需要取件码里有<b>货格号</b>（<code>D8-6</code> / <code>S3-2-2628</code> / <code>J5-21</code>）。若仍排不出来，确认菜单里「按取件路线排序」是开着的。</p>
       </details>
       <details>
-        <summary>收费吗？有广告吗？会上传我的数据吗？</summary>
-        <p>免费、无广告。项目是开源分支：上游 <a href="https://github.com/shareven/parcel" rel="noopener">shareven/parcel</a>（MIT），海大版改动公开在 <a href="https://github.com/CorvinYu/parcel-SPU" rel="noopener">CorvinYu/parcel-SPU</a>，代码可以自己查看甚至自行编译。条码识别完全在本地完成，不依赖 Google Play 服务。</p>
-      </details>
-      <details>
-        <summary>有 iPhone / iOS 版吗？</summary>
-        <p>没有。这是 Android 应用，依赖系统的短信读取与桌面小组件能力。</p>
-      </details>
-      <details>
-        <summary>发现问题或者想提需求？</summary>
-        <p>到 <a href="https://github.com/CorvinYu/parcel-SPU/issues" rel="noopener">GitHub Issues</a> 提，或者在有更新说明的地方留言。已知未完成事项都记在仓库的 <code>ROADMAP.md</code> 里。</p>
+        <summary>收费吗？会上传我的数据吗？</summary>
+        <p>免费、无广告、不上传。识别完全在本地完成。上游是 <a href="https://github.com/shareven/parcel" rel="noopener">shareven/parcel</a>（MIT），海大版改动公开在 <a href="https://github.com/CorvinYu/parcel-SPU" rel="noopener">本仓库</a>。仅 Android，无 iOS 版。</p>
       </details>
     </div>
   </div>
@@ -851,7 +983,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
         <h4>页面导航</h4>
         <a href="#haida">海大版能力</a>
         <a href="#features">功能一览</a>
-        <a href="#shots">实机截图</a>
         <a href="#install">安装与升级</a>
         <a href="#faq">常见问题</a>
       </div>
@@ -878,14 +1009,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
   <a class="btn btn-ghost btn-sm" href="https://github.com/CorvinYu/parcel-SPU/releases" rel="noopener" aria-label="GitHub Releases">GitHub</a>
 </div>
 
-<!-- ===================================================== 灯箱 -->
-<dialog class="lb" id="lb">
-  <div class="lb-in" id="lb-in">
-    <img id="lb-img" alt="">
-    <div class="lb-cap" id="lb-cap"></div>
-  </div>
-</dialog>
-
 <script>
 (function () {
   'use strict';
@@ -907,15 +1030,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
       syncMeta();
     });
   }
-
-  /* ---------- 截图插槽：有图就显示，没图保留示意 ---------- */
-  Array.prototype.forEach.call(document.querySelectorAll('.slot'), function (slot) {
-    var img = slot.querySelector('img');
-    if (!img) return;
-    var show = function () { slot.classList.remove('empty'); };
-    if (img.complete && img.naturalWidth > 0) show();
-    else img.addEventListener('load', show);
-  });
 
   /* ---------- 复制 SHA-256 ---------- */
   Array.prototype.forEach.call(document.querySelectorAll('.js-copy'), function (b) {
@@ -943,24 +1057,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
     document.body.removeChild(t);
   }
 
-  /* ---------- 灯箱 ---------- */
-  var lb = document.getElementById('lb');
-  var lbImg = document.getElementById('lb-img');
-  var lbCap = document.getElementById('lb-cap');
-  if (lb && typeof lb.showModal === 'function') {
-    Array.prototype.forEach.call(document.querySelectorAll('.shot'), function (fig) {
-      fig.addEventListener('click', function () {
-        var img = fig.querySelector('img');
-        lbImg.src = img.currentSrc || img.src;
-        lbImg.alt = img.alt || '';
-        lbCap.textContent = (fig.querySelector('figcaption') || {}).textContent || '';
-        lb.showModal();
-      });
-    });
-    lb.addEventListener('click', function () { lb.close(); });
-    lb.addEventListener('close', function () { lbImg.removeAttribute('src'); });
-  }
-
   /* ---------- 滚动入场 ---------- */
   var items = document.querySelectorAll('.reveal');
   if ('IntersectionObserver' in window) {
@@ -975,5 +1071,6 @@ dialog.lb::backdrop{background:rgba(3,7,14,.86);backdrop-filter:blur(6px)}
   }
 })();
 </script>
+<script src="assets/hero-map.js?v=20261001d" defer></script>
 </body>
 </html>

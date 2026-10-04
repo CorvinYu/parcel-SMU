@@ -413,6 +413,39 @@ private object SiteIndex {
     fun rectForLabel(label: String): Rect? = byLabel[label.uppercase()]
 
     /**
+     * 标签**前缀**回溯：查 `S1` 时并集所有 `S1-*`（`S1-1`…`S1-10`）。
+     *
+     * 🔴 为什么需要（2026-10-03）：用户 10-02 更新地图后，Excel 里每个货格都被细化编号
+     *    （`S1-1`…`S1-10`、`Y5-1`…`Y5-6`、`Y8-2-1`…），**原来那个笼统的 `S1` 标签就不存在了**。
+     *    而取件码 `S3-2-2628` 解析出来的货架号只有 `S3` ⇒ `rectForLabel("S3")` 会查不到，
+     *    顺丰件直接定位失败。实测：旧图有 `S1`/`S2`/`S3`，新图**全没了**。
+     *
+     *    这里做前缀兜底：先查精确标签；查不到就取所有以 `label-` 开头的标签的**并集包围盒**。
+     *    这样既保留细粒度编号，又不破坏 App 的定位。
+     *
+     * ⚠️ 只认 `-` 分隔的前缀，避免 `S1` 误匹配 `S10`。
+     */
+    fun rectForPrefix(label: String): Rect? {
+        val key = label.uppercase()
+        byLabel[key]?.let { return it }
+        val prefix = "$key-"
+        var acc: Rect? = null
+        for ((k, r) in byLabel) {
+            if (!k.startsWith(prefix)) continue
+            acc = if (acc == null) r else Rect(
+                key,
+                minOf(acc.c0, r.c0), maxOf(acc.c1, r.c1),
+                minOf(acc.r0, r.r0), maxOf(acc.r1, r.r1),
+            )
+        }
+        return acc
+    }
+
+    /** 某个货架子位（`S1-8` / `Y5-3` / `Y8-2-1`）的精确矩形；查不到返回 null。 */
+    fun rectForCell(label: String, cell: Int): Rect? =
+        byLabel["${label.uppercase()}-$cell"]
+
+    /**
      * 闸机**门口**的通道格（＝站在闸机前的那一格，**在闸机带外面**）。
      *
      * 🔴 用户 2026-10-01 两次反馈「地图上道路和闸机重叠」：停靠点原本取闸机带**内部**的格子
@@ -495,10 +528,14 @@ private object SiteIndex {
 
 /**
  * 把货格号定位到场地：
- * 1. 命中合并区（`D8`、`J5`、`S3`、`A4`…）；Y 区在精确版里是一整块（`Y区域`）⇒ 退化为整块
- * 2. 按区规则取**精确格位**：
+ * 1. 命中合并区，三级优先（2026-10-03 起支持细粒度编号）：
+ *    ① **子位精确**：`S1-8` / `Y5-3` / `Y8-2-1` —— 用户 10-02 更新后地图里每个货格都是独立合并区
+ *    ② **货架级并集**：`S1` = 所有 `S1-*` 的并集
+ *    ③ **区级兜底**：`S区域` / `Y区域`（此时 `approximate = true`）
+ * 2. 按区规则取**精确格位**（仅在没有子位精确命中时使用）：
  *    - **S 顺丰**：s1 货位 1~10、s2/s3 各 1~8，**左端为 1 向右递增** ⇒ 横向展开
  *    - **J 柜列**：沿列**由外端（靠通道）向里递增** ⇒ 纵深展开，并把柜列内走位计入距离
+ *    - **Y 大件**：货架内按子位 3~4 等比铺开
  * 3. **绕开墙与货架**投影到最近通道格
  *
  * 无法定位（未知字母、货架号越界）返回 null。
@@ -513,37 +550,89 @@ fun locate(code: CompartmentCode, options: RouteOptions = RouteOptions.DEFAULT):
         else -> 1..12
     }
     if (code.shelfNumber !in shelfRange) return null
-    val rect = SiteIndex.rectForLabel("$letter${code.shelfNumber}")
-        ?: SiteIndex.rectForLabel("${letter}区域")
+    val shelfLabel = "$letter${code.shelfNumber}"
+
+    // 🔴 定位优先级（2026-10-03 用户 10-02 更新地图后新增细粒度编号）：
+    //   ① 子位精确命中：`S1-8` / `Y5-3` / `Y8-2-1`（地图里每个货格都有自己的合并区）
+    //   ② 货架级并集：`S1` = 所有 `S1-*` 的并集（旧图是单个大块，新图被拆成多个小块）
+    //   ③ 区级兜底：`S区域` / `Y区域`
+    //   旧版只做 ②③，新图里 `S1` 这个标签已不存在 ⇒ 顺丰件会定位失败，故必须加 ①。
+    val cellRect: SiteIndex.Rect? = code.cellNumber?.let { c ->
+        val base = if (code.subNumber != null) "$shelfLabel-$c" else shelfLabel
+        val sub = if (code.subNumber != null) code.subNumber!! else c
+        SiteIndex.rectForCell(base, sub)
+    }
+    val shelfRect = SiteIndex.rectForPrefix(shelfLabel)
+    val rect = cellRect ?: shelfRect
+        ?: SiteIndex.rectForPrefix("${letter}区域")
         ?: return null
-    val approximate = SiteIndex.rectForLabel("$letter${code.shelfNumber}") == null
+    // 只有连「货架级」都查不到时才算近似（子位命中 = 精确）
+    val approximate = cellRect == null && shelfRect == null
 
     var lat = (rect.lat0 + rect.lat1) / 2.0
     var depth = (rect.d0 + rect.d1) / 2.0
     var posNote = ""
 
-    when (letter) {
-        'S' -> {
+    when {
+        // ① 子位精确命中 ⇒ 直接用该货格的中心，不再等比铺开
+        cellRect != null -> {
+            posNote = when (letter) {
+                'S' -> "s${code.shelfNumber} 第${code.cellNumber}格（地图精确格位）"
+                'J' -> "j${code.shelfNumber} 第${code.cellNumber}格（地图精确格位）"
+                'Y' -> "y${code.shelfNumber} 第${code.cellNumber}格（地图精确格位）"
+                else -> "$shelfLabel 第${code.cellNumber}格（地图精确格位）"
+            }
+        }
+        letter == 'S' -> {
             val n = if (code.shelfNumber == 1) 10 else 8          // s1 = 10 格，s2/s3 = 8 格
             val k = ((code.cellNumber ?: 1) - 1).coerceIn(0, n - 1)
             lat = rect.lat0 + (if (n > 1) k.toDouble() / (n - 1) else 0.0) * (rect.lat1 - rect.lat0)
             posNote = "s${code.shelfNumber} 第${code.cellNumber ?: 1}格（共 $n 格，左端为 1）"
         }
-        'J' -> {
+        letter == 'J' -> {
             val n = options.jCellsPerColumn.coerceAtLeast(1)
             val k = ((code.cellNumber ?: 1) - 1).coerceIn(0, n - 1)
             depth = rect.d0 + (if (n > 1) k.toDouble() / (n - 1) else 0.0) * (rect.d1 - rect.d0)
             posNote = "j${code.shelfNumber} 第${code.cellNumber ?: 1}格（沿列由外端向里，按 $n 格铺开）"
         }
+        letter == 'Y' -> {
+            // Y 区货架内按子位等比铺开（货架级并集时用；区级兜底时仍走近似）
+            val n = if (code.shelfNumber >= 8) 3 else 4
+            val k = ((code.cellNumber ?: 1) - 1).coerceIn(0, n - 1)
+            lat = rect.lat0 + (if (n > 1) k.toDouble() / (n - 1) else 0.0) * (rect.lat1 - rect.lat0)
+            posNote = "y${code.shelfNumber} 第${code.cellNumber ?: 1}格（共 $n 格）"
+        }
     }
 
     // 投影：从整个合并区出发、绕开墙与货架；**决胜基准用按格位算出的精确点**
     // （用合并区中心的话，S 区同一货架的不同格会全投到同一格，段距恒为 0 —— 踩过）
-    val cell = SiteModel.nearestWalkFrom(rect.cells, SiteModel.rowOf(depth), SiteModel.colOf(lat))
+    //
+    // 🔴 **J 柜列必须限定从「南侧开口」投影**（CLAUDE.md 平面图铁律第 4 条）：
+    //    J 柜列是南北向竖柜、**只在南端开口**。旧图 J 区西侧没有通道，几何最近邻碰巧正确；
+    //    但 2026-10-03 用户把 J 区**整体西移**后，柜列东侧紧邻通道（实测 J5 在 W 列、
+    //    X 列就是通道），`nearestWalkFrom` 会把 `J5-21` 投到 `(4,24)` = **从北端绕出去**，
+    //    相当于"走到柜列背后拿件"。⇒ 这里显式只从「柜列最南一行往南」找开口通道。
+    val projCells: List<GridCell>
+    if (letter == 'J') {
+        val southRow = rect.r1                       // 行号越大越靠南
+        val mouth = (rect.c0..rect.c1).mapNotNull { c ->
+            SiteModel.kindAt(southRow + 1, c).takeIf { it == SiteModel.WALK }?.let { GridCell(southRow + 1, c) }
+        }
+        // 开口格存在 ⇒ 只从出口那一行投影；否则退回整块（容错）
+        projCells = mouth.ifEmpty { rect.cells }
+    } else {
+        projCells = rect.cells
+    }
+    val cell = SiteModel.nearestWalkFrom(projCells, SiteModel.rowOf(depth), SiteModel.colOf(lat))
         ?: return null
     val (cellLat, cellDepth) = SiteModel.centerOf(cell.row, cell.col)
-    // 区内走位：J 柜列纵深必须算进距离；普通货架只有半块瓷砖深，格位归一点
-    val stub = if (letter == 'J') abs(depth - cellDepth) else 0.0
+    // 区内走位：
+    // - **J 柜列**：必须算「从柜列南侧开口往里走多少」。🔴 不能用 `abs(depth - cellDepth)` ——
+    //   柜列两侧都有通道时 BFS 会把不同格投到不同行（J5-1→W12、J5-21→X4），
+    //   abs 会让 stub 不再随格位单调递增（实测 0.50→0.30→0.30→0.50，2026-10-03 被单测抓到）。
+    //   正确做法：以柜列**南端开口**（rect.d0）为固定基准，stub = 格位到开口的纵深差。
+    // - 普通货架只有半块瓷砖深，格位归一点（stub = 0）。
+    val stub = if (letter == 'J') (depth - rect.d0).coerceAtLeast(0.0) else 0.0
 
     val zoneName = when (code.zone) {
         PickupZone.MAIN -> "$letter 排 ${code.shelfNumber} 号货架"
@@ -558,7 +647,7 @@ fun locate(code: CompartmentCode, options: RouteOptions = RouteOptions.DEFAULT):
         if (posNote.isNotEmpty()) append("　").append(posNote)
         append("　（通道格 ").append(cell.row).append(',').append(cell.col).append('）')
         if (stub > 0.01) append("　区内走位 ").append(fmt1(stub)).append(" 格")
-        if (approximate) append("　⚠ 该区在精确版里是一整块，只定位到最近通道点")
+        if (approximate) append("　⚠ 该区在精确版里未细分，只定位到最近通道点")
     }
     return PickupSpot(
         code = code, lat = lat, depth = depth, row = cell.row, col = cell.col,

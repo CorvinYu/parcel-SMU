@@ -41,15 +41,17 @@ class PickupRouteTest {
 
     @Test
     fun `网格可走格与 Excel 通道填充色一致`() {
-        // Excel 里 theme3（通道）共 3362 格；生成 SiteData 时逐格照抄
-        assertEquals(3362, SiteModel.walkCellCount())
+        // Excel 里 theme3（通道）共 4765 格；生成 SiteData 时逐格照抄
+        // （2026-10-03 换用用户 10-02 更新版地图后，由 3362 增至 4765 —— 东侧通道扩展 + Y 区拆格）
+        assertEquals(4765, SiteModel.walkCellCount())
     }
 
     @Test
-    fun `通道结构识别出 3 条纵向干线与至少 8 条横向走廊`() {
+    fun `通道结构识别出纵向干线与至少 8 条横向走廊`() {
         val structure = SiteModel.analyze()
         val longTrunks = structure.trunks.filter { it.r1 - it.r0 >= 30 }
-        assertEquals("应识别出 3 条纵向干线", 3, longTrunks.size)
+        // 2026-10-03：用户 10-02 更新版地图新增了东侧纵向通道（CS 列起，行 24~68）⇒ 3 条变 4 条
+        assertEquals("应识别出 4 条纵向干线（含新增的东侧通道）", 4, longTrunks.size)
         val west = longTrunks.firstOrNull { it.c0 <= 6 && it.c1 >= 10 }
         assertNotNull("西侧（靠闸机）那条纵向干线必须在模型里", west)
         val longCorridors = structure.corridors.filter { it.c1 - it.c0 >= 30 }
@@ -69,11 +71,15 @@ class PickupRouteTest {
 
     @Test
     fun `S 顺丰按格位横向展开（左端为 1）`() {
+        // 🔴 2026-10-03：用户 10-02 更新版地图把 S 区**每个货格都画成了独立合并区**
+        //    （旧图整个 s1 只有一个标签块 AO5:AT5，App 只能按「s1 共 10 格」硬摊开 = 猜）。
+        //    现在定位直接命中 `S1-1`…`S1-10` 的真实格位，不再需要摊开公式。
         val s1a = spot("S1-1")
         val s1b = spot("S1-10")
         assertTrue("S1-1 应在 S1-10 之西：${s1a.lat} vs ${s1b.lat}", s1a.lat < s1b.lat)
-        assertEquals(1.5, s1a.lat, 1e-9)
-        assertEquals(4.5, s1b.lat, 1e-9)
+        assertFalse("新图有精确格位 ⇒ 不该再标为近似", s1a.approximate)
+        assertEquals("S1-1 真实格 AI5:AN5 的中心 lat", 0.0, s1a.lat, 1e-9)
+        assertEquals("S1-10 真实格 CK5:CP5 的中心 lat", 27.0, s1b.lat, 1e-9)
         val s3a = spot("S3-2-2628")
         val s3b = spot("S3-8")
         assertTrue("s3 也是左端为 1", s3a.lat < s3b.lat)
@@ -105,19 +111,48 @@ class PickupRouteTest {
 
     @Test
     fun `J 柜列投影不穿墙`() {
-        // J 区三面是墙（X/AH 列 + 北墙），朝南开向最北那条走廊 ⇒ 只能投到南侧走廊
+        // J 区三面是墙（西墙 + 北墙），朝南开向最北那条走廊 ⇒ 只能投到南侧走廊。
+        // 🔴 2026-10-03：用户 10-02 把 J 柜列**整体西移**（旧列 Y~AG = col 25~33 → 新列 K~AB = col 11~28）。
         for (code in listOf("J1-1", "J5-21", "J6-1")) {
             val j = spot(code)
             assertTrue("$code 投到 (${j.row},${j.col}) 穿墙了？", j.row >= 12)
-            assertTrue("$code 的列应在 J 区范围内", j.col in 24..35)
+            assertTrue(
+                "$code 的列 ${j.col} 应落在 J 柜列所在范围（col 9..30）",
+                j.col in 9..30,
+            )
         }
     }
 
     @Test
-    fun `Y 区在精确版里是一整块只定位到最近通道点`() {
+    fun `Y 区已有精确格位，不再退化为整块近似`() {
+        // 🔴 2026-10-03：旧图 Y 区在精确版里是**一整块**，只能标 approximate=true 投到最近通道点。
+        //    用户 10-02 更新后 Y 区被拆成 `Y1-1`…`Y8-7-3` 等独立合并区 ⇒ 现在能精确定位。
         val y = spot("Y5-7-1")
-        assertTrue("必须如实标注为近似", y.approximate)
+        assertFalse("新图已细分到货格 ⇒ 不该再标为近似", y.approximate)
         assertEquals(SiteModel.WALK, SiteModel.kindAt(y.row, y.col))
+        // 同一货架不同子位必须投到不同格（否则段距恒为 0）
+        val y1 = spot("Y5-1-1")
+        val y2 = spot("Y5-4-1")
+        assertFalse(
+            "Y5-1 与 Y5-4 投到了同一格 ⇒ 段距恒为 0",
+            y1.row == y2.row && y1.col == y2.col,
+        )
+    }
+
+    @Test
+    fun `S 区货架级标签靠前缀并集仍可定位`() {
+        // 🔴 回归：新图把 `S1` 拆成 `S1-1`…`S1-10` 后，**原来那个笼统的 `S1` 标签就不存在了**。
+        //    若 SiteIndex 只做精确匹配，`S3-2-2628` 这类取件码（货架号只有 S3）会定位失败。
+        //    这里钉死前缀兜底逻辑：货架级标签必须仍能定位到「该货架所有子位的并集」。
+        for (code in listOf("S1-1", "S2-1-5728", "S3-2-2628")) {
+            val s = spot(code)
+            assertNotNull("$code 应能定位", s)
+            assertEquals(SiteModel.WALK, SiteModel.kindAt(s.row, s.col))
+        }
+        // 货架级并集的横向跨度：S1 = S1-1..S1-10（col 35..94）
+        val a = spot("S1-1")
+        val b = spot("S1-10")
+        assertTrue("S1 首尾应横跨 S 区整排：${a.lat} vs ${b.lat}", b.lat - a.lat > 20.0)
     }
 
     @Test

@@ -15,8 +15,9 @@ package com.xxxx.parcel.util
  *
  * - **一切坐标来自数据**：走廊/干线的行号列号不手写，全部由 [SiteModel.analyze] 从用户 Excel 的
  *   填充色推出（改 Excel → 重跑 `gen-site-data-kt.py` → 提示自动跟着变）。
- * - **不许承诺没有的精度**：普通排每货架的实际格子数未实测（同货架不同格暂视为同一点）、
- *   Y 区在精确版里是一整块 —— 文案必须如实标注，而不是编一个「第 23 格在货架东侧」。
+ * - **不许承诺没有的精度**：普通排每货架的实际格子数未实测（同货架不同格暂视为同一点）；
+ *   Y 区自 2026-10-03 起已拆成独立货格（`Y1-1`…`Y8-7-3`）⇒ 可精确定位，
+ *   但**货架内子位仍按等比铺开**，文案必须如实标注，而不是编一个精确到厘米的位置。
  */
 internal object VenueGuide {
 
@@ -50,33 +51,82 @@ internal object VenueGuide {
 
     // ---------------------------------------------------------------- 结构
 
-    /** 9 条横向走廊带（从入口往里编号）。 */
+    /** 横向走廊带（从入口往里编号）。 */
     val bands: List<Band> by lazy {
         val raw = SiteModel.analyze().corridors
             .filter { it.c1 - it.c0 >= 30 }
             .sortedByDescending { it.r0 }
-        // 🔴 必须按行区间合并：最南那条被主通道 1 格断开 ⇒ analyze 给出 2 个矩形，不合并「第 N 条」会整体错位
+        // 🔴 必须按行区间合并：
+        //   ① 最南那条被主通道 1 格断开 ⇒ analyze 给出 2 个矩形（旧图就有）
+        //   ② **2026-10-03 用户 10-02 更新地图后**，走廊不再规整为 4 行高
+        //      （实测变成 18~19 / 20~21 / 25~25 / 48~48… 不等高），
+        //      只按「r0/r1 完全相同」去重会散成 18 条 ⇒「第 N 条横走廊」整体错位（用户会走错）。
+        //   ⇒ 改成**按行区间相邻即并入同一条带**（gap ≤ 1 行视为同一条走廊）。
         val merged = ArrayList<IntArray>()   // [r0, r1, c0, c1]
         for (s in raw) {
-            val hit = merged.firstOrNull { it[0] == s.r0 && it[1] == s.r1 }
+            val hit = merged.firstOrNull { s.r1 >= it[0] - 1 && s.r0 <= it[1] + 1 }
             if (hit == null) merged += intArrayOf(s.r0, s.r1, s.c0, s.c1)
             else {
+                hit[0] = minOf(hit[0], s.r0)
+                hit[1] = maxOf(hit[1], s.r1)
                 hit[2] = minOf(hit[2], s.c0)
                 hit[3] = maxOf(hit[3], s.c1)
             }
         }
-        merged.mapIndexed { i, m ->
-            Band(index = i + 1, r0 = m[0], r1 = m[1], c0 = m[2], c1 = m[3], landmark = landmarkOf(m[0], m[1]))
+        // 合并后可能产生新的相邻区间 ⇒ 再收敛一轮
+        var changed = true
+        while (changed) {
+            changed = false
+            outer@ for (i in merged.indices) {
+                for (j in i + 1 until merged.size) {
+                    val a = merged[i]; val b = merged[j]
+                    if (b[1] >= a[0] - 1 && b[0] <= a[1] + 1) {
+                        a[0] = minOf(a[0], b[0]); a[1] = maxOf(a[1], b[1])
+                        a[2] = minOf(a[2], b[2]); a[3] = maxOf(a[3], b[3])
+                        merged.removeAt(j)
+                        changed = true
+                        break@outer
+                    }
+                }
+            }
         }
+        // 🔴 编号从**入口所在位置**起算，而不是从最南端：
+        //    2026-10-03 换图后 Y 区向南扩展到第 69 行，出现比入口（第 59 行）更靠南的走廊带，
+        //    若一律按行号降序编号，主货架区那条「第 1 条横走廊」会被挤到第 3 条 ⇒ 用户按编号找路会错位。
+        //    ⇒ 入口及其以北按行降序（从入口往里）先编号；入口以南的带（Y 区南部）排在其后。
+        //
+        // ⚠️ 入口行必须取**最宽的那段**（主入口 `W59:AB59`，宽 6），不是第一个值：
+        //    `entranceSpans` 是 RLE `[行, 起列, 止列]`，第一段是北侧那块小闸机（第 22 行）。
+        val gateRow = run {
+            var row = Int.MAX_VALUE
+            var widest = -1
+            var i = 0
+            while (i + 2 < SiteData.entranceSpans.size) {
+                val r = SiteData.entranceSpans[i]
+                val c0 = SiteData.entranceSpans[i + 1]
+                val c1 = SiteData.entranceSpans[i + 2]
+                if (c1 - c0 > widest) { widest = c1 - c0; row = r }
+                i += 3
+            }
+            row
+        }
+        val sorted = merged.sortedByDescending { it[0] }
+        val ordered = sorted.filter { it[0] <= gateRow } + sorted.filter { it[0] > gateRow }
+        ordered.mapIndexed { i, m ->
+            Band(index = i + 1, r0 = m[0], r1 = m[1], c0 = m[2], c1 = m[3],
+                 landmark = landmarkOf(m[0], m[1]))
+            }
     }
-
-    /** 3 条纵向干线：西侧（靠闸机）/ 主通道 / 东侧（靠 Y 区）。名字按相对主通道中心的位置判定。 */
+    /**
+     * 纵向干线：西侧（靠闸机）/ 主通道 / 东侧（靠 Y 区），
+     * **2026-10-03 起为 4 条** —— 用户 10-02 更新地图时扩展了东侧通道（`CS` 列起，行 24~68）。
+     * 名字按相对主通道中心的位置判定。
+     */
     val trunks: List<Trunk> by lazy {
         val long = SiteModel.analyze().trunks.filter { it.r1 - it.r0 >= 30 }.sortedBy { it.c0 }
         long.mapIndexed { i, t ->
             val center = (t.c0 + t.c1 + 1) / 2.0
             val name = when {
-                long.size == 3 && i == 1 -> "主通道"
                 kotlin.math.abs(center - SiteData.SPINE_COL) <= 3.0 -> "主通道"
                 center < SiteData.SPINE_COL -> "西侧通道（靠闸机）"
                 else -> "东侧通道（靠 Y 区）"

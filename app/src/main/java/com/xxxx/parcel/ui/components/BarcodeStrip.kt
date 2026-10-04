@@ -1,9 +1,7 @@
 package com.xxxx.parcel.ui.components
 
-import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
-import android.view.WindowManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -25,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -301,7 +298,9 @@ fun BarcodeBottomCard(
 /**
  * 条码**全屏出示**（用户 2026-10-01：恢复此功能 —— 当年是我误解了，并没有要删）。
  *
- * 整屏白底 + 尽量大的条码 + 屏幕亮度拉满，点任意处退出；退出时恢复原亮度。
+ * 整屏白底 + 尽量大的条码；点任意处退出。
+ * 🔴 2026-10-04 用户实测：亮度拉满反而更难被出站机扫到（大面积高亮白易过曝/触发 OLED 限流），
+ *   底部浮窗是正常亮度、反而好扫 ⇒ 这里**不再拉满亮度**，跟随系统亮度。条码高度保持 260dp 不变。
  */
 @Composable
 fun BarcodeFullScreenDialog(
@@ -313,26 +312,6 @@ fun BarcodeFullScreenDialog(
     val payload = getBarcodePayload(context)
     val symbology = getBarcodeSymbology(context)
     val hasBarcode = !payload.isNullOrBlank() || hasBarcodeOriginalImage(context)
-    val activity = context as? Activity
-
-    // 亮屏：进出各设一次，退出恢复
-    DisposableEffect(Unit) {
-        val window = activity?.window
-        val original = window?.attributes?.screenBrightness
-        window?.let { w ->
-            val lp = w.attributes
-            lp.screenBrightness = 1f
-            w.attributes = lp
-        }
-        onDispose {
-            window?.let { w ->
-                val lp = w.attributes
-                lp.screenBrightness = original ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                w.attributes = lp
-            }
-        }
-    }
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -379,7 +358,7 @@ fun BarcodeFullScreenDialog(
                 }
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
-                    text = "点屏幕任意处退出 · 亮度已拉满",
+                    text = "点屏幕任意处退出",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color(0xFF666666),
                 )

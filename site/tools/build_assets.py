@@ -1,11 +1,22 @@
 # -*- coding: utf-8 -*-
 """parcel-SPU landing page asset pipeline.
 
-Reads app icon + real device screenshots from the repo, writes web-optimised
-assets into ../assets/.  Idempotent: safe to re-run.
+0.2.0 起，页面上的所有界面图形都改成**内联 HTML/CSS/SVG 元素**（见 index.html 的
+「界面元素一览」与能力卡），所以这里只剩两件事：
+
+1. `icon.png` / `apple-touch-icon.png` / `favicon-64.png` / `favicon.ico` —— 取自 App 的启动图标
+2. `og.png` —— 社交分享大图（1200×630）
+
+🚫 **不再生成任何「界面截图」**：`hero-list.jpg` / `shot-1..9.jpg` / `haida-*.jpg` 已从
+assets 与页面里移除。仓库根目录的实机截图（`show1..9.jpg`）保留在仓库里供存档，
+但不再上线（含真实取件码与地址）。
+
+Idempotent: safe to re-run.
 
 Usage:  python site/tools/build_assets.py
+        python site/tools/build_assets.py --check   # 只校验 assets 与页面引用一致，不写文件
 """
+import re
 import sys
 from pathlib import Path
 
@@ -13,21 +24,18 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]          # E:\claude\parcel-SPU
 SITE = ROOT / "site"
-OUT = SITE / "assets"                               # 会上线，只放页面真正引用的文件
+OUT = SITE / "assets"                               # 会上线
 CACHE = SITE / "tools" / ".cache"                   # 中间产物，不上线
 OUT.mkdir(parents=True, exist_ok=True)
 CACHE.mkdir(parents=True, exist_ok=True)
-
-GALLERY_W = 720      # gallery thumbnails
-HERO_W = 900         # hero phone screenshot
-HERO_SHOT = 1        # show1.jpg = home list, most representative app screen
-GALLERY_SHOTS = range(1, 10)
 
 FONT_CANDIDATES = [
     (r"C:\Windows\Fonts\msyhbd.ttc", 0),
     (r"C:\Windows\Fonts\msyh.ttc", 0),
     (r"C:\Windows\Fonts\simhei.ttf", 0),
 ]
+
+CHECK_ONLY = "--check" in sys.argv
 
 
 def log(*a):
@@ -61,31 +69,9 @@ def build_icons():
     ]:
         icon.resize((size, size), Image.LANCZOS).save(OUT / name, optimize=True)
     icon.save(OUT / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
-    # 512 只用于合成 OG 分享图，页面不引用 ⇒ 放中间缓存，不上线（省 ~426 KB）
+    # 512 只用于合成 OG 分享图，页面不引用 ⇒ 放中间缓存，不上线
     icon.resize((512, 512), Image.LANCZOS).save(CACHE / "icon-512.png", optimize=True)
     log("icons ok (source %dx%d)" % icon.size)
-
-
-# ---------------------------------------------------------------- screenshots
-
-def build_shots():
-    for i in GALLERY_SHOTS:
-        p = ROOT / ("show%d.jpg" % i)
-        if not p.exists():
-            log("skip missing", p.name)
-            continue
-        im = Image.open(p).convert("RGB")           # show3/show9 are PNG bytes
-        w, h = im.size
-        if w > GALLERY_W:
-            im = im.resize((GALLERY_W, round(h * GALLERY_W / w)), Image.LANCZOS)
-        im.save(OUT / ("shot-%d.jpg" % i), "JPEG", quality=84, optimize=True, progressive=True)
-        log("shot-%d.jpg  %dx%d -> %dx%d" % (i, w, h, im.size[0], im.size[1]))
-
-    hero = Image.open(ROOT / ("show%d.jpg" % HERO_SHOT)).convert("RGB")
-    w, h = hero.size
-    hero = hero.resize((HERO_W, round(h * HERO_W / w)), Image.LANCZOS)
-    hero.save(OUT / "hero-list.jpg", "JPEG", quality=88, optimize=True, progressive=True)
-    log("hero-list.jpg %dx%d" % hero.size)
 
 
 # ------------------------------------------------------------------- og card
@@ -114,8 +100,9 @@ def build_og():
     d.rounded_rectangle([86, 448, 86 + 300, 448 + 6], radius=3, fill=(47, 227, 196))
 
     x = 342
+    # 应用 0.1.8 起正式更名为「海大取件码」（旧名「取件码海大版」）
     d.text((x, 168), "上海海事大学 · 快递取件助手", font=font(32), fill=(126, 226, 208))
-    d.text((x, 216), "取件码海大版", font=font(88), fill=(242, 247, 251))
+    d.text((x, 216), "海大取件码", font=font(88), fill=(242, 247, 251))
     d.text((x, 330), "取件码自动上桌面 · 离线条码出示", font=font(33), fill=(185, 201, 216))
     d.text((x, 378), "最短取件路线 · 列表三分类", font=font(33), fill=(185, 201, 216))
     d.text((x, 470), "k.corvinyu.icu", font=font(34), fill=(255, 194, 71))
@@ -124,13 +111,35 @@ def build_og():
     log("og.png ok")
 
 
+# ------------------------------------------------------------------- check
+
+def check():
+    """assets/ 里的文件必须都被页面（或页面加载的 JS）引用；引用到的文件必须都存在。"""
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    # 首屏动态地图是 JS 运行时再取的（hero-map.js 里写着 'assets/venue-model.json' 等）
+    js = "".join(p.read_text(encoding="utf-8") for p in OUT.glob("*.js"))
+    used = set(re.findall(r'assets/([A-Za-z0-9_.\-]+)', html + js))
+    have = {p.name for p in OUT.iterdir() if p.is_file()}
+    missing = sorted(used - have)
+    orphan = sorted(have - used)
+    for n in sorted(used & have):
+        log("  ok      %s" % n)
+    for n in missing:
+        log("  🔴 页面引用了但文件不存在：%s" % n)
+    for n in orphan:
+        log("  ⚠️  文件存在但页面没引用（可以删）：%s" % n)
+    return 1 if missing else 0
+
+
 def main():
+    if CHECK_ONLY:
+        return check()
     build_icons()
-    build_shots()
     build_og()
     log("--- assets ---")
     for f in sorted(OUT.iterdir()):
-        log("  %-20s %7.1f KB" % (f.name, f.stat().st_size / 1024))
+        log("  %-24s %7.1f KB" % (f.name, f.stat().st_size / 1024))
+    return check()
 
 
 if __name__ == "__main__":

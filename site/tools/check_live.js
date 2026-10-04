@@ -12,8 +12,8 @@
  * `SEC_E_NO_CREDENTIALS`；Node 自带 OpenSSL，所以这个脚本在本机可以直接跑。
  */
 const BASE = (process.argv[2] || 'https://k.corvinyu.icu/').replace(/\/?$/, '/');
-// 这 4 个是留给用户补拍真机截图的插槽，404 属预期
-const EXPECT_MISSING = ['haida-barcode.jpg', 'haida-route.jpg', 'haida-category.jpg', 'haida-background.jpg'];
+// 0.2.0 起页面上的界面图形全部内联（HTML/CSS/SVG），assets/ 只剩图标与 OG 图 ⇒ 不再有预期 404 的插槽
+const EXPECT_MISSING = [];
 // 页面外引用、但值得一并体检的文件
 const EXTRA = ['assets/og.png', 'assets/favicon.ico', 'assets/apple-touch-icon.png'];
 
@@ -57,7 +57,7 @@ const EXTRA = ['assets/og.png', 'assets/favicon.ico', 'assets/apple-touch-icon.p
   console.log(`\n页面引用的外部域名（${ext.size} 个）：`);
   for (const d of [...ext].sort()) console.log('  - ' + d);
 
-  console.log(`\n结果：同源资源 ${ok} 项正常 / ${bad} 项异常（${EXPECT_MISSING.length} 个 haida-* 插槽 404 属预期）`);
+  console.log(`\n结果：同源资源 ${ok} 项正常 / ${bad} 项异常`);
   process.exit(bad === 0 ? 0 : 1);
 })().catch((e) => {
   const c = e && e.cause;
