@@ -1,4 +1,122 @@
-# 📦 海大取件码 | Haida Pickup Code
+# 📦 Haida Pickup Code | 海大取件码
+
+> A pickup-code app optimized for the **Shanghai Maritime University (SMU, Lingang campus)** parcel station.
+> Forked from [shareven/parcel](https://github.com/shareven/parcel) (MIT).
+> **This is NOT an official release by the original author.**
+>
+> Formerly "取件码海大版", renamed to **"海大取件码" (Haida Pickup Code)** since 0.1.8.
+
+**Keywords:** Haida Pickup Code · Shanghai Maritime University · SMU · SHMTU · parcel pickup code ·
+campus parcel station · express delivery · Android · Kotlin · Jetpack Compose · offline QR / barcode.
+
+[中文说明见下方 ↓](#-中文说明)
+
+---
+
+## 📲 Download
+
+Latest version: **[Releases](https://github.com/CorvinYu/parcel-SMU/releases)**
+Mirror: **[k.corvinyu.icu](https://k.corvinyu.icu/)**
+(the mirror serves the **same file** as Releases, with size and SHA-256 shown for verification).
+
+> ⚠️ **A new signing key has been used since 0.1.7** (the old one was lost), so upgrading from
+> `v1.0.57-haida.1` **requires uninstalling the old version first**.
+> 0.1.7 and later can be installed over each other directly (same certificate).
+
+Requires **Android 10 (API 29)** or newer. No login, no account, no ads, no network access for recognition.
+
+---
+
+## ✨ Features
+
+### Inherited from upstream (synced to v1.0.68)
+
+- Parses pickup codes and addresses from SMS automatically, shows them on a home-screen card (dark mode supported)
+- Home-screen widget, senior mode (large fonts)
+- Custom parsing rules (pickup-code prefix keywords)
+- Long-press a pickup code to add a note or share it
+- Filter by time; show/hide locker number and time
+- Listens to third-party app notifications to capture pickup info
+- Supports Taobao / Pinduoduo identity codes
+- Address grouping
+
+### Added in the Haida edition
+
+- **Parcel-centre barcode**: import a screenshot of the WeChat "parcel centre" exclusive code and show it any time
+  - Two persistent forms: **top bar** / **floating bottom panel** (draggable height; shrinks automatically when codes fill the screen)
+  - **Fully offline** recognition (ZXing), no Google Play services required; one-tap "original image" mode
+- **Pickup route**: sorts pickup codes into **one shortest walking order** by shelf number
+  - The venue model comes **directly from the fill colours of the floor-plan Excel** (4 vertical trunk corridors,
+    9 horizontal corridor bands, gate bands) — **no hand-written corridor assumptions**; pickup points are
+    projected **around walls and shelves**
+  - All four zone types are planned: **parcel station / J locker columns / SF (Shunfeng) S zone / oversized Y zone**
+    (S by slot horizontally, J by slot depth including in-column walking distance; Y resolved down to `Y1`–`Y8`)
+  - **SF rule**: if any S parcel is collected you **must first exit through the "SF-only gate"**; with ordinary
+    parcels you continue afterwards and finally exit through the "7 ordinary gates" and leave;
+    **with SF parcels only, the SF gate cannot be used to leave** — you must walk to the
+    "SF / no-parcel exit" to get out
+  - The order is **exactly optimal** (Held–Karp subset DP, **≤16 parcels**; verified case-by-case against brute
+    force, including every legal insertion position of the exit point); for more parcels a
+    "nearest-neighbour / corridor-scan + 2-opt" approximation is used and **honestly labelled as non-exact**
+  - The home list can be sorted by pickup route (menu "sort by pickup route", on by default): cards are numbered
+    ①②③ — just follow the numbers
+- **Three-way list split**: parcel station / parcel locker / off-campus, with **horizontal swipe paging**
+  - Locker cards show a large locker number on the left so self-service pickup is obvious
+- **Page background**: preset gradients or custom images (blur, mask strength, scale mode, scope)
+- **Barcode lab** (hidden test page): renders one pickup code in Code128 / Code39 / ITF / EAN-13 / QR
+  so you can **test locker machines one by one**
+  - Stated up front: HiveBox (丰巢) officially offers only "open locker / enter code / forgot code" —
+    **there is no official path for a locker to scan a user's pickup code**; whether it works depends on
+    that machine's firmware, so **only testing tells**
+
+---
+
+## 🔎 Pickup-code classification
+
+| Category | Rule | Examples |
+|---|---|---|
+| **Parcel station** (manual shelves) | SMS body contains "海事大学" **and** the code contains letters | `D8-6`, `J5-21`, `S3-2-2628` (SF), `Y5-7-1` (oversized) |
+| **Parcel locker** (self-service) | SMS body contains "海事大学" **and** the code is all digits | `54018314`, `69824579` |
+| **Off-campus** | SMS body does **not** contain "海事大学" | — |
+
+> Classification is based on the SMS **body**, not the parsed address — some messages' parsed address
+> does not contain "海事大学".
+>
+> Codes look like `<row letter><shelf number>-<slot>` (e.g. `D8-6`); SF / oversized may have three parts.
+> If a message only gives a slot number without "格口", the app uses the code itself as the slot number
+> (the route feature relies on this).
+
+---
+
+## 🗺 Roadmap
+
+Unimplemented items and pending inputs are tracked in **[ROADMAP.md](ROADMAP.md)**
+(including the new UI style design, locker-machine scan testing, SMS format extensions).
+
+---
+
+## 📖 Usage
+
+1. **Home-screen card**: add it in the system "all cards / plugins / Android widgets" list
+2. **Parcel-centre barcode**: top-right menu → "Haida features → parcel-centre barcode" → import the code
+   screenshot → enable a persistent form as needed
+3. **Pickup route**: top-right menu → "Haida features → pickup route"; or use "sort by pickup route" on the
+   home screen to see the ①②③ numbers (requires a pickup code / slot number in the SMS, e.g. `D8-6`)
+4. **Barcode lab**: top-right menu → "Haida features → barcode lab (locker scan test)", then test at a locker
+5. **Unrecognised SMS**: some service messages without a sender number cannot be recognised; you can turn such
+   messages off or enable third-party notification listening as a supplement
+6. **Xiaomi phones**: `Permissions → Other permissions → Notification-class SMS → Always allow`
+
+---
+
+## 🙏 Credits
+
+- Original author and repository: [shareven/parcel](https://github.com/shareven/parcel)
+- This repository is a Haida-edition maintenance branch forked from it, following the original MIT license
+
+---
+
+# 📦 中文说明
 
 > 面向**上海海事大学（临港校区）**快递站场景优化的取件码应用。
 > fork 自 [shareven/parcel](https://github.com/shareven/parcel)（MIT）。
