@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# Haida Pickup Code landing page (k.corvinyu.icu) - single static page, allow all.
+# The APK is a binary download; crawlers may fetch it to validate the link,
+# but it has no indexable content of its own.
+Sitemap: https://k.corvinyu.icu/sitemap.xml

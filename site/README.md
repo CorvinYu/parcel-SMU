@@ -9,6 +9,8 @@ site/
 ├─ index.html          页面本体（内联样式与脚本，无 CDN、无外部请求）
 │                      **界面图形全部是页面里的 HTML/CSS/内联 SVG 元素**（见「界面元素一览」一节），
 │                      不引用任何截图文件
+├─ robots.txt          爬虫入口（Allow 全部 + 声明 sitemap）；**2026-10-05 新增**（之前 404 ⇒ 搜不到）
+├─ sitemap.xml         sitemap（单页站仅首页；lastmod 由 sync_release.py 自动同步）
 ├─ assets/             前端资源（**生成的，勿手改**；见下）
 │   ├─ icon.png / apple-touch-icon.png / favicon-64.png / favicon.ico   ← build_assets.py
 │   ├─ og.png          社交分享大图 1200×630                            ← build_assets.py
@@ -18,9 +20,10 @@ site/
 │   └─ hero-map.js     首屏动态地图（画法 + 动画 + 交互，手写）
 ├─ tools/
 │   ├─ build_assets.py 图标 + OG 图生成（Python + Pillow）；`--check` 校验 assets 与页面引用一致
-│   ├─ sync_release.py **发新版本后同步页面字段（从 GitHub Releases 自动取真实值）**
+│   ├─ sync_release.py **发新版本后同步页面字段（从 GitHub Releases 自动取真实值）**；
+│   │                  部署时一并上传 robots.txt / sitemap.xml 并同步 sitemap lastmod
 │   ├─ shoot.js        CDP 多视口截图 + 页面结构体检（Node 22+，零依赖）
-│   └─ check_live.js   线上自检：同源资源状态码 / 外部域名 / APK HEAD（Node 18+，零依赖）
+│   └─ check_live.js   线上自检：同源资源状态码 / 外部域名 / APK HEAD / SEO 基础设施（Node 18+，零依赖）
 └─ .shots/             本地验证产物（截图与 report.json），已 gitignore
 ```
 

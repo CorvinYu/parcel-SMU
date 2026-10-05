@@ -37,6 +37,8 @@ import urllib.request
 
 PROJ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PAGE = os.path.join(PROJ, "site", "index.html")
+SITEMAP = os.path.join(PROJ, "site", "sitemap.xml")
+ROBOTS = os.path.join(PROJ, "site", "robots.txt")
 OWNER, REPO = "CorvinYu", "parcel-SMU"
 API = "https://api.github.com/repos/%s/%s" % (OWNER, REPO)
 LIVE = "https://k.corvinyu.icu/"
@@ -111,6 +113,28 @@ def mb(n):
     return "%.1f MB" % (n / 1048576.0)
 
 
+def site_lastmod(html):
+    """页面里现在写的版本更新日期（如 `2026-10-04`），用于同步 sitemap.xml 的 lastmod。"""
+    m = re.search(r"更新日期[^0-9]*(\d{4}-\d{2}-\d{2})", html)
+    return m.group(1) if m else ""
+
+
+def sync_sitemap(lastmod, dry_run):
+    """把 sitemap.xml 的 lastmod 同步成页面上的版本更新日期（可重复运行）。"""
+    if not lastmod:
+        print("!! 页面里找不到「更新日期」，跳过 sitemap 同步"); return 0
+    xml = io.open(SITEMAP, encoding="utf-8").read()
+    m = re.search(r"<lastmod>(\d{4}-\d{2}-\d{2})</lastmod>", xml)
+    if not m:
+        print("!! sitemap.xml 里找不到 <lastmod>"); return 0
+    if m.group(1) == lastmod:
+        return 0
+    print("  ✓ sitemap lastmod %s → %s" % (m.group(1), lastmod))
+    if not dry_run:
+        io.open(SITEMAP, "w", encoding="utf-8", newline="").write(xml.replace(m.group(1), lastmod))
+    return 0
+
+
 def remote_sha256(path):
     out = subprocess.run(
         ["ssh", "-i", KEY, "-o", "BatchMode=yes", MAC, "shasum -a 256 '%s'" % path],
@@ -162,6 +186,11 @@ def main():
             pairs.append((name, target["apk"]))
     if cur_tag != target["tag"]:
         pairs.append((cur_tag, target["tag"]))                      # v0.1.7 → v0.1.8
+        # JSON-LD 的 softwareVersion 不带 v 前缀（如 "0.2.1"），上面的 vX→vY 替换覆盖不到，
+        # 单独补一条，防止结构化数据漂移旧版本号
+        if current["version"] != target["version"]:
+            pairs.append(('"softwareVersion": "%s"' % current["version"],
+                          '"softwareVersion": "%s"' % target["version"]))
     if current["size"] != target["size"]:
         pairs.append(("%s 字节" % format(current["size"], ","), "%s 字节" % format(target["size"], ",")))
         if mb(current["size"]) != mb(target["size"]):
@@ -200,6 +229,9 @@ def main():
         io.open(PAGE, "w", encoding="utf-8", newline="").write(html)
         print("已写回 %s" % PAGE)
 
+    # sitemap 的 lastmod 跟着「页面上的版本更新日期」走，避免两处日期漂移
+    sync_sitemap(site_lastmod(html), args.dry_run)
+
     if not args.deploy:
         print("下一步部署：python site/tools/sync_release.py --deploy")
         return 0
@@ -222,6 +254,10 @@ def main():
     print("上传页面与素材 …")
     subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", PAGE,
                     "%s:%s/index.html" % (MAC, REMOTE_DIR)], check=True)
+    # SEO 基础设施：robots.txt / sitemap.xml 与页面同级，漏传会让搜索引擎找不到入口
+    for extra in (ROBOTS, SITEMAP):
+        subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", extra,
+                        "%s:%s/" % (MAC, REMOTE_DIR)], check=True)
     assets = os.path.join(PROJ, "site", "assets")
     for f in sorted(os.listdir(assets)):
         subprocess.run(["scp", "-i", KEY, "-o", "BatchMode=yes", os.path.join(assets, f),
@@ -246,6 +282,20 @@ def main():
           % (target["tag"] in body, target["digest"][:12] in body, target["apk"] in body))
     if target["tag"] not in body or target["apk"] not in body:
         print("  !! 线上页面看起来还是旧版，稍后重试或检查 Caddy 根目录")
+
+    # SEO 基础设施复核：robots.txt / sitemap.xml 必须可公开访问（Cloudflare 1010 会挡非常规 UA，
+    # 这里统一用浏览器 UA，与 Caddy 实际行为一致）
+    for path, must_contain in (("robots.txt", "Sitemap:"), ("sitemap.xml", "<loc>")):
+        try:
+            req = urllib.request.Request(LIVE + path, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                txt = r.read().decode("utf-8", "replace")
+            ok = must_contain in txt
+            print("  %s → HTTP %s  含 %r: %s" % (path, r.status, must_contain, "✓" if ok else "✗"))
+            if not ok:
+                print("  !! %s 内容不符合预期" % path)
+        except Exception as e:  # noqa: BLE001
+            print("  !! %s 复核失败：%s: %s" % (path, type(e).__name__, e))
 
     if args.verify_full:
         print("下载整包核对 …")

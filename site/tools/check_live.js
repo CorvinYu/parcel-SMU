@@ -16,6 +16,8 @@ const BASE = (process.argv[2] || 'https://k.corvinyu.icu/').replace(/\/?$/, '/')
 const EXPECT_MISSING = [];
 // 页面外引用、但值得一并体检的文件
 const EXTRA = ['assets/og.png', 'assets/favicon.ico', 'assets/apple-touch-icon.png'];
+// SEO 基础设施：爬虫入口，必须公开可访问（0.2.1 起新增，之前是 404 ⇒ 站点搜不到）
+const SEO = ['robots.txt', 'sitemap.xml'];
 
 (async () => {
   const res = await fetch(BASE);
@@ -56,6 +58,34 @@ const EXTRA = ['assets/og.png', 'assets/favicon.ico', 'assets/apple-touch-icon.p
   for (const m of html.matchAll(/https?:\/\/([^/"'\s)>]+)/g)) ext.add(m[1]);
   console.log(`\n页面引用的外部域名（${ext.size} 个）：`);
   for (const d of [...ext].sort()) console.log('  - ' + d);
+
+  // ---- SEO 基础设施 ----
+  console.log('\nSEO 基础设施：');
+  for (const f of SEO) {
+    const url = new URL(f, BASE).href;
+    try {
+      const r = await fetch(url);
+      const txt = await r.text();
+      const need = f === 'robots.txt' ? 'Sitemap:' : '<loc>';
+      const good = r.ok && txt.includes(need);
+      good ? ok++ : bad++;
+      console.log(`  ${good ? '✅' : '❌'} ${String(r.status).padEnd(4)} ${f.padEnd(14)} 含 ${need} = ${txt.includes(need)}`);
+    } catch (e) {
+      bad++;
+      console.log(`  ❌ ${f} 请求失败：${e.message}`);
+    }
+  }
+  const seoChecks = [
+    ['canonical', /<link[^>]+rel="canonical"[^>]+href="https:\/\/k\.corvinyu\.icu\/"/],
+    ['JSON-LD SoftwareApplication', /"@type"\s*:\s*"SoftwareApplication"/],
+    ['JSON-LD 应用名', /"name"\s*:\s*"海大取件码"/],
+    ['JSON-LD 版本号', /"softwareVersion"\s*:\s*"[\d.]+"/],
+  ];
+  for (const [label, re] of seoChecks) {
+    const good = re.test(html);
+    good ? ok++ : bad++;
+    console.log(`  ${good ? '✅' : '❌'} 页面 ${label}`);
+  }
 
   console.log(`\n结果：同源资源 ${ok} 项正常 / ${bad} 项异常`);
   process.exit(bad === 0 ? 0 : 1);
